@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 // Columns returned to the client. `rate` is handled separately — it is stripped
 // unless the caller is the Founder or the offeree (see stripRate below).
 const SELECT =
-  "id, title, type, linked_project_id, create_later, project, task_title, account, details, links, work_type, rate, time_frame, start_date, deadline, review_required, priority, offered_to, created_by, respond_by, status, decline_reason, accepted_task_id, accepted_at, created_at";
+  "id, title, type, linked_project_id, create_later, project, task_title, account, details, links, work_type, rate, time_frame, start_date, deadline, review_required, priority, offered_to, created_by, respond_by, status, decline_reason, accepted_task_id, accepted_at, created_at, check_ins";
 
 async function requireUser() {
   const supabase = await createClient();
@@ -101,6 +101,13 @@ export async function POST(request: Request) {
     deadline: asText(b.deadline),
     review_required: Boolean(b.review_required),
     priority,
+    // Check-in milestones: [{ label, date }] — dated stages for the work.
+    check_ins: Array.isArray(b.check_ins)
+      ? (b.check_ins as unknown[])
+          .filter((c): c is { label?: unknown; date?: unknown } => Boolean(c) && typeof c === "object")
+          .map((c) => ({ label: String((c.label ?? "")).trim(), date: (c.date ? String(c.date) : null) }))
+          .filter((c) => c.label)
+      : null,
     offered_to: offeredTo,
     created_by: user.id,
     respond_by: asText(b.respond_by),

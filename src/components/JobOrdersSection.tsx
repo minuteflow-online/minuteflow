@@ -38,7 +38,15 @@ export type JobOrder = {
   accepted_task_id: number | null;
   accepted_at: string | null;
   created_at: string;
+  check_ins: CheckIn[] | null;
 };
+type CheckIn = { label: string; date: string | null };
+const DEFAULT_CHECK_INS: CheckIn[] = [
+  { label: "First submission", date: "" },
+  { label: "Review", date: "" },
+  { label: "Revision", date: "" },
+  { label: "Final submission", date: "" },
+];
 
 const PRIORITY_CLS: Record<string, string> = {
   low: "bg-stone/10 text-stone border-stone/20",
@@ -198,6 +206,20 @@ export default function JobOrdersSection({
                 <div className={`flex-1 px-3 py-1.5 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
               </div>
             ))}
+            {o.check_ins && o.check_ins.length > 0 && (
+              <div className="border-b border-sand/60 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-walnut mb-1.5">Check-ins</p>
+                <div className="space-y-1">
+                  {o.check_ins.map((c, i) => (
+                    <div key={i} className="flex items-center gap-2 text-[12px]">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber shrink-0" />
+                      <span className="text-espresso flex-1">{c.label}</span>
+                      <span className={c.date ? "text-espresso" : "text-stone/50"}>{c.date ? fmtDate(c.date) : "TBD"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {(founder && o.work_type === "output") && (
               <div className="flex items-center gap-2 p-2">
                 <button onClick={() => { const v = prompt("Set the rate ($):", o.rate != null ? String(o.rate) : ""); if (v == null) return; const n = Number(v); if (!Number.isNaN(n)) void act(o.id, { action: "set_rate", rate: n }); }}
@@ -308,6 +330,9 @@ function CreateForm({
   const [respondBy, setRespondBy] = useState(initial?.respond_by ? initial.respond_by.slice(0, 10) : "");
   const [reviewRequired, setReviewRequired] = useState(initial?.review_required ?? false);
   const [priority, setPriority] = useState<"low" | "med" | "high" | "urgent">(initial?.priority ?? "med");
+  const [checkIns, setCheckIns] = useState<CheckIn[]>(
+    initial?.check_ins?.length ? initial.check_ins.map((c) => ({ label: c.label, date: c.date || "" })) : DEFAULT_CHECK_INS.map((c) => ({ ...c }))
+  );
   const [saving, setSaving] = useState(false);
 
   const linkable = projects.filter((p) => p.kind === type);
@@ -334,6 +359,7 @@ function CreateForm({
       respond_by: respondBy || null,
       review_required: reviewRequired,
       priority,
+      check_ins: checkIns.filter((c) => c.label.trim()).map((c) => ({ label: c.label.trim(), date: c.date || null })),
     };
     try {
       const r = editing
@@ -435,6 +461,23 @@ function CreateForm({
         <div>
           <label className={labelCls}>Respond by</label>
           <input type="date" className={inputCls} value={respondBy} onChange={(e) => setRespondBy(e.target.value)} />
+        </div>
+        <div className="sm:col-span-2">
+          <label className={labelCls}>Check-ins</label>
+          <div className="space-y-1.5">
+            {checkIns.map((c, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input className={`${inputCls} flex-1`} value={c.label} placeholder="Milestone (e.g. First submission)"
+                  onChange={(e) => setCheckIns((prev) => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} />
+                <input type="date" className={`${inputCls} w-36 shrink-0`} value={c.date ?? ""}
+                  onChange={(e) => setCheckIns((prev) => prev.map((x, j) => j === i ? { ...x, date: e.target.value } : x))} />
+                <button type="button" onClick={() => setCheckIns((prev) => prev.filter((_, j) => j !== i))}
+                  className="shrink-0 text-terracotta hover:text-terracotta/70 text-sm px-1" aria-label="Remove">✕</button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setCheckIns((prev) => [...prev, { label: "", date: "" }])}
+              className="text-[11px] font-semibold text-sage hover:text-sage/80">+ Add check-in</button>
+          </div>
         </div>
         <div className="sm:col-span-2">
           <label className={labelCls}>Details</label>
