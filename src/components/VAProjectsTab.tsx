@@ -259,6 +259,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
   const [outputSubtasks, setOutputSubtasks] = useState<OutputSubtaskRow[]>([]);
   const [editingOutputId, setEditingOutputId] = useState<number | null>(null);
+  const [viewingOutputId, setViewingOutputId] = useState<number | null>(null);
   const [deletingOutputId, setDeletingOutputId] = useState<number | null>(null);
   const [subtasksLoading, setSubtasksLoading] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0);
@@ -1445,6 +1446,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Output Based</p>
             {outputSubtasks.map((task) => {
               const isEditing = editingOutputId === task.id;
+              const isViewing = viewingOutputId === task.id;
               const canEdit = isAdmin || task.assigned_to === currentUserId;
               const who = activeProfiles.find((p) => p.id === task.assigned_to);
               return (
@@ -1469,6 +1471,12 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     )}
                     <span className="text-[11px] text-stone capitalize shrink-0 hidden lg:block">output based</span>
                     <button
+                      onClick={() => setViewingOutputId(isViewing ? null : task.id)}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
+                    >
+                      {isViewing ? "Hide" : "View"}
+                    </button>
+                    <button
                       onClick={() => setEditingOutputId(isEditing ? null : task.id)}
                       disabled={!canEdit}
                       title={canEdit ? undefined : "Only the person assigned to this can edit it."}
@@ -1477,6 +1485,30 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       {isEditing ? "Cancel" : "Edit"}
                     </button>
                   </div>
+
+                  {isViewing && !isEditing && (
+                    <div className="ml-3 rounded-lg border border-sand overflow-hidden text-[12px]">
+                      {([
+                        ["Task Title", task.task_name],
+                        ["Status", task.status?.replace(/_/g, " ")],
+                        ["Category", task.category],
+                        ["Project", task.project],
+                        ["Account", task.account],
+                        ["Pay Type", "output based"],
+                        ["Assigned To", who ? (who.full_name || who.username) : null],
+                        ["Rate", task.rate != null ? `${Number(task.rate).toFixed(2)}` : null],
+                        ["Start Date", task.start_date ? formatDate(task.start_date) : null],
+                        ["End Date", task.end_date ? formatDate(task.end_date) : null],
+                        ["Due Date", task.due_date ? formatDate(task.due_date) : null],
+                        ["Created", task.created_at ? formatDate(task.created_at) : null],
+                      ] as [string, string | null | undefined][]).map(([label, value]) => (
+                        <div key={label} className="flex border-b border-sand/60 last:border-0">
+                          <div className="w-32 shrink-0 bg-parchment/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">{label}</div>
+                          <div className={`flex-1 px-3 py-2 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {isEditing && (
                     <div className="ml-3 space-y-3 rounded-lg border border-sand bg-parchment p-3">
