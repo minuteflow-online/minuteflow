@@ -2072,7 +2072,7 @@ export default function TaskListPage() {
           </div>
         </div>
 
-        {currentUserId && activeView === "my_tasks" && (
+        {currentUserId && (
           <div className="px-5 pt-4">
             <JobOrdersSection currentUserId={currentUserId} currentRole={currentRole} teamMembers={allTeamMembers} accounts={accountOptions} />
           </div>

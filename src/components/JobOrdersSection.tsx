@@ -213,6 +213,10 @@ export default function JobOrdersSection({
     );
   };
 
+  // Admins always see the section (to create/oversee). A non-admin only sees it
+  // when they actually have an order — otherwise it stays out of the way.
+  if (!admin && (loading || orders.length === 0)) return null;
+
   return (
     <div className="rounded-xl border-2 border-amber/40 bg-amber-soft/25 p-3.5 mb-4 shadow-sm">
       <div className="flex items-center justify-between gap-2">
