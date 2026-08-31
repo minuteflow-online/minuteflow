@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
-import TaskEditor, { type TaskEditorInitialTask } from "@/components/TaskEditor";
+import TaskEditor, { type TaskEditorHandle, type TaskEditorInitialTask } from "@/components/TaskEditor";
 import TaskDetailsView from "@/components/TaskDetailsView";
+import Section from "@/components/ui/Section";
 import {
   type RawTask,
   CATEGORY_OPTIONS,
@@ -23,7 +24,7 @@ import {
   isOverdueGivenStatus,
   DUE_DATE_FINISHED_STATUSES,
 } from "@/lib/taskSchedule";
-import type { Project, UserRole } from "@/types/database";
+import type { AssignedTaskStatus, Project, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
 import { BUDGET_WARN_THRESHOLD, shiftHoursFromProfile, workDaysFromProfile, weekdayOfOrgDate, vaBudgetType } from "@/lib/budget";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -331,6 +332,14 @@ export default function ProductivityCalendarPage() {
   const [formStart, setFormStart] = useState("09:00");
   const [formEnd, setFormEnd] = useState("10:00");
   const [taskMode, setTaskMode] = useState<"time_based" | "output_based">("time_based");
+
+  // "Status & Files" on the Edit Task form — same field Assignment's own edit
+  // panel has, so a VA can put a task straight on their Dashboard (On Queue)
+  // from here instead of having to go find it in Assignment afterward.
+  const taskEditorRef = useRef<TaskEditorHandle | null>(null);
+  const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
+  const [panelSaving, setPanelSaving] = useState(false);
+  const [panelMsg, setPanelMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   // Keep selectedDate at "today" until org timezone resolves
   useEffect(() => {
@@ -899,6 +908,14 @@ export default function ProductivityCalendarPage() {
     setShowForm(true);
   };
 
+  // The status shown/edited on the form is the specific VA's own assignee
+  // row, not a task-level field — assigned_task_assignees can hold more than
+  // one person, each with their own status.
+  const resolveAssigneeStatus = (task: TaskEditorInitialTask | null, vaId: string | null): AssignedTaskStatus => {
+    const assignees = (task?.assigned_task_assignees ?? []) as Array<{ va_id: string; status?: AssignedTaskStatus }>;
+    return assignees.find((a) => a.va_id === vaId)?.status ?? "pending";
+  };
+
   // Fetches the full task row (task_detail, instructions, project_id, etc. —
   // fields the Calendar's own normalized RawTask doesn't carry) so TaskEditor
   // can prefill without clobbering anything the VA hasn't touched.
@@ -915,9 +932,13 @@ export default function ProductivityCalendarPage() {
     setFormEnd(task.end_time.slice(11, 16));
     setShowForm(true);
     setEditingTaskFull(null);
+    setPanelMsg(null);
     const res = await fetch(`/api/assigned-tasks/${task.id}`, { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
-    if (res.ok) setEditingTaskFull(data.task ?? null);
+    if (res.ok) {
+      setEditingTaskFull(data.task ?? null);
+      setPanelStatus(resolveAssigneeStatus(data.task ?? null, dayUserId));
+    }
   };
 
   const openScheduleExisting = async (task: RawTask, dateStr: string = selectedDate) => {
@@ -928,14 +949,50 @@ export default function ProductivityCalendarPage() {
     setFormEnd("10:00");
     setShowForm(true);
     setEditingTaskFull(null);
+    setPanelMsg(null);
     const res = await fetch(`/api/assigned-tasks/${task.id}`, { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
-    if (res.ok) setEditingTaskFull(data.task ?? null);
+    if (res.ok) {
+      setEditingTaskFull(data.task ?? null);
+      setPanelStatus(resolveAssigneeStatus(data.task ?? null, dayUserId));
+    }
   };
 
   const refreshAfterScheduleChange = useCallback(async () => {
     await Promise.all([fetchDaySchedule(), fetchAssignedTasksAll()]);
   }, [fetchDaySchedule, fetchAssignedTasksAll]);
+
+  // Edit mode's own Save: TaskEditor's onSaved deliberately doesn't close the
+  // form here (see the edit-only onSaved below) — this is what closes it,
+  // after both the form fields AND the status have actually saved. Doing the
+  // status PATCH first would race the field submit if TaskEditor's own save
+  // touches the same row; sequencing them avoids that.
+  const handleSaveEditPanel = useCallback(async () => {
+    if (!editingBlockId) return;
+    setPanelMsg(null);
+    setPanelSaving(true);
+    try {
+      if (taskEditorRef.current) {
+        await taskEditorRef.current.submit();
+      }
+      const previousStatus = resolveAssigneeStatus(editingTaskFull, dayUserId);
+      if (panelStatus !== previousStatus) {
+        const res = await fetch(`/api/assigned-tasks/${editingBlockId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: panelStatus, va_id: dayUserId }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      }
+      await refreshAfterScheduleChange();
+      setPanelMsg({ type: "ok", text: "Changes saved." });
+      window.setTimeout(() => setShowForm(false), 800);
+    } catch {
+      setPanelMsg({ type: "err", text: "Unable to save changes right now." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [editingBlockId, editingTaskFull, panelStatus, dayUserId, refreshAfterScheduleChange]);
 
   // "Remove from Calendar" used to live here — a one-click PATCH clearing
   // start_time/end_time. Removed along with its button rather than left behind
@@ -3568,6 +3625,7 @@ export default function ProductivityCalendarPage() {
                 // state, and saving wrote A's values (or blanks) over B. That is
                 // how a due date got wiped by a save that never touched it.
                 key={editingBlockId ? `edit-${editingBlockId}` : taskMode}
+                ref={taskEditorRef}
                 mode={editingBlockId ? "time_based" : taskMode}
                 editingTaskId={editingBlockId}
                 initialTask={editingTaskFull}
@@ -3578,13 +3636,77 @@ export default function ProductivityCalendarPage() {
                 defaultDate={formDate}
                 defaultStartTime={formStart}
                 defaultEndTime={formEnd}
+                // Edit mode hides TaskEditor's own footer — Status & Files below
+                // needs to save alongside the form fields in one "Save Changes",
+                // handled by handleSaveEditPanel instead.
+                hideFooter={Boolean(editingBlockId)}
                 onCancel={() => setShowForm(false)}
                 onSaved={() => {
+                  // Editing: don't close yet — handleSaveEditPanel still has the
+                  // status to save, and closes the form itself once that's done.
+                  if (editingBlockId) {
+                    void refreshAfterScheduleChange();
+                    return;
+                  }
                   setShowForm(false);
                   void refreshAfterScheduleChange();
                   if (taskMode === "output_based") void fetchFixedItems();
                 }}
               />
+
+              {editingBlockId && editingTaskFull && modalTab === "edit" && (
+                <>
+                  <Section title="Status & Files" defaultOpen>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">
+                        Update Status
+                      </label>
+                      <select
+                        value={panelStatus}
+                        onChange={(e) => setPanelStatus(e.target.value as AssignedTaskStatus)}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                      >
+                        {(
+                          [
+                            "pending", "on_queue", "in_progress", "submitted", "reviewing",
+                            "revision_needed", "approved", "completed", "paid", "cancelled",
+                          ] as AssignedTaskStatus[]
+                        )
+                          // A VA on a task that requires review can only move it
+                          // through their own side of the flow — same restriction
+                          // Assignment's own Status & Files enforces.
+                          .filter((value) =>
+                            isAdminOrManager || !editingTaskFull.review_required
+                              ? true
+                              : (["on_queue", "pending", "in_progress", "submitted"] as AssignedTaskStatus[]).includes(value)
+                          )
+                          .map((value) => (
+                            <option key={value} value={value}>
+                              {statusLabel(value)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </Section>
+
+                  {panelMsg?.type === "err" && <p className="text-xs font-medium text-red-500">{panelMsg.text}</p>}
+                  {panelMsg?.type === "ok" && <p className="text-xs font-medium text-sage">{panelMsg.text}</p>}
+
+                  <div className="flex items-center justify-end gap-3 pt-1">
+                    <button type="button" onClick={() => setShowForm(false)} className="cursor-pointer text-xs text-stone hover:text-espresso">
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveEditPanel()}
+                      disabled={panelSaving}
+                      className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {panelSaving ? "Saving..." : "Save Changes"}
+                    </button>
+                  </div>
+                </>
+              )}
               </>
               )}
             </div>
