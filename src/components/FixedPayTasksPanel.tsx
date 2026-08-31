@@ -977,10 +977,33 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                           <td className="truncate px-3 py-3 text-[13px] text-walnut">{task.category || <span className="text-stone/60">—</span>}</td>
                         )}
                         {!hiddenColumns.has("status") && (
-                          <td className="px-3 py-3 text-[13px] text-walnut">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                              {STATUS_LABELS[task.status]}
-                            </span>
+                          /* Status is set from the row itself. Opening the
+                             panel to move one task on is a lot of clicks when
+                             the point of the table is working through a list.
+                             stopPropagation because the row opens the details
+                             panel on click. */
+                          <td className="px-3 py-3 text-[13px] text-walnut" onClick={(event) => event.stopPropagation()}>
+                            {isAdminOrManager ? (
+                              <select
+                                value={task.status}
+                                disabled={statusSaving}
+                                onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                                className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
+                              >
+                                {(STATUS_OPTIONS.includes(task.status)
+                                  ? STATUS_OPTIONS
+                                  : [task.status, ...STATUS_OPTIONS]
+                                ).map((status) => (
+                                  <option key={status} value={status}>
+                                    {STATUS_LABELS[status]}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                {STATUS_LABELS[task.status]}
+                              </span>
+                            )}
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (
