@@ -718,9 +718,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
               No Output Based tasks found.
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+            <div className="max-h-[600px] overflow-auto rounded-xl border border-sand bg-white shadow-sm">
               <table className="w-full table-fixed">
-                <thead>
+                <thead className="sticky top-0 z-10">
                   <tr className="border-b border-sand bg-parchment">
                     <th className="w-10 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
                       <input
