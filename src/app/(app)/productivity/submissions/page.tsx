@@ -27,6 +27,8 @@ type FeedItem = {
   submission_comment: string | null;
   created_at: string;
   edited_at: string | null;
+  /** Set on a revision entry: the new deadline for the rework. */
+  due_at: string | null;
   attachments: TaskSubmissionAttachment[];
   profiles?: { id: string; full_name: string | null; username: string | null } | null;
   task: {
@@ -210,8 +212,35 @@ function deadlineFor(task: FeedItem["task"], timezone: string): string | null {
  * "17:27" — which carries no timezone — anchored to the org's day, so the
  * verdict doesn't shift with the viewer's location.
  */
-function isLate(item: FeedItem, timezone: string): boolean | null {
-  const deadline = deadlineFor(item.task, timezone);
+/**
+ * The deadline in force when a submission landed.
+ *
+ * A revision can set a new due date for the rework. Judging every submission
+ * against whatever the task says today would let a moved deadline rewrite an
+ * earlier verdict — work that was on time becoming late months later. Each
+ * submission is measured against the most recent revision deadline before
+ * it, and the task's own due date only when no revision has moved it.
+ */
+function deadlineForSubmission(
+  item: FeedItem,
+  thread: FeedItem[],
+  timezone: string
+): string | null {
+  const priorRevision = thread
+    .filter((e) => e.message_type === "revision" && e.due_at && e.created_at < item.created_at)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+
+  if (priorRevision?.due_at) {
+    const when = new Date(priorRevision.due_at);
+    return `${localDay(priorRevision.due_at, timezone)} ${when.toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
+  }
+  return deadlineFor(item.task, timezone);
+}
+
+function isLate(item: FeedItem, timezone: string, thread?: FeedItem[]): boolean | null {
+  const deadline = thread
+    ? deadlineForSubmission(item, thread, timezone)
+    : deadlineFor(item.task, timezone);
   if (!deadline) return null;
   const submitted = `${localDay(item.created_at, timezone)} ${new Date(item.created_at).toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
   return submitted > deadline;
@@ -408,7 +437,7 @@ export default function SubmissionsPage() {
   // Approve / Request revision append a row to the same thread, then move the
   // task's status through the app's single status path.
   const review = useCallback(
-    async (item: FeedItem, outcome: ReviewOutcome, note?: string) => {
+    async (item: FeedItem, outcome: ReviewOutcome, note?: string, dueAt?: string) => {
       if (!item.task) return;
       setBusyId(item.id);
       try {
@@ -418,6 +447,7 @@ export default function SubmissionsPage() {
           body: JSON.stringify({
             message_type: outcome,
             message: note?.trim() || REVIEW_DEFAULT_NOTE[outcome],
+            due_at: dueAt || null,
           }),
         });
         if (!res.ok) {
@@ -1317,6 +1347,7 @@ function CardFieldsPicker({
 function SubmissionEntry({
   item,
   index,
+  thread,
   roundMs,
   timezone,
   canCancel,
@@ -1324,6 +1355,9 @@ function SubmissionEntry({
 }: {
   item: FeedItem;
   index: number;
+  /** The whole thread, so a submission is judged against the deadline that
+   *  applied when it landed rather than whatever the task says now. */
+  thread: FeedItem[];
   /** Time logged during this revision round, if any was tracked. */
   roundMs?: number;
   timezone: string;
@@ -1375,7 +1409,7 @@ function SubmissionEntry({
   }
 
   const isResubmission = index > 0;
-  const late = isLate(item, timezone);
+  const late = isLate(item, timezone, thread);
 
   return (
     <div
@@ -1488,7 +1522,7 @@ function ThreadCard({
   thread: Thread;
   canReview: boolean;
   busy: boolean;
-  onReview: (item: FeedItem, outcome: ReviewOutcome, note?: string) => void;
+  onReview: (item: FeedItem, outcome: ReviewOutcome, note?: string, dueAt?: string) => void;
   onAddNote: (item: FeedItem, note: string) => void;
   /** round index -> ms logged during that round. */
   rounds: Record<string, number>;
@@ -1578,6 +1612,7 @@ function ThreadCard({
     .join(" · ");
   const [noteDraft, setNoteDraft] = useState("");
   const [noteMode, setNoteMode] = useState<null | "revision" | "note">(null);
+  const [revisionDue, setRevisionDue] = useState("");
 
   // Whole-task effort: every round summed. Grows with each resubmission, while
   // each entry below keeps its own round's figure.
@@ -1740,6 +1775,7 @@ function ThreadCard({
                 key={item.id}
                 item={item}
                 index={idx}
+                thread={thread.items}
                 roundMs={item.message_type === "submission" ? rounds[String(idx)] : undefined}
                 timezone={timezone}
                 canCancel={canReview}
@@ -1765,14 +1801,39 @@ function ThreadCard({
                 }
                 className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
               />
+              {noteMode === "revision" && (
+                <div className="mt-1.5">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                    New due date (optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={revisionDue}
+                    onChange={(e) => setRevisionDue(e.target.value)}
+                    className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+                  />
+                  <p className="mt-0.5 text-[10px] text-stone">
+                    Moves the task&apos;s due date so the calendar shows what&apos;s expected.
+                    Earlier submissions keep the deadline they were judged against.
+                  </p>
+                </div>
+              )}
+
               <div className="mt-1.5 flex items-center gap-2">
                 <button
                   onClick={() => {
                     const note = noteDraft.trim();
                     if (!note) return;
-                    if (noteMode === "revision") onReview(latest, "revision", note);
-                    else onAddNote(latest, note);
+                    if (noteMode === "revision") {
+                      onReview(
+                        latest,
+                        "revision",
+                        note,
+                        revisionDue ? new Date(revisionDue).toISOString() : undefined
+                      );
+                    } else onAddNote(latest, note);
                     setNoteDraft("");
+                    setRevisionDue("");
                     setNoteMode(null);
                   }}
                   disabled={busy || !noteDraft.trim()}

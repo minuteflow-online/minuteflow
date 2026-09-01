@@ -57,7 +57,7 @@ export async function GET(request: Request) {
   let query = admin
     .from("task_submissions")
     .select(
-      "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, " +
+      "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, " +
         "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
         "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
     )

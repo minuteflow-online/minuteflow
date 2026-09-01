@@ -236,6 +236,8 @@ export async function POST(request: Request, { params }: RouteContext) {
   let link = "";
   let messageType: SubmissionMessageType = "submission";
   let files: File[] = [];
+  /** A revision may carry a new deadline for the rework. */
+  let dueAt: string | null = null;
 
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
@@ -252,6 +254,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     files = formData.getAll("file").filter((entry): entry is File => entry instanceof File);
   } else {
     const body = await request.json().catch(() => ({}));
+    dueAt = typeof body.due_at === "string" && body.due_at ? body.due_at : null;
     message = String(body.message ?? "").trim();
     link = String(body.link ?? "").trim();
     messageType = (body.message_type ?? "submission") as SubmissionMessageType;
@@ -315,6 +318,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       va_task_assignment_id: null,
       user_id: user.id,
       message_type: messageType,
+      due_at: dueAt,
       content: submissionSummary({ message, link, fileCount: files.length }),
       submission_link: link || null,
       submission_comment: message || null,
@@ -542,6 +546,25 @@ export async function POST(request: Request, { params }: RouteContext) {
       "team",
       submissionCheer(mention(who, prof?.telegram_chat_id), task.task_name)
     );
+  }
+
+  // The task's own due date moves too, so the calendar and the task editor
+  // show what is expected now. Past verdicts are unaffected: a submission is
+  // judged against the deadline recorded on the revision before it, not
+  // against whatever the task says today. Splitting the timestamp keeps the
+  // task's date and time columns in the shape the rest of the app reads.
+  if (messageType === "revision" && dueAt) {
+    const when = new Date(dueAt);
+    if (!Number.isNaN(when.getTime())) {
+      await admin
+        .from("assigned_tasks")
+        .update({
+          due_date: dueAt.slice(0, 10),
+          due_time: dueAt.slice(11, 16),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+    }
   }
 
   const [withFiles] = await withAttachments(admin, [submission as never]);
