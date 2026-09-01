@@ -76,8 +76,9 @@ export default function TaskDetailModal({
     ? `${task.due_date}${task.due_time ? ` at ${task.due_time}` : ""}`
     : null;
 
-  // Only rows with something in them — an empty field says nothing and a
-  // column of dashes buries the ones that matter.
+  // Every field shows, filled or not. A blank here is information: it says
+  // this task went out without a due date, or without a category, which is
+  // exactly what a reviewer needs to notice.
   const rows: Array<[string, string | null]> = [
     ["Account", task?.account ?? null],
     ["Project", task?.project ?? null],
@@ -107,9 +108,14 @@ export default function TaskDetailModal({
         <div className="flex items-start justify-between border-b border-sand px-4 py-3">
           <div className="min-w-0">
             <h3 className="text-xs font-bold uppercase tracking-wide text-espresso">Task</h3>
-            <p className="mt-0.5 truncate text-[13px] font-semibold text-espresso">
-              {task?.task_name ?? (error || "Loading...")}
+            {/* The client memo is what the work is actually about; the task
+                name is often the same word on dozens of cards. */}
+            <p className="text-[13px] font-semibold leading-snug text-espresso">
+              {task?.task_detail?.trim() || task?.task_name || (error || "Loading...")}
             </p>
+            {task?.task_detail?.trim() && task.task_name && (
+              <p className="mt-0.5 truncate text-[11px] text-stone">{task.task_name}</p>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -123,52 +129,65 @@ export default function TaskDetailModal({
         {task && (
           <div className="space-y-3 p-4">
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-              {rows
-                .filter(([, value]) => value)
-                .map(([label, value]) => (
+              {rows.map(([label, value]) => (
                   <div key={label}>
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
                       {label}
                     </p>
-                    <p className="text-[12px] text-espresso">{value}</p>
+                    <p
+                      className={`text-[12px] ${
+                        value ? "text-espresso" : "italic text-stone/60"
+                      }`}
+                    >
+                      {value || "Not set"}
+                    </p>
                   </div>
                 ))}
             </div>
 
-            {blocks
-              .filter(([, value]) => value?.trim())
-              .map(([label, value]) => (
+            {blocks.map(([label, value]) => (
                 <div key={label}>
                   <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
                     {label}
                   </p>
-                  <p className="whitespace-pre-wrap rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[12px] leading-snug text-espresso">
-                    {value}
+                  <p
+                    className={`whitespace-pre-wrap rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[12px] leading-snug ${
+                      value?.trim() ? "text-espresso" : "italic text-stone/60"
+                    }`}
+                  >
+                    {value?.trim() || "Not set"}
                   </p>
                 </div>
               ))}
 
-            {task.link && (
+            {(
               <div>
                 <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
                   Link
                 </p>
-                <a
-                  href={task.link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block truncate text-[12px] text-terracotta hover:underline"
-                >
-                  {task.link}
-                </a>
+                {task.link ? (
+                  <a
+                    href={task.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block truncate text-[12px] text-terracotta hover:underline"
+                  >
+                    {task.link}
+                  </a>
+                ) : (
+                  <p className="text-[12px] italic text-stone/60">Not set</p>
+                )}
               </div>
             )}
 
-            {todos.length > 0 && (
+            {(
               <div>
                 <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
                   To-dos
                 </p>
+                {todos.length === 0 && (
+                  <p className="text-[12px] italic text-stone/60">None</p>
+                )}
                 <div className="space-y-1">
                   {todos.map((todo, i) => (
                     <div

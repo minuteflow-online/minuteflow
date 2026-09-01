@@ -1161,11 +1161,32 @@ export default function TaskListPage() {
     if (typeof window === "undefined" || tasks.length === 0) return;
     const wanted = new URLSearchParams(window.location.search).get("task");
     if (!wanted || openedFromUrlRef.current === wanted) return;
+
     const match = tasks.find((t) => String(t.assigned_tasks?.id ?? t.id) === wanted);
-    if (!match) return;
-    openedFromUrlRef.current = wanted;
-    setSelectedTask(match);
-  }, [tasks]);
+    if (match) {
+      openedFromUrlRef.current = wanted;
+      setSelectedTask(match);
+      return;
+    }
+
+    // The task exists but isn't in the list being shown — a submitted task
+    // while My Tasks is open, say. Arriving from Submissions that is the
+    // normal case, and landing on a list to search by name defeats the point
+    // of the link. Ask the task which view holds it and switch there; the
+    // next run of this effect finds it and opens the editor.
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/assigned-tasks/${wanted}`, { cache: "no-store" });
+      if (cancelled || !res.ok) return;
+      const { task } = await res.json();
+      const status = task?.assigned_task_assignees?.[0]?.status ?? null;
+      const submittedish = ["submitted", "reviewing", "revision_needed", "approved", "completed"];
+      setActiveView(submittedish.includes(status) ? "submitted" : "my_tasks");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tasks, setActiveView]);
 
   const filteredTasks = useMemo(() => {
     const start = filterDueStart ? parseDueDateSafe(filterDueStart) : null;

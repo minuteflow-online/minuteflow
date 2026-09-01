@@ -129,6 +129,7 @@ const CARD_FIELDS: ColumnDef[] = [
   { key: "category", label: "Category", defaultWidth: 0 },
   { key: "submitter", label: "Submitted by", defaultWidth: 0 },
   { key: "count", label: "Submission count", defaultWidth: 0 },
+  { key: "total_time", label: "Total time", defaultWidth: 0 },
 ];
 
 /**
@@ -1455,6 +1456,8 @@ function ThreadCard({
 
   // One place decides what every field says, so the title and the detail
   // lines can never disagree about the same field.
+  const totalMs = Object.values(rounds).reduce((sum, ms) => sum + ms, 0);
+
   const fieldValue = (key: string): string | null => {
     switch (key) {
       case "task":
@@ -1481,6 +1484,8 @@ function ThreadCard({
         return head.task?.category ?? null;
       case "submitter":
         return head.profiles?.full_name || head.profiles?.username || null;
+      case "total_time":
+        return totalMs > 0 ? formatDuration(totalMs) : null;
       case "count":
         return expanded
           ? null
@@ -1513,8 +1518,6 @@ function ThreadCard({
 
   // Whole-task effort: every round summed. Grows with each resubmission, while
   // each entry below keeps its own round's figure.
-  const totalMs = Object.values(rounds).reduce((sum, ms) => sum + ms, 0);
-
   // Unknown state falls through to "awaiting" — better to offer the buttons
   // than to hide a decision that still needs making.
   // Allow-list, not a deny-list: listing the states that DON'T need review
@@ -1586,7 +1589,7 @@ function ThreadCard({
           </button>
         )}
 
-        {totalMs > 0 && (
+        {totalMs > 0 && !hiddenFields.has("total_time") && titleField !== "total_time" && (
           <span
             className="shrink-0 text-[11px] font-semibold tabular-nums text-walnut"
             title="Total time logged on this task across every round"
