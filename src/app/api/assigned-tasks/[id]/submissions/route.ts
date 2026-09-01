@@ -236,6 +236,18 @@ export async function POST(request: Request, { params }: RouteContext) {
   let link = "";
   let messageType: SubmissionMessageType = "submission";
   let files: File[] = [];
+  /**
+   * Files the browser already uploaded straight to storage via
+   * submissions/upload-url. Anything larger than a few MB can't come through
+   * this request at all — Vercel caps the body at 4.5MB — so the bytes go
+   * direct and only the paths arrive here.
+   */
+  let pendingAttachments: Array<{
+    path: string;
+    filename: string;
+    size: number;
+    mime_type: string | null;
+  }> = [];
   /** A revision may carry a new deadline for the rework. */
   let dueAt: string | null = null;
 
@@ -258,6 +270,24 @@ export async function POST(request: Request, { params }: RouteContext) {
     message = String(body.message ?? "").trim();
     link = String(body.link ?? "").trim();
     messageType = (body.message_type ?? "submission") as SubmissionMessageType;
+
+    // Only paths under this task's own folder — the upload-url route is what
+    // hands those out, and a caller must not be able to claim someone else's
+    // file by naming its path here.
+    const prefix = `tasks/${id}/submissions/`;
+    pendingAttachments = (Array.isArray(body.attachments) ? body.attachments : [])
+      .filter(
+        (a: unknown): a is { path: string; filename?: string; size?: number; mime_type?: string } =>
+          Boolean(a) &&
+          typeof (a as { path?: unknown }).path === "string" &&
+          (a as { path: string }).path.startsWith(prefix)
+      )
+      .map((a: { path: string; filename?: string; size?: number; mime_type?: string }) => ({
+        path: a.path,
+        filename: String(a.filename ?? a.path.split("/").pop() ?? "attachment"),
+        size: Number(a.size ?? 0),
+        mime_type: a.mime_type ?? null,
+      }));
   }
 
   // Only Admin/CEO/Founder can post review outcomes; everyone with task access
@@ -295,10 +325,11 @@ export async function POST(request: Request, { params }: RouteContext) {
   // words of it is friction with no reader — it only needs to not be empty,
   // so the submission record still says something happened.
   if (messageType === "submission") {
+    const fileCount = files.length + pendingAttachments.length;
     const needsEvidence = task.review_required !== false;
     const ok = needsEvidence
-      ? submissionMeetsBar({ message, link, fileCount: files.length })
-      : Boolean(message.trim() || link.trim() || files.length > 0);
+      ? submissionMeetsBar({ message, link, fileCount })
+      : Boolean(message.trim() || link.trim() || fileCount > 0);
     if (!ok) {
       return Response.json(
         {
@@ -319,7 +350,11 @@ export async function POST(request: Request, { params }: RouteContext) {
       user_id: user.id,
       message_type: messageType,
       due_at: dueAt,
-      content: submissionSummary({ message, link, fileCount: files.length }),
+      content: submissionSummary({
+        message,
+        link,
+        fileCount: files.length + pendingAttachments.length,
+      }),
       submission_link: link || null,
       submission_comment: message || null,
     })
@@ -327,6 +362,10 @@ export async function POST(request: Request, { params }: RouteContext) {
     .single();
 
   if (insertError || !submission) {
+    // Files the browser already put in storage have nothing to hang off now.
+    if (pendingAttachments.length > 0) {
+      await admin.storage.from("task-attachments").remove(pendingAttachments.map((a) => a.path));
+    }
     return Response.json(
       { error: insertError?.message ?? "Unable to save submission" },
       { status: 400 }
@@ -336,8 +375,22 @@ export async function POST(request: Request, { params }: RouteContext) {
   // Upload files last: if any of them fails the whole submission is rolled
   // back, so a VA never ends up with a half-recorded submission they can't
   // edit their way out of.
-  const uploadedPaths: string[] = [];
+  const uploadedPaths: string[] = pendingAttachments.map((a) => a.path);
   try {
+    // Already in storage — they only need their row.
+    for (const attachment of pendingAttachments) {
+      const { error: attachError } = await admin.from("assigned_task_attachments").insert({
+        assigned_task_id: Number(id),
+        submission_id: submission.id,
+        filename: attachment.filename,
+        storage_path: attachment.path,
+        file_size: attachment.size || null,
+        mime_type: attachment.mime_type,
+        uploaded_by: user.id,
+      });
+      if (attachError) throw new Error(attachError.message);
+    }
+
     for (const [index, file] of files.entries()) {
       if (file.size > 52428800) throw new Error("File too large (max 50MB)");
 
