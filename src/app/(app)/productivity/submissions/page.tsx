@@ -217,6 +217,39 @@ function isLate(item: FeedItem, timezone: string): boolean | null {
   return submitted > deadline;
 }
 
+/**
+ * How a submission landed against its deadline.
+ *
+ * "same day" is separated from "another day" because they are different
+ * failures: an hour past the time is a slip, a day past it is a miss, and
+ * one colour for both hides which happened.
+ */
+type Timeliness = "on_time" | "late_same_day" | "late_other_day" | "no_deadline";
+
+function timelinessOf(item: FeedItem, timezone: string): Timeliness {
+  const deadline = deadlineFor(item.task, timezone);
+  if (!deadline) return "no_deadline";
+  const submitted = `${localDay(item.created_at, timezone)} ${new Date(item.created_at).toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
+  if (submitted <= deadline) return "on_time";
+  return localDay(item.created_at, timezone) === deadline.slice(0, 10)
+    ? "late_same_day"
+    : "late_other_day";
+}
+
+const TIMELINESS_CHIP: Record<Timeliness, string> = {
+  on_time: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  late_same_day: "border-amber-200 bg-amber-50 text-amber-700",
+  late_other_day: "border-plum/30 bg-plum-soft text-plum",
+  no_deadline: "border-sky-200 bg-sky-50 text-sky-600",
+};
+
+const TIMELINESS_LABEL: Record<Timeliness, string> = {
+  on_time: "On time",
+  late_same_day: "Late — same day",
+  late_other_day: "Late — another day",
+  no_deadline: "No due date set",
+};
+
 function scopeLabel(item: FeedItem) {
   if (!item.task?.project_id) return "Adhoc";
   if (item.task.project_kind === "objective") return "Objective";
@@ -263,6 +296,7 @@ export default function SubmissionsPage() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
@@ -365,7 +399,7 @@ export default function SubmissionsPage() {
   // freshly filtered list is not where anyone wants to land.
   useEffect(() => {
     setPage(0);
-  }, [vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, statusFilter, assignedByFilter, ownerMode, showTrash]);
+  }, [vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, statusFilter, assignedByFilter, ownerMode, showTrash, search]);
 
   useEffect(() => {
     void load();
@@ -631,6 +665,27 @@ This cannot be undone.`
       rows = rows.filter((r) => r.task?.assigned_by && assignedByFilter.has(r.task.assigned_by));
     }
 
+    // Searches what the card shows and what was written in the submission,
+    // so a keyword from a memo finds it as readily as a task name.
+    const term = search.trim().toLowerCase();
+    if (term) {
+      rows = rows.filter((r) =>
+        [
+          r.task?.task_name,
+          r.task?.task_detail,
+          r.task?.account,
+          r.task?.project_name,
+          r.submission_comment,
+          r.submission_link,
+          r.content,
+          r.profiles?.full_name,
+          r.profiles?.username,
+        ]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(term))
+      );
+    }
+
     if (statusFilter.size > 0) {
       rows = rows.filter((r) => {
         if (!r.task) return false;
@@ -668,7 +723,7 @@ This cannot be undone.`
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -939,7 +994,14 @@ This cannot be undone.`
           </button>
         )}
 
-        <span className="ml-auto text-[11px] text-stone">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search submissions..."
+          className="ml-auto w-48 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none placeholder:text-stone/60"
+        />
+
+        <span className="text-[11px] text-stone">
           {loading ? "Loading..." : `${submissionCount} submission${submissionCount === 1 ? "" : "s"}`}
         </span>
       </div>
@@ -1017,6 +1079,7 @@ This cannot be undone.`
           onAnchorChange={setMonthAnchor}
           orgTimezone={orgTimezone}
           roundByItemId={roundByItemId}
+          onOpenTask={setDetailTaskId}
         />
       )}
     </div>
@@ -1837,12 +1900,14 @@ function CalendarView({
   onAnchorChange,
   orgTimezone,
   roundByItemId,
+  onOpenTask,
 }: {
   byDay: Map<string, FeedItem[]>;
   anchor: Date;
   onAnchorChange: (d: Date) => void;
   orgTimezone: string;
   roundByItemId: Map<number, number>;
+  onOpenTask: (taskId: number) => void;
 }) {
   const year = anchor.getFullYear();
   const month = anchor.getMonth();
@@ -1902,22 +1967,19 @@ function CalendarView({
               <div className="space-y-0.5">
                 {dayItems.slice(0, 3).map((item) => {
                   const round = roundByItemId.get(item.id) ?? 0;
-                  const wasLate = isLate(item, orgTimezone) === true;
+                  const timeliness = timelinessOf(item, orgTimezone);
                   return (
-                    <div
+                    <button
                       key={item.id}
+                      onClick={() => item.task && onOpenTask(item.task.id)}
                       title={`${item.task?.task_name ?? ""} — ${
                         item.profiles?.full_name || item.profiles?.username || ""
-                      }${round > 0 ? ` (revision ${round})` : ""}${wasLate ? " — late" : ""}`}
-                      className={`flex items-center gap-1 rounded border px-1 py-[1px] text-[9px] ${
-                        round > 0
-                          ? "border-amber-200 bg-amber-50 text-amber-600"
-                          : "border-sky-200 bg-sky-50 text-sky-600"
-                      }`}
+                      }${round > 0 ? ` (revision ${round})` : ""} — ${TIMELINESS_LABEL[timeliness]}`}
+                      className={`flex w-full items-center gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${TIMELINESS_CHIP[timeliness]}`}
                     >
                       <span className="truncate">{item.task?.task_name ?? "Task"}</span>
-                      <RevisionBadge count={round} late={wasLate} />
-                    </div>
+                      <RevisionBadge count={round} late={timeliness !== "on_time" && timeliness !== "no_deadline"} />
+                    </button>
                   );
                 })}
                 {dayItems.length > 3 && (
