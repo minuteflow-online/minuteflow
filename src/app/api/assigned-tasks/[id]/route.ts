@@ -1049,6 +1049,19 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return Response.json({ error: "Assignee row not found" }, { status: 404 });
     }
 
+    // Stamp the log with the task it was worked under. time_logs otherwise
+    // carries no task reference, which forced matching on person + task name
+    // + account — and recurring templates reuse names by design, so one
+    // session's hours were counted against every instance sharing the name.
+    // Done here rather than in the browser because this is the one place that
+    // already holds both ids, whatever started the task.
+    if (log_id != null) {
+      await adminSupabase
+        .from("time_logs")
+        .update({ assigned_task_id: Number(id) })
+        .eq("id", log_id);
+    }
+
     if (status !== undefined && !isAdminOrManager) {
       const { error: syncError } = await adminSupabase
         .from("assigned_tasks")

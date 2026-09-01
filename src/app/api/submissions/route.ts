@@ -163,37 +163,7 @@ export async function GET(request: Request) {
   const reviewState: Record<number, string> = {};
 
   if (taskIds.length > 0) {
-    const taskMeta = new Map<
-      number,
-      { name: string | null; account: string | null; createdAt: string | null }
-    >();
-    for (const row of rows) {
-      if (row.assigned_tasks) {
-        taskMeta.set(row.assigned_tasks.id, {
-          name: row.assigned_tasks.task_name,
-          account: row.assigned_tasks.account,
-          createdAt: row.assigned_tasks.created_at,
-        });
-      }
-    }
-
-    const names = Array.from(
-      new Set(
-        Array.from(taskMeta.values())
-          .map((m) => m.name)
-          .filter((n): n is string => Boolean(n))
-      )
-    );
-
-    // No task can have been worked before the earliest of them existed, so
-    // this bounds the scan without excluding anything real.
-    const earliestTaskCreatedAt =
-      Array.from(taskMeta.values())
-        .map((m) => m.createdAt)
-        .filter((d): d is string => Boolean(d))
-        .sort()[0] ?? new Date(0).toISOString();
-
-    const [revisionRes, assigneeRes, logRes] = await Promise.all([
+    const [revisionRes, logRes] = await Promise.all([
       // Every thread entry, not just revisions: the newest one also tells us
       // whether the task is still awaiting review (see reviewState below).
       admin
@@ -204,23 +174,17 @@ export async function GET(request: Request) {
         // a mistaken reversal works by trashing it, so counting it here would
         // leave the task stuck in the state the mistake caused.
         .is("deleted_at", null),
+
+      // Logs now name the task they were worked under, so this asks for
+      // exactly the ones that belong to these tasks. It replaces matching on
+      // person + task name + account, which counted one session against every
+      // recurring instance sharing a name — an eight-hour total for someone
+      // on a four-hour day.
       admin
-        .from("assigned_task_assignees")
-        .select("assigned_task_id, va_id")
-        .in("assigned_task_id", taskIds),
-      names.length > 0
-        ? admin
-            .from("time_logs")
-            .select("user_id, task_name, account, start_time, duration_ms")
-            .in("task_name", names)
-            // PostgREST caps a response at 1000 rows by default. Once the
-            // logs for these task names passed that, the query silently
-            // returned a truncated slice and every total on the page went
-            // blank with no error anywhere. Narrowed to the window the tasks
-            // actually cover, and given an explicit ceiling well above it.
-            .gte("start_time", earliestTaskCreatedAt)
-            .limit(20000)
-        : Promise.resolve({ data: [] as never[] }),
+        .from("time_logs")
+        .select("assigned_task_id, start_time, duration_ms")
+        .in("assigned_task_id", taskIds)
+        .limit(20000),
     ]);
 
     const allEntries = (revisionRes.data ?? []) as Array<{
@@ -270,39 +234,20 @@ export async function GET(request: Request) {
               "awaiting";
     }
 
-    const vasByTask = new Map<number, string[]>();
-    for (const a of assigneeRes.data ?? []) {
-      const id = a.assigned_task_id as number;
-      vasByTask.set(id, (vasByTask.get(id) ?? []).concat(a.va_id as string));
-    }
-
-    // time_logs carry no task reference, so a log is matched to its task by
-    // person + task name + account.
-    const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+    // Each log names its task outright, so nothing has to be inferred.
     const logs = (logRes.data ?? []) as Array<{
-      user_id: string;
-      task_name: string | null;
-      account: string | null;
+      assigned_task_id: number | null;
       start_time: string | null;
       duration_ms: number | null;
     }>;
 
     for (const taskId of taskIds) {
-      const meta = taskMeta.get(taskId);
-      if (!meta) continue;
-      const vas = vasByTask.get(taskId) ?? [];
       const times = (revisionTimes.get(taskId) ?? []).slice().sort();
       const buckets: Record<number, number> = {};
 
       for (const log of logs) {
+        if (log.assigned_task_id !== taskId) continue;
         if (!log.start_time) continue;
-        if (!vas.includes(log.user_id)) continue;
-        if (norm(log.task_name) !== norm(meta.name)) continue;
-        if (norm(log.account) !== norm(meta.account)) continue;
-        // Work on a task can't predate the task. Without this, older logs that
-        // merely share a name and account (recurring work often does) get
-        // swallowed into round 0 and inflate the original-effort figure.
-        if (meta.createdAt && log.start_time < meta.createdAt) continue;
         const round = times.filter((t) => t < log.start_time!).length;
         buckets[round] = (buckets[round] ?? 0) + Number(log.duration_ms ?? 0);
       }
