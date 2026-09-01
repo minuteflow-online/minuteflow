@@ -37,12 +37,20 @@ type TaskDetail = {
 export default function TaskDetailModal({
   taskId,
   onClose,
+  canSetDue = false,
 }: {
   taskId: number;
   onClose: () => void;
+  /** Reviewers can move the deadline from here; everyone else reads it. */
+  canSetDue?: boolean;
 }) {
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [error, setError] = useState("");
+  const [dueOpen, setDueOpen] = useState(false);
+  const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
+  const [savingDue, setSavingDue] = useState(false);
+  const [dueError, setDueError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +62,10 @@ export default function TaskDetailModal({
           return;
         }
         const data = await res.json();
-        if (!cancelled) setTask(data.task ?? null);
+        if (cancelled) return;
+        setTask(data.task ?? null);
+        setDueDate(data.task?.due_date ?? "");
+        setDueTime((data.task?.due_time ?? "").slice(0, 5));
       } catch {
         if (!cancelled) setError("Couldn't load this task.");
       }
@@ -63,6 +74,35 @@ export default function TaskDetailModal({
       cancelled = true;
     };
   }, [taskId]);
+
+  async function saveDue() {
+    if (!dueDate) {
+      setDueError("Pick a date first.");
+      return;
+    }
+    setSavingDue(true);
+    setDueError("");
+    try {
+      const res = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ due_date: dueDate, due_time: dueTime || null }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setDueError(body.error || "Couldn't save that due date.");
+        return;
+      }
+      setTask((prev) =>
+        prev ? { ...prev, due_date: dueDate, due_time: dueTime || null } : prev
+      );
+      setDueOpen(false);
+    } catch {
+      setDueError("Couldn't save that due date.");
+    } finally {
+      setSavingDue(false);
+    }
+  }
 
   const schedule = [
     task?.start_date && `from ${task.start_date}`,
@@ -144,6 +184,63 @@ export default function TaskDetailModal({
                   </div>
                 ))}
             </div>
+
+            {/* The due date is the one field a reviewer routinely needs to
+                change while looking at the work — it's what the calendar
+                measures late against. Everything else still edits in
+                Assignment. */}
+            {canSetDue &&
+              (dueOpen ? (
+                <div className="rounded-lg border border-sand bg-cream/40 p-2">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                    Due date
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <input
+                      type="date"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                      className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+                    />
+                    <input
+                      type="time"
+                      value={dueTime}
+                      onChange={(e) => setDueTime(e.target.value)}
+                      className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+                    />
+                    <button
+                      onClick={saveDue}
+                      disabled={savingDue}
+                      className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                    >
+                      {savingDue ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDueOpen(false);
+                        setDueError("");
+                        setDueDate(task.due_date ?? "");
+                        setDueTime((task.due_time ?? "").slice(0, 5));
+                      }}
+                      disabled={savingDue}
+                      className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[10px] text-stone">
+                    Leaving the time blank means the whole day counts as on time.
+                  </p>
+                  {dueError && <p className="mt-1 text-[10px] text-terracotta">{dueError}</p>}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setDueOpen(true)}
+                  className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20"
+                >
+                  {task.due_date ? "Change due date" : "Add due date"}
+                </button>
+              ))}
 
             {blocks.map(([label, value]) => (
                 <div key={label}>

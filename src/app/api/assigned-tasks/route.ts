@@ -197,6 +197,35 @@ export async function GET(request: Request) {
   // the isPermittedPost comment below for the bug this shape used to hide.
   const isPermitted = hasBroadAdminAccess(profile) || hasAdminPermission(profile, "task_management");
 
+  // One task by id, in the admin row format — what the ?task= deep link from
+  // Submissions needs. Every other list here is scoped (your own work, or the
+  // reviewer queue of what is still sitting at "submitted"), so a link to an
+  // approved task, or to work someone else assigned, matched nothing and left
+  // the reader on an unfiltered list to hunt through.
+  const taskIdParam = searchParams.get("taskId");
+  if (taskIdParam) {
+    const { data, error } = await serviceRoleClient
+      .from("assigned_tasks")
+      .select(taskSelect)
+      .eq("id", taskIdParam)
+      .limit(1);
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    const rows = await formatAdminTaskRows(data ?? []);
+    const task = rows[0];
+    if (!task) return Response.json({ tasks: [] });
+
+    if (!isPermitted) {
+      const assignees = (task.assigned_task_assignees ?? []) as Array<{ va_id: string | null }>;
+      const mine =
+        assignees.some((a) => a.va_id === user.id) ||
+        (task as { assigned_by?: string | null }).assigned_by === user.id;
+      if (!mine) return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    return Response.json({ tasks: [task] });
+  }
+
   // VA fetching subtasks for a specific project: return tasks in admin-compatible format
   // so VAProjectsTab gets the same structure as admin's ProjectsManager.
   // The default VA path queries assigned_task_assignees (a different structure) and

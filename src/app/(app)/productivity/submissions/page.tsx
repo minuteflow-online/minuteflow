@@ -894,7 +894,11 @@ This cannot be undone.`
           bordered rows for one button was most of the page's dead space. */}
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white px-3 py-2">
         {detailTaskId !== null && (
-        <TaskDetailModal taskId={detailTaskId} onClose={() => setDetailTaskId(null)} />
+        <TaskDetailModal
+          taskId={detailTaskId}
+          onClose={() => setDetailTaskId(null)}
+          canSetDue={canReview}
+        />
       )}
 
       <SubmissionsLegend />
@@ -1237,6 +1241,30 @@ function SubmissionsLegend() {
           Resubmission
         </span>
         original vs rework
+      </span>
+
+      {/* Calendar-only colours. They answer a different question from the
+          review pills below — not what the reviewer decided, but whether the
+          work landed by its deadline — so they get their own row. */}
+      <span className="flex w-full items-center gap-1.5 text-[11px] text-stone">
+        {(["on_time", "late_same_day", "late_other_day", "no_deadline"] as const).map((key) => (
+          <span
+            key={key}
+            className={`rounded border px-2 py-[2px] text-[10px] font-semibold ${TIMELINESS_CHIP[key]}`}
+          >
+            {TIMELINESS_LABEL[key]}
+          </span>
+        ))}
+        calendar chips
+      </span>
+
+      <span className="flex w-full items-center gap-1.5 text-[11px] text-stone">
+        <span
+          className={`rounded border px-2 py-[2px] text-[10px] font-semibold opacity-60 ${TIMELINESS_CHIP.on_time}`}
+        >
+          Faded
+        </span>
+        auto approved — listed beneath the day&apos;s review queue
       </span>
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
@@ -2049,15 +2077,16 @@ function CalendarView({
         return { day: dayKey(d), date: d.getDate() };
       });
       const end = shiftDays(start, 6);
-      const sameMonth = start.getMonth() === end.getMonth();
+      const from = start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      // Hand-built rather than a second toLocaleDateString: asking Intl for
+      // day + year alone renders "2026 (day: 22)".
+      const to =
+        start.getMonth() === end.getMonth()
+          ? `${end.getDate()}, ${end.getFullYear()}`
+          : `${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${end.getFullYear()}`;
       return {
         cells: days as Array<{ day: string; date: number } | null>,
-        label: `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString(
-          "en-US",
-          sameMonth
-            ? { day: "numeric", year: "numeric" }
-            : { month: "short", day: "numeric", year: "numeric" }
-        )}`,
+        label: `${from} – ${to}`,
       };
     }
 
@@ -2123,7 +2152,19 @@ function CalendarView({
           {(["month", "week", "day", "custom"] as CalendarScale[]).map((option) => (
             <button
               key={option}
-              onClick={() => setScale(option)}
+              onClick={() => {
+                if (option === scale) return;
+                setScale(option);
+                // Changing scale re-centres on now. Landing on the week of
+                // whatever month you happened to be browsing is never what
+                // "week" meant.
+                if (option !== "custom") onAnchorChange(new Date());
+                else {
+                  const today = new Date();
+                  setCustomStart(dayKey(shiftDays(today, -6)));
+                  setCustomEnd(dayKey(today));
+                }
+              }}
               className={`rounded-md px-2.5 py-1 text-[10px] font-semibold capitalize transition-colors ${
                 scale === option
                   ? "bg-white text-espresso shadow-sm"

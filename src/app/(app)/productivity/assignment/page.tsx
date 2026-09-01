@@ -233,6 +233,57 @@ type AdminTaskFlat = {
   assigned_task_assignees: AdminAssigneeFlat[];
 };
 
+/**
+ * Admin task row (task with nested assignees) → one VA-format row per
+ * assignee, so the task list and the editor panel can render it with the same
+ * logic as My Tasks. Used by the reviewer queue and by the ?task= deep link.
+ */
+function flattenAdminTask(task: AdminTaskFlat): VATaskRow[] {
+  return (task.assigned_task_assignees ?? []).map((assignee) => ({
+    id: assignee.id,
+    va_id: assignee.va_id,
+    status: assignee.status,
+    log_id: assignee.log_id,
+    notes: assignee.notes,
+    accuracy_score: assignee.accuracy_score ?? null,
+    assigned_at: assignee.assigned_at,
+    updated_at: assignee.updated_at,
+    is_collaborative: false,
+    collaborator_name: null,
+    profiles: assignee.profiles ?? null,
+    assigned_tasks: {
+      id: task.id,
+      account: task.account,
+      project: task.project,
+      project_id: task.project_id,
+      category: task.category,
+      task_name: task.task_name,
+      task_detail: task.task_detail,
+      task_notes: task.task_notes,
+      due_date: task.due_date,
+      start_date: task.start_date,
+      start_time: task.start_time,
+      end_time: task.end_time,
+      assigned_by: task.assigned_by ?? null,
+      assigned_by_profile: task.assigned_by_profile ?? null,
+      instructions: task.instructions ?? null,
+      instructions_locked: Boolean(task.instructions_locked),
+      review_required: Boolean(task.review_required),
+      review_required_locked: Boolean(task.review_required_locked),
+      revision_count: task.revision_count ?? 0,
+      recurring_template_id: task.recurring_template_id ?? null,
+      spawned_template_id: task.spawned_template_id ?? null,
+      fixed_pay_task_id: task.fixed_pay_task_id ?? null,
+      fixed_pay_tasks: task.fixed_pay_tasks ?? null,
+      projects: task.projects ?? null,
+      created_by: task.created_by,
+      created_by_profile: task.created_by_profile ?? null,
+      created_at: task.created_at,
+      updated_at: task.updated_at,
+    },
+  })) as VATaskRow[];
+}
+
 const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }> = [
   { value: "all", label: "All Statuses" },
   { value: "unassigned", label: "Unassigned" },
@@ -525,51 +576,7 @@ export default function TaskListPage() {
           // asReviewer=true returns admin format: task rows with nested assignees.
           // Flatten each submitted assignee into a VA-format row so the task list
           // can render it with the same logic as My Tasks.
-          normalized = (raw as AdminTaskFlat[]).flatMap((task) =>
-            (task.assigned_task_assignees ?? []).map((assignee) => ({
-              id: assignee.id,
-              va_id: assignee.va_id,
-              status: assignee.status,
-              log_id: assignee.log_id,
-              notes: assignee.notes,
-              accuracy_score: assignee.accuracy_score ?? null,
-              assigned_at: assignee.assigned_at,
-              updated_at: assignee.updated_at,
-              is_collaborative: false,
-              collaborator_name: null,
-              profiles: assignee.profiles ?? null,
-              assigned_tasks: {
-                id: task.id,
-                account: task.account,
-                project: task.project,
-                project_id: task.project_id,
-                category: task.category,
-                task_name: task.task_name,
-                task_detail: task.task_detail,
-                task_notes: task.task_notes,
-                due_date: task.due_date,
-                start_date: task.start_date,
-                start_time: task.start_time,
-                end_time: task.end_time,
-                assigned_by: task.assigned_by ?? null,
-                assigned_by_profile: task.assigned_by_profile ?? null,
-                instructions: task.instructions ?? null,
-                instructions_locked: Boolean(task.instructions_locked),
-                review_required: Boolean(task.review_required),
-                review_required_locked: Boolean(task.review_required_locked),
-                revision_count: task.revision_count ?? 0,
-                recurring_template_id: task.recurring_template_id ?? null,
-                spawned_template_id: task.spawned_template_id ?? null,
-                fixed_pay_task_id: task.fixed_pay_task_id ?? null,
-                fixed_pay_tasks: task.fixed_pay_tasks ?? null,
-                projects: task.projects ?? null,
-                created_by: task.created_by,
-                created_by_profile: task.created_by_profile ?? null,
-                created_at: task.created_at,
-                updated_at: task.updated_at,
-              },
-            }))
-          );
+          normalized = (raw as AdminTaskFlat[]).flatMap(flattenAdminTask);
         } else {
           normalized = raw.map((row: VATaskRow) => ({
             ...row,
@@ -1158,7 +1165,7 @@ export default function TaskListPage() {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined" || tasks.length === 0) return;
+    if (typeof window === "undefined" || loading) return;
     const wanted = new URLSearchParams(window.location.search).get("task");
     if (!wanted || openedFromUrlRef.current === wanted) return;
 
@@ -1169,24 +1176,25 @@ export default function TaskListPage() {
       return;
     }
 
-    // The task exists but isn't in the list being shown — a submitted task
-    // while My Tasks is open, say. Arriving from Submissions that is the
-    // normal case, and landing on a list to search by name defeats the point
-    // of the link. Ask the task which view holds it and switch there; the
-    // next run of this effect finds it and opens the editor.
+    // Not in the list on screen, and switching views won't necessarily help:
+    // My Tasks is your own work only, and the reviewer queue holds just what
+    // is still sitting at "submitted". A link to an approved task, or to work
+    // someone else assigned, belongs to neither. So fetch the one task by id
+    // and open its editor directly — the link's whole promise is that you
+    // don't have to go hunting for it.
     let cancelled = false;
+    openedFromUrlRef.current = wanted;
     (async () => {
-      const res = await fetch(`/api/assigned-tasks/${wanted}`, { cache: "no-store" });
+      const res = await fetch(`/api/assigned-tasks?taskId=${wanted}`, { cache: "no-store" });
       if (cancelled || !res.ok) return;
-      const { task } = await res.json();
-      const status = task?.assigned_task_assignees?.[0]?.status ?? null;
-      const submittedish = ["submitted", "reviewing", "revision_needed", "approved", "completed"];
-      setActiveView(submittedish.includes(status) ? "submitted" : "my_tasks");
+      const json = await res.json();
+      const rows = ((json.tasks ?? []) as AdminTaskFlat[]).flatMap(flattenAdminTask);
+      if (!cancelled && rows.length > 0) setSelectedTask(rows[0]);
     })();
     return () => {
       cancelled = true;
     };
-  }, [tasks, setActiveView]);
+  }, [tasks, loading]);
 
   const filteredTasks = useMemo(() => {
     const start = filterDueStart ? parseDueDateSafe(filterDueStart) : null;
