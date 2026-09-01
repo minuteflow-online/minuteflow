@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,11 @@ function serviceClient() {
  * service-role server route. EmailStatusTab used to read/write it straight
  * from the browser client, which only worked because RLS/grants hadn't been
  * locked down yet. This route is that lockdown's server-side counterpart.
+ *
+ * Gate matches admin/page.tsx's own isFullAdmin check (hasFinancialAccess),
+ * which is what actually controls whether the Email Log tab even renders —
+ * hasBroadAdminAccess would have let Manager/Coordinator/any-department
+ * Specialist through this route despite the UI never showing them the tab.
  */
 async function requireAdmin() {
   const supabase = await createClient();
@@ -27,8 +32,12 @@ async function requireAdmin() {
   if (!user) {
     return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (!hasBroadAdminAccess(profile)) {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, department")
+    .eq("id", user.id)
+    .single();
+  if (!hasFinancialAccess(profile)) {
     return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
   }
   return { user };
