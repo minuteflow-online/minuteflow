@@ -20,6 +20,21 @@ import { telegramEnabled, esc } from "@/lib/telegram";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { EXTENSION_LATEST_VERSION, EXTENSION_STORE_URL, isVersionOlder } from "@/lib/extensionVersion";
 
+/**
+ * Versions the extension reported from a hardcoded constant rather than its own
+ * manifest.
+ *
+ * Up to 1.2.2 the reported version was a literal in background.js, and the
+ * 1.2.2 release forgot to bump it — so every install reports "1.2.1" whatever
+ * it is actually running, and this check told the entire team to update to a
+ * version most of them already had. Flordeliz was nagged twice while her popup
+ * showed 1.2.2.
+ *
+ * A report of exactly "1.2.1" therefore says nothing, and nobody is chased on
+ * it. 1.2.3 reads the manifest, so once the fleet is past this the set can go.
+ */
+const UNTRUSTWORTHY_REPORTED_VERSIONS = new Set(["1.2.1"]);
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
@@ -193,7 +208,10 @@ export async function GET(request: NextRequest) {
       .select("user_id, extension_version");
 
     const behind = (statuses ?? []).filter(
-      (s) => s.extension_version && isVersionOlder(s.extension_version as string, EXTENSION_LATEST_VERSION)
+      (s) =>
+          s.extension_version &&
+          !UNTRUSTWORTHY_REPORTED_VERSIONS.has(s.extension_version as string) &&
+          isVersionOlder(s.extension_version as string, EXTENSION_LATEST_VERSION)
     );
 
     if (behind.length > 0) {

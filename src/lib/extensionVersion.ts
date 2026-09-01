@@ -17,6 +17,10 @@ export const EXTENSION_MIN_VERSION = "1.2.0";
  * EXTENSION_MIN_VERSION is the hard floor that makes VAs see a reinstall
  * prompt, so it should only move when a build is genuinely required.
  */
+// Deliberately still 1.2.2 while 1.2.3 sits unpublished. Raising it before the
+// store has the build would chase the whole team after a version they cannot
+// install. Bump it the day 1.2.3 goes live, and drop the untrusted-version set
+// in screenshot-health once the fleet is past 1.2.1.
 export const EXTENSION_LATEST_VERSION = "1.2.2";
 
 /**
