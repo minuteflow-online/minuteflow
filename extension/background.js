@@ -300,28 +300,26 @@ async function uploadQueueItem(item) {
 
   try {
     // Markers carry no image — they record *why* a slot has no screenshot
-    // (idle, locked, on MinuteFlow). They go straight to the table rather than
-    // through the Drive upload route, but ride the same queue so a marker
-    // recorded while offline still lands once the connection comes back.
+    // (idle, locked, on MinuteFlow). They ride the same queue as real uploads
+    // so a marker recorded while offline still lands once the connection
+    // comes back, but they go through the server (service role), not a direct
+    // table write: task_screenshots has no anon/authenticated grants — every
+    // write to it goes through a route like this one, and a direct insert
+    // with the VA's own token was failing with 42501 on every single retry.
     if (item.kind === 'marker') {
-      const base = {
-        user_id: item.userId,
-        log_id: item.logId,
-        screenshot_type: 'failed',
-        failure_reason: item.failureReason,
-        filename: '',
-      };
-      try {
-        await DB.query('task_screenshots', {
-          method: 'POST',
-          body: { ...base, captured_at: item.timestamp },
-        });
-      } catch (err) {
-        // captured_at may not exist on the table yet. Record the marker without
-        // it rather than dropping it — the reason matters more than the exact
-        // stamp, and this starts working on its own once the column is added.
-        console.warn('[MinuteFlow] Marker insert with captured_at failed, retrying without:', err.message);
-        await DB.query('task_screenshots', { method: 'POST', body: base });
+      const res = await fetch(`${CONFIG.API_BASE}/api/screenshot-marker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: item.userId,
+          logId: item.logId,
+          failureReason: item.failureReason,
+          capturedAt: item.timestamp,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.details || err.error || `Marker insert failed: ${res.status}`);
       }
       await removeFromQueue(item.id);
       console.log(`[MinuteFlow] Marker recorded: ${item.failureReason}`);
