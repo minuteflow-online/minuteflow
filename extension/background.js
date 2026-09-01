@@ -45,7 +45,11 @@ const CONFIG = {
   IDLE_THRESHOLD_SECONDS: 300,
 
   // Extension version
-  VERSION: '1.2.1',
+  // Read, never restated. This was hardcoded and the 1.2.2 release bumped
+  // manifest.json without it, so every install on earth reported 1.2.1 —
+  // including the ones that had updated — and the server nagged all of them
+  // to install a version they already had.
+  VERSION: chrome.runtime.getManifest().version,
 
   // API base
   API_BASE: 'https://minuteflow.click',

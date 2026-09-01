@@ -1,11 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { notifyVaPrivately } from "./vaNotify";
-import { forceClockOut } from "./forceClockOut";
-import { esc } from "./telegram";
+import { sendTelegram, esc } from "./telegram";
 
 /**
- * Flags a VA whose screen has not changed for 15 minutes while a task is running,
- * then closes the session if it still has not changed 15 minutes after that.
+ * Flags a VA whose screen has not changed for 15 minutes while a task is running.
+ *
+ * It closes nothing. It used to warn and then end the session, which cost
+ * Flordeliz her session on 2026-08-31 during an ordinary 41-minute gap between
+ * captures — gaps that size are routine for four of the five VAs. Interrupting
+ * someone's work on that evidence is not worth what it catches.
  *
  * This catches something the heartbeat cannot. A tab left open keeps the session
  * alive, so someone can look perfectly active to the idle check while their
@@ -50,18 +53,10 @@ import { esc } from "./telegram";
 /** How long the screen must be unchanged before it is worth mentioning. */
 const STATIC_WINDOW_MS = 15 * 60 * 1000;
 
-/** How long after that message the person has to do something before the
- *  session is closed. Any change on screen in between cancels it entirely. */
-const GRACE_MS = 15 * 60 * 1000;
-
 /** Captures run every five minutes, so a real 15-minute window holds three or
  *  four. Fewer than three means the window is not properly covered and the
  *  check stays silent. */
 const MIN_CAPTURES = 3;
-
-/** Same switch the idle check uses. Both automatic closes are off until turned
- *  on deliberately — see the note in the idle cron for why. */
-const AUTO_CLOSE_ENABLED = process.env.IDLE_AUTO_CLOSE === "on";
 
 /** How stale extension_heartbeats.last_seen must be before the extension
  *  itself (not the MinuteFlow tab) counts as disconnected/logged out. Matches
@@ -97,7 +92,6 @@ export async function checkStaticScreens(
 ): Promise<string[]> {
   const supabase = serviceClient();
   const flagged: string[] = [];
-  const closed: string[] = [];
   const since = new Date(Date.now() - STATIC_WINDOW_MS).toISOString();
 
   for (const c of candidates) {
@@ -198,6 +192,33 @@ export async function checkStaticScreens(
         !ext?.last_seen || Date.now() - new Date(ext.last_seen as string).getTime() > EXTENSION_STALE_MS;
     }
 
+    // Nothing arriving while the extension is checking in normally is a fault
+    // on our side of the wire, not theirs. Telling someone to go and check an
+    // extension that is plainly connected — as it did to Flordeliz, twice,
+    // while her extension showed "Connected" and seven captures — reads as
+    // being blamed for our bug. Toni hears about it; the VA does not.
+    if (noCaptures && !extensionLoggedOut) {
+      await supabase
+        .from("profiles")
+        .update({ screen_static_warned_at: new Date().toISOString() })
+        .eq("id", c.user_id);
+
+      if (!warnedAt) {
+        await sendTelegram(
+          "ops",
+          [
+            `📡 <b>${esc(who)}</b> — captures stopped arriving`,
+            "",
+            `Nothing for ${Math.round(STATIC_WINDOW_MS / 60000)} minutes, but the extension is still checking in. That points at the upload path rather than at her.`,
+            "",
+            "No message was sent to her and her session was left alone.",
+          ].join("\n")
+        );
+      }
+      flagged.push(who);
+      continue;
+    }
+
     // First time we see this stretch: say something, close nothing.
     if (!warnedAt) {
       await supabase
@@ -214,26 +235,19 @@ export async function checkStaticScreens(
         userId: c.user_id,
         vaName: who,
         topic: "Screen activity",
+        // Reaching here with noCaptures means the extension itself stopped
+        // checking in, so there is genuinely something on their end to look at.
+        // The connected-but-silent case never gets this far — it went to ops.
         message: noCaptures
-          ? extensionLoggedOut
-            ? [
-                "🖥️ <b>You look logged out of the extension</b>",
-                "",
-                `Hi ${esc(who)} — MinuteFlow has not received any screenshots in the last ${Math.round(STATIC_WINDOW_MS / 60000)} minutes, and your extension has not checked in either.`,
-                "",
-                "Please open the MinuteFlow extension and make sure you are logged in — that is the most common cause.",
-                "",
-                `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
-              ].join("\n")
-            : [
-                "🖥️ <b>No screenshots detected</b>",
-                "",
-                `Hi ${esc(who)} — MinuteFlow has not received any screenshots from your session in the last ${Math.round(STATIC_WINDOW_MS / 60000)} minutes, even though your extension looks connected.`,
-                "",
-                "Double check you are logged into the extension and that your screen-share is still active.",
-                "",
-                `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
-              ].join("\n")
+          ? [
+              "🖥️ <b>You look logged out of the extension</b>",
+              "",
+              `Hi ${esc(who)} — MinuteFlow has not received any screenshots in the last ${Math.round(STATIC_WINDOW_MS / 60000)} minutes, and your extension has not checked in either.`,
+              "",
+              "Please open the MinuteFlow extension and make sure you are logged in — that is the most common cause.",
+              "",
+              "Your session is still running and nothing has been changed.",
+            ].join("\n")
           : [
               "🖥️ <b>Quick check on your screenshots</b>",
               "",
@@ -241,7 +255,7 @@ export async function checkStaticScreens(
               "",
               "Could you open MinuteFlow and check your screenshots are going through — and that you're still logged into the extension? If you have stepped away, a break or a clock-out keeps your log accurate.",
               "",
-              `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
+              "Your session is still running and nothing has been changed.",
             ].join("\n"),
       });
 
@@ -249,35 +263,12 @@ export async function checkStaticScreens(
       continue;
     }
 
-    // Warned already and still nothing resolved — close it, but only if the
-    // warning could actually have reached them. Someone with no Telegram link
-    // never saw it, and closing a session on a warning nobody received is the
-    // unfairness this whole flow exists to avoid. They stay flagged for Toni
-    // instead, which is visible without being punitive.
-    if (Date.now() - warnedAt >= GRACE_MS && prof.telegram_chat_id && AUTO_CLOSE_ENABLED) {
-      await forceClockOut(c.user_id, c.log_id, noCaptures ? "no_screenshots" : "screen_unchanged");
-      await notifyVaPrivately({
-        chatId: prof.telegram_chat_id as number | null,
-        userId: c.user_id,
-        vaName: who,
-        topic: "Screen activity",
-        message: [
-          "⚪ <b>Session closed</b>",
-          "",
-          noCaptures
-            ? "No screenshots came through after the check, so MinuteFlow ended the session and closed the open task."
-            : "Your screen stayed the same after the check, so MinuteFlow ended the session and closed the open task.",
-          "",
-          "If this is a mistake, open your Time Log, find this entry, and request a correction with an explanation — your screenshots up to the close are still on record for whoever reviews it.",
-        ].join("\n"),
-      });
-      closed.push(who);
-      continue;
-    }
-
+    // Warned already. Nothing further happens: the warning stands, Toni can
+    // see who is flagged, and the session is left to run. Ending someone's
+    // shift on a stretch of quiet is the one thing this must not do.
     flagged.push(who);
   }
 
-  return [...flagged, ...closed];
+  return flagged;
 }
 

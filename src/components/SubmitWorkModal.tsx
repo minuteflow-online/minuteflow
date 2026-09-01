@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { AssignedTaskStatus } from "@/types/database";
+import { countWords, submissionMeetsBar, MIN_SUBMISSION_WORDS } from "@/lib/submissions";
 
 /**
  * Run before turning work in. Instructions show the task's own text inline,
@@ -25,6 +26,9 @@ interface SubmitWorkModalProps {
   taskName: string;
   /** Shown inline under the first checklist item, so it's actually read. */
   instructions?: string | null;
+  /** When false, nobody reviews this task, so the checklist and the word bar
+   *  are dropped — they exist for a reader this work will never have. */
+  reviewRequired?: boolean | null;
   onClose: () => void;
   /**
    * Called once the submission is saved. Receives the status the task should
@@ -48,6 +52,7 @@ export default function SubmitWorkModal({
   taskId,
   taskName,
   instructions,
+  reviewRequired,
   onClose,
   onSubmitted,
 }: SubmitWorkModalProps) {
@@ -59,8 +64,16 @@ export default function SubmitWorkModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
-  const hasContent = Boolean(message.trim() || link.trim() || files.length > 0);
-  const allChecked = CHECKLIST.every((c) => checked.has(c.key));
+  const words = countWords(message);
+  // A task nobody reviews only needs a submission that isn't empty — the
+  // 15-word bar exists for a reader this work never gets. The checklist still
+  // shows, because it's a prompt worth reading even when nothing enforces it;
+  // it just doesn't block submitting.
+  const needsEvidence = reviewRequired !== false;
+  const hasContent = needsEvidence
+    ? submissionMeetsBar({ message, link, fileCount: files.length })
+    : Boolean(message.trim() || link.trim() || files.length > 0);
+  const allChecked = !needsEvidence || CHECKLIST.every((c) => checked.has(c.key));
   const canSubmit = hasContent && allChecked;
 
   const addFiles = (list: FileList | null) => {
@@ -197,7 +210,9 @@ export default function SubmitWorkModal({
           </div>
 
           <div className="rounded-lg border border-sand bg-cream/40 p-2">
-            <label className={labelClass}>Before you submit</label>
+            <label className={labelClass}>
+              Before you submit{needsEvidence ? "" : " (optional)"}
+            </label>
             <div className="space-y-1">
               {CHECKLIST.map((item) => (
                 <label key={item.key} className="flex cursor-pointer items-start gap-2">
@@ -227,6 +242,14 @@ export default function SubmitWorkModal({
               ))}
             </div>
           </div>
+
+          {needsEvidence && !hasContent && (
+            <p className="rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[10px] leading-relaxed text-stone">
+              Attach a file or add a link — or, if the message is all there is,
+              describe the work in at least {MIN_SUBMISSION_WORDS} words.
+              {words > 0 && ` (${words} so far)`}
+            </p>
+          )}
 
           <p className="rounded-lg border border-amber/20 bg-amber-soft px-2 py-1.5 text-[10px] leading-relaxed text-walnut">
             Once submitted this can&apos;t be edited. If something changes, add a note to the
