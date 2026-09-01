@@ -1122,31 +1122,6 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                 </>
               )}
 
-              {panelMode === "edit" && selectedTask && (
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
-                  {(selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
-                  VA_STATUS_OPTIONS.includes(selectedTask.status) ? (
-                    <select
-                      value={selectedTask.status}
-                      disabled={statusSaving}
-                      onChange={(event) => void handleStatusChange(selectedTask.id, event.target.value as FixedPayTaskWithClaimer["status"])}
-                      className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta disabled:opacity-50"
-                    >
-                      {VA_STATUS_OPTIONS.map((status) => (
-                        <option key={status} value={status}>
-                          {STATUS_LABELS[status]}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
-                      {STATUS_LABELS[selectedTask.status]}
-                    </span>
-                  )}
-                </div>
-              )}
-
               {panelMode === "view" && selectedTask && (
                 <>
                   <TaskEditor

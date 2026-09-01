@@ -998,9 +998,13 @@ export default function ProductivityCalendarPage() {
         }}
         disabled={quickQueueingId === task.id}
         title="Move to On Queue"
-        className="pointer-events-auto absolute -top-1.5 -right-1.5 z-10 rounded-full bg-sage px-1.5 py-[1px] text-[8px] font-bold uppercase leading-tight text-white shadow-sm hover:bg-sage/90 disabled:opacity-50"
+        // Badges in this app are always rounded-full pills — deliberately NOT
+        // that shape here, so this doesn't read as a status badge. Buttons are
+        // rounded-lg; this is the same shape at corner-chip scale, plus a
+        // border so it still pops against the sage fill at 8px.
+        className="pointer-events-auto absolute -top-1.5 -right-1.5 z-10 rounded-md border border-sage-soft bg-sage px-1.5 py-[2px] text-[8px] font-bold uppercase leading-tight text-white shadow hover:bg-sage/90 disabled:opacity-50"
       >
-        {quickQueueingId === task.id ? "…" : "Queue"}
+        {quickQueueingId === task.id ? "…" : "+ Queue"}
       </button>
     );
 
