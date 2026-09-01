@@ -177,7 +177,17 @@ export async function PATCH(request: Request) {
   if (!isAdmin) {
     const { data: project } = await supabase.from("projects").select("created_by").eq("id", id).maybeSingle();
     if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
-    if (project.created_by !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
+    // Anyone involved in the objective/operation can edit it — the creator or a
+    // VA who's been given access (project_va_access) — not just the creator.
+    if (project.created_by !== user.id) {
+      const { data: access } = await supabase
+        .from("project_va_access")
+        .select("project_id")
+        .eq("project_id", id)
+        .eq("va_id", user.id)
+        .maybeSingle();
+      if (!access) return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const body = (await request.json()) as {
