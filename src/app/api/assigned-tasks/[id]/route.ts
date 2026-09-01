@@ -27,7 +27,7 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, review_required, review_required_locked, recurring_template_id, spawned_template_id, task_todos(id, text, sort_order), assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, created_by, created_at, updated_at, archived_at, deleted_at, status, revision_count, fixed_pay_task_id, instructions, instructions_locked, review_required, review_required_locked, recurring_template_id, spawned_template_id, projects(id, name), task_todos(id, text, sort_order), assigned_task_assignees(id, va_id, status)";
 
 const REVIEW_LOCKED_ERROR =
   "Forbidden: Review Required is locked at Yes. Only Admin, Manager, CEO, or Founder can change it.";
@@ -153,7 +153,43 @@ export async function GET(_request: Request, { params }: RouteContext) {
     }
   }
 
-  return Response.json({ task });
+  // Names for everyone attached to the task. Three separate embeds on profiles
+  // from one row is ambiguous to PostgREST, so the ids are resolved in one
+  // lookup and attached here instead.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const taskRow = task as any;
+  const assigneeRows = (taskRow.assigned_task_assignees ?? []) as Array<{
+    id: number;
+    va_id: string | null;
+    status: string | null;
+  }>;
+  const peopleIds = [
+    ...new Set(
+      [taskRow.assigned_by, taskRow.created_by, ...assigneeRows.map((a) => a.va_id)].filter(
+        (v): v is string => Boolean(v)
+      )
+    ),
+  ];
+  let people: Record<string, { id: string; full_name: string | null; username: string | null }> = {};
+  if (peopleIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, full_name, username")
+      .in("id", peopleIds);
+    people = Object.fromEntries((profiles ?? []).map((p) => [p.id, p]));
+  }
+
+  return Response.json({
+    task: {
+      ...taskRow,
+      assigned_by_profile: taskRow.assigned_by ? people[taskRow.assigned_by] ?? null : null,
+      created_by_profile: taskRow.created_by ? people[taskRow.created_by] ?? null : null,
+      assigned_task_assignees: assigneeRows.map((a) => ({
+        ...a,
+        profiles: a.va_id ? people[a.va_id] ?? null : null,
+      })),
+    },
+  });
 }
 
 /**

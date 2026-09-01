@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ORG_TIMEZONE } from "@/lib/taskSchedule";
+
+type Person = { id: string; full_name: string | null; username: string | null } | null;
 
 type TaskDetail = {
   id: number;
@@ -8,11 +11,16 @@ type TaskDetail = {
   task_detail: string | null;
   task_notes: string | null;
   instructions: string | null;
+  instructions_locked: boolean | null;
   link: string | null;
   account: string | null;
   project: string | null;
+  project_id: string | null;
+  projects?: { id: string; name: string } | null;
+  parent_task_id: number | null;
   category: string | null;
   pay_type: string | null;
+  status: string | null;
   due_date: string | null;
   due_time: string | null;
   start_date: string | null;
@@ -21,18 +29,55 @@ type TaskDetail = {
   end_time: string | null;
   planned_minutes: number | null;
   review_required: boolean | null;
+  review_required_locked: boolean | null;
+  revision_count: number | null;
+  recurring_template_id: string | null;
+  spawned_template_id: string | null;
+  fixed_pay_task_id: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  archived_at: string | null;
+  deleted_at: string | null;
+  assigned_by_profile?: Person;
+  created_by_profile?: Person;
+  assigned_task_assignees?: Array<{ id: number; va_id: string | null; status: string | null; profiles?: Person }>;
   task_todos?: Array<{ id: number; text: string; sort_order: number }>;
 };
 
+function personName(p: Person): string | null {
+  if (!p) return null;
+  return p.full_name || p.username || null;
+}
+
+/** Timestamps are stored UTC; everyone here reads them in org time. */
+function fmtStamp(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: ORG_TIMEZONE,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function statusLabel(status: string | null | undefined): string | null {
+  if (!status) return null;
+  return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 /**
- * The whole task, read-only, without leaving the page you were reviewing from.
+ * The whole task, without leaving the page you were reviewing from.
  *
  * Reviewing a submission means checking the work against what was asked for,
  * and the link out to Assignment dropped you into a list to search by name —
  * which is the one thing you already know. This shows the brief itself.
  *
- * Read-only on purpose: this is the reviewer's reference, and a stray edit
- * while reading is not something to make easy. Editing stays in Assignment.
+ * Every field is listed, filled or not: a blank is information. It says this
+ * task went out with no due date, or no instructions, which is exactly what a
+ * reviewer needs to see. Editing stays in Assignment — the due date is the
+ * one exception, because it is what the calendar measures late against.
  */
 export default function TaskDetailModal({
   taskId,
@@ -41,7 +86,7 @@ export default function TaskDetailModal({
 }: {
   taskId: number;
   onClose: () => void;
-  /** Reviewers can move the deadline from here; everyone else reads it. */
+  /** Reviewers can set the deadline from here; everyone else reads it. */
   canSetDue?: boolean;
 }) {
   const [task, setTask] = useState<TaskDetail | null>(null);
@@ -93,9 +138,7 @@ export default function TaskDetailModal({
         setDueError(body.error || "Couldn't save that due date.");
         return;
       }
-      setTask((prev) =>
-        prev ? { ...prev, due_date: dueDate, due_time: dueTime || null } : prev
-      );
+      setTask((prev) => (prev ? { ...prev, due_date: dueDate, due_time: dueTime || null } : prev));
       setDueOpen(false);
     } catch {
       setDueError("Couldn't save that due date.");
@@ -104,29 +147,50 @@ export default function TaskDetailModal({
     }
   }
 
-  const schedule = [
-    task?.start_date && `from ${task.start_date}`,
-    task?.end_date && `to ${task.end_date}`,
-    task?.planned_minutes ? `${task.planned_minutes} min planned` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const assignees = (task?.assigned_task_assignees ?? [])
+    .map((a) => {
+      const name = personName(a.profiles ?? null) ?? "Unknown";
+      const status = statusLabel(a.status);
+      return status ? `${name} — ${status}` : name;
+    })
+    .join(", ");
 
   const due = task?.due_date
-    ? `${task.due_date}${task.due_time ? ` at ${task.due_time}` : ""}`
+    ? `${task.due_date}${task.due_time ? ` at ${task.due_time.slice(0, 5)}` : ""}`
     : null;
 
-  // Every field shows, filled or not. A blank here is information: it says
-  // this task went out without a due date, or without a category, which is
-  // exactly what a reviewer needs to notice.
+  const recurring =
+    task?.recurring_template_id || task?.spawned_template_id ? "Yes" : task ? "No" : null;
+
+  // Every field on the task, in the order a reviewer reads them: who and what
+  // first, then the schedule, then the review and bookkeeping flags.
   const rows: Array<[string, string | null]> = [
+    ["Assigned to", assignees || null],
+    ["Assigned by", personName(task?.assigned_by_profile ?? null)],
+    ["Created by", personName(task?.created_by_profile ?? null)],
+    ["Status", statusLabel(task?.status)],
     ["Account", task?.account ?? null],
-    ["Project", task?.project ?? null],
+    ["Project", task?.projects?.name ?? task?.project ?? null],
     ["Category", task?.category ?? null],
     ["Pay type", task?.pay_type ?? null],
     ["Due", due],
-    ["Schedule", schedule || null],
+    ["Planned", task?.planned_minutes ? `${task.planned_minutes} min` : null],
+    ["Start date", task?.start_date ?? null],
+    ["End date", task?.end_date ?? null],
+    ["Start time", fmtStamp(task?.start_time)],
+    ["End time", fmtStamp(task?.end_time)],
     ["Review required", task ? (task.review_required ? "Yes" : "No") : null],
+    ["Review locked", task ? (task.review_required_locked ? "Yes" : "No") : null],
+    ["Instructions locked", task ? (task.instructions_locked ? "Yes" : "No") : null],
+    ["Revisions", task ? String(task.revision_count ?? 0) : null],
+    ["Recurring", recurring],
+    ["Parent task", task?.parent_task_id ? `#${task.parent_task_id}` : null],
+    ["Fixed pay task", task?.fixed_pay_task_id ? `#${task.fixed_pay_task_id}` : null],
+    ["Task ID", task ? `#${task.id}` : null],
+    ["Created", fmtStamp(task?.created_at)],
+    ["Updated", fmtStamp(task?.updated_at)],
+    ["Archived", fmtStamp(task?.archived_at)],
+    ["Deleted", fmtStamp(task?.deleted_at)],
   ];
 
   const blocks: Array<[string, string | null]> = [
@@ -170,19 +234,17 @@ export default function TaskDetailModal({
           <div className="space-y-3 p-4">
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
               {rows.map(([label, value]) => (
-                  <div key={label}>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                      {label}
-                    </p>
-                    <p
-                      className={`text-[12px] ${
-                        value ? "text-espresso" : "italic text-stone/60"
-                      }`}
-                    >
-                      {value || "Not set"}
-                    </p>
-                  </div>
-                ))}
+                <div key={label}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                    {label}
+                  </p>
+                  <p
+                    className={`text-[12px] ${value ? "text-espresso" : "italic text-stone/60"}`}
+                  >
+                    {value || "Not set"}
+                  </p>
+                </div>
+              ))}
             </div>
 
             {/* The due date is the one field a reviewer routinely needs to
@@ -238,68 +300,62 @@ export default function TaskDetailModal({
                   onClick={() => setDueOpen(true)}
                   className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20"
                 >
-                  {task.due_date ? "Change due date" : "Add due date"}
+                  Add due date
                 </button>
               ))}
 
             {blocks.map(([label, value]) => (
-                <div key={label}>
-                  <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                    {label}
-                  </p>
-                  <p
-                    className={`whitespace-pre-wrap rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[12px] leading-snug ${
-                      value?.trim() ? "text-espresso" : "italic text-stone/60"
-                    }`}
-                  >
-                    {value?.trim() || "Not set"}
-                  </p>
-                </div>
-              ))}
-
-            {(
-              <div>
+              <div key={label}>
                 <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                  Link
+                  {label}
                 </p>
-                {task.link ? (
-                  <a
-                    href={task.link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block truncate text-[12px] text-terracotta hover:underline"
-                  >
-                    {task.link}
-                  </a>
-                ) : (
-                  <p className="text-[12px] italic text-stone/60">Not set</p>
-                )}
+                <p
+                  className={`whitespace-pre-wrap rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[12px] leading-snug ${
+                    value?.trim() ? "text-espresso" : "italic text-stone/60"
+                  }`}
+                >
+                  {value?.trim() || "Not set"}
+                </p>
               </div>
-            )}
+            ))}
 
-            {(
-              <div>
-                <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                  To-dos
-                </p>
-                {todos.length === 0 && (
-                  <p className="text-[12px] italic text-stone/60">None</p>
-                )}
-                <div className="space-y-1">
-                  {todos.map((todo, i) => (
-                    <div
-                      key={todo.id}
-                      className="flex items-start gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-1"
-                    >
-                      <span className="shrink-0 rounded bg-sage-soft px-1 py-[1px] text-[9px] font-semibold text-sage">
-                        TD{i + 1}
-                      </span>
-                      <span className="text-[12px] leading-snug text-espresso">{todo.text}</span>
-                    </div>
-                  ))}
-                </div>
+            <div>
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                Link
+              </p>
+              {task.link ? (
+                <a
+                  href={task.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block truncate text-[12px] text-terracotta hover:underline"
+                >
+                  {task.link}
+                </a>
+              ) : (
+                <p className="text-[12px] italic text-stone/60">Not set</p>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                To-dos
+              </p>
+              {todos.length === 0 && <p className="text-[12px] italic text-stone/60">None</p>}
+              <div className="space-y-1">
+                {todos.map((todo, i) => (
+                  <div
+                    key={todo.id}
+                    className="flex items-start gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-1"
+                  >
+                    <span className="shrink-0 rounded bg-sage-soft px-1 py-[1px] text-[9px] font-semibold text-sage">
+                      TD{i + 1}
+                    </span>
+                    <span className="text-[12px] leading-snug text-espresso">{todo.text}</span>
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
           </div>
         )}
 
