@@ -291,12 +291,163 @@ export async function GET(request: Request) {
     };
   });
 
+  // ── Expected work ────────────────────────────────────────────────────────
+  // The calendar could only ever show what came in, so a person with a full
+  // week of due dates and nothing submitted yet had an empty calendar. Tasks
+  // still outstanding are returned alongside the submissions and plotted on
+  // their due date, which is the question the calendar is actually asked:
+  // what am I waiting for, and what is already late.
+  //
+  // Trash is a view of deleted submissions; expected work has no place in it.
+  const expected: Array<Record<string, unknown>> = [];
+
+  if (!showTrash) {
+    // Statuses that mean the work is still owed. Anything submitted or
+    // finished is already represented by its submission entry.
+    const OPEN_STATUSES = new Set([
+      "unassigned",
+      "pending",
+      "on_queue",
+      "in_progress",
+      "revision_needed",
+    ]);
+
+    const { data: dueTasks } = await admin
+      .from("assigned_tasks")
+      .select(
+        "id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
+          "assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), " +
+          "projects(id, name, kind), assigned_task_assignees(id, va_id, status)"
+      )
+      .not("due_date", "is", null)
+      .is("deleted_at", null)
+      .is("archived_at", null)
+      // Explicit, because PostgREST silently truncates at 1000 rows otherwise.
+      .limit(5000);
+
+    type DueTask = {
+      id: number;
+      task_name: string;
+      task_detail: string | null;
+      account: string | null;
+      project: string | null;
+      project_id: string | null;
+      status: string | null;
+      due_date: string | null;
+      due_time: string | null;
+      end_date: string | null;
+      end_time: string | null;
+      category: string | null;
+      review_required: boolean | null;
+      assigned_by: string | null;
+      fixed_pay_task_id: number | null;
+      assigned_by_profile?: { id: string; full_name: string | null; username: string | null } | null;
+      projects?: { id: string; name: string; kind: string } | null;
+      assigned_task_assignees?: Array<{ id: number; va_id: string | null; status: string | null }>;
+    };
+
+    let dueRows = ((dueTasks ?? []) as unknown as DueTask[]).filter((t) =>
+      (t.assigned_task_assignees ?? []).some((a) => OPEN_STATUSES.has(a.status ?? ""))
+    );
+
+    // Same visibility rule as the submissions above: your own work, plus
+    // anything you assigned and are therefore waiting on.
+    if (!isAdminEquivalent) {
+      dueRows = dueRows.filter(
+        (t) =>
+          t.assigned_by === user.id ||
+          (t.assigned_task_assignees ?? []).some((a) => a.va_id === user.id)
+      );
+    }
+
+    if (isAdminEquivalent && va && va !== "all") {
+      dueRows = dueRows.filter((t) =>
+        (t.assigned_task_assignees ?? []).some((a) => a.va_id === va)
+      );
+    }
+
+    if (projectId && projectId !== "all") {
+      dueRows = dueRows.filter((t) => t.project_id === projectId);
+    } else if (scope === "adhoc") {
+      dueRows = dueRows.filter((t) => !t.project_id);
+    } else if (scope === "objective" || scope === "operation") {
+      dueRows = dueRows.filter((t) => t.projects?.kind === scope);
+    }
+
+    // Names for the people the work is owed by. One lookup rather than an
+    // embed, because assigned_tasks already embeds profiles once for
+    // assigned_by and a second path off the same row is ambiguous.
+    const waitingOnIds = [
+      ...new Set(
+        dueRows
+          .flatMap((t) => (t.assigned_task_assignees ?? []).map((a) => a.va_id))
+          .filter((v): v is string => Boolean(v))
+      ),
+    ];
+    let people: Record<string, { id: string; full_name: string | null; username: string | null }> = {};
+    if (waitingOnIds.length > 0) {
+      const { data: peopleRows } = await admin
+        .from("profiles")
+        .select("id, full_name, username")
+        .in("id", waitingOnIds);
+      people = Object.fromEntries((peopleRows ?? []).map((p) => [p.id, p]));
+    }
+
+    for (const task of dueRows) {
+      for (const assignee of task.assigned_task_assignees ?? []) {
+        if (!OPEN_STATUSES.has(assignee.status ?? "")) continue;
+        if (!assignee.va_id) continue;
+        expected.push({
+          // Negative so it can never collide with a submission id — the feed
+          // keys React nodes and the revision map off this.
+          id: -assignee.id,
+          assigned_task_id: task.id,
+          user_id: assignee.va_id,
+          message_type: "expected",
+          content: "",
+          submission_link: null,
+          submission_comment: null,
+          // The due moment, so anything that sorts the feed by time puts this
+          // where the work is owed. The calendar buckets on due_date itself.
+          created_at: `${task.due_date}T${task.due_time || "23:59:59"}`,
+          edited_at: null,
+          due_at: null,
+          attachments: [],
+          assignee_status: assignee.status,
+          profiles: people[assignee.va_id] ?? null,
+          task: {
+            id: task.id,
+            task_name: task.task_name,
+            task_detail: task.task_detail,
+            account: task.account,
+            project: task.project,
+            project_id: task.project_id,
+            project_kind: task.projects?.kind ?? null,
+            project_name: task.projects?.name ?? null,
+            status: task.status,
+            category: task.category,
+            review_required: task.review_required,
+            assigned_by: task.assigned_by,
+            is_output_based: task.fixed_pay_task_id != null,
+            assigned_by_name:
+              task.assigned_by_profile?.full_name ?? task.assigned_by_profile?.username ?? null,
+            due_date: task.due_date,
+            due_time: task.due_time,
+            end_date: task.end_date,
+            end_time: task.end_time,
+          },
+        });
+      }
+    }
+  }
+
   // `seesAll` is the broader admin-equivalent tier (who may view everyone's
   // submissions); `canReview` is the narrower Admin/CEO/Founder tier the POST
   // route actually enforces — returning the same flag for both would render
   // Approve buttons that 403 for a Manager.
   return Response.json({
     submissions,
+    expected,
     roundDurations,
     reviewState,
     seesAll: isAdminEquivalent,

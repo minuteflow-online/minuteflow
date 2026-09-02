@@ -411,7 +411,10 @@ export default function SubmissionsPage() {
     try {
       const res = await fetch(`/api/submissions${showTrash ? "?trash=1" : ""}`, { cache: "no-store" });
       const data = await res.json();
-      setItems(data.submissions ?? []);
+      // Expected work rides in the same list so every filter — VA, account,
+      // project, assigner — applies to it without a second copy of the
+      // filtering. Only the calendar reads it; the timeline skips it.
+      setItems([...(data.submissions ?? []), ...(data.expected ?? [])]);
       setRoundDurations(data.roundDurations ?? {});
       setReviewState(data.reviewState ?? {});
       setCanReview(Boolean(data.canReview));
@@ -771,6 +774,22 @@ This cannot be undone.`
     return map;
   }, [visibleItems, orgTimezone]);
 
+  // Work that is owed, on the day it is owed. Bucketed on due_date itself
+  // rather than a converted timestamp — the due date is already the date the
+  // team agreed on, and running it through a timezone can only move it.
+  const expectedByDay = useMemo(() => {
+    const map = new Map<string, FeedItem[]>();
+    for (const item of visibleItems) {
+      if (item.message_type !== "expected") continue;
+      const day = item.task?.due_date;
+      if (!day) continue;
+      const list = map.get(day) ?? [];
+      list.push(item);
+      map.set(day, list);
+    }
+    return map;
+  }, [visibleItems]);
+
   // Which revision round each submission belongs to — its position in its
   // task's thread. The calendar shows loose submissions rather than threads, so
   // each chip needs to carry its own round marker.
@@ -828,6 +847,8 @@ This cannot be undone.`
   const allThreads = useMemo(() => {
     const byTask = new Map<number, FeedItem[]>();
     for (const item of visibleItems) {
+      // Expected work has no thread — nothing has been turned in yet.
+      if (item.message_type === "expected") continue;
       const key = item.task?.id ?? item.assigned_task_id ?? -item.id;
       const list = byTask.get(key) ?? [];
       list.push(item);
@@ -1109,6 +1130,7 @@ This cannot be undone.`
       ) : (
         <CalendarView
           byDay={itemsByDay}
+          expectedByDay={expectedByDay}
           anchor={monthAnchor}
           onAnchorChange={setMonthAnchor}
           orgTimezone={orgTimezone}
@@ -1265,6 +1287,16 @@ function SubmissionsLegend() {
           Faded
         </span>
         auto approved — listed beneath the day&apos;s review queue
+      </span>
+
+      <span className="flex w-full items-center gap-1.5 text-[11px] text-stone">
+        <span className="rounded border border-dashed border-stone/30 bg-parchment/50 px-2 py-[2px] text-[10px] font-semibold text-walnut">
+          Dashed
+        </span>
+        <span className="rounded border border-dashed border-terracotta/40 bg-terracotta-soft px-2 py-[2px] text-[10px] font-semibold text-terracotta">
+          Dashed red
+        </span>
+        due, nothing submitted yet — red once the day has passed
       </span>
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
@@ -2023,6 +2055,7 @@ const CELL_HEIGHT: Record<CalendarScale, string> = {
 
 function CalendarView({
   byDay,
+  expectedByDay,
   anchor,
   onAnchorChange,
   orgTimezone,
@@ -2030,6 +2063,8 @@ function CalendarView({
   onOpenTask,
 }: {
   byDay: Map<string, FeedItem[]>;
+  /** Tasks due that day with nothing turned in yet. */
+  expectedByDay: Map<string, FeedItem[]>;
   anchor: Date;
   onAnchorChange: (d: Date) => void;
   orgTimezone: string;
@@ -2236,12 +2271,17 @@ function CalendarView({
           // at leads, and work the system approved on its own sits underneath.
           const forReview = dayItems.filter((item) => item.task?.review_required !== false);
           const auto = dayItems.filter((item) => item.task?.review_required === false);
+          const expected = expectedByDay.get(cell.day) ?? [];
           const isToday = cell.day === today;
           const open = expandedDays.has(cell.day);
+          const shownExpected = open ? expected : expected.slice(0, chipLimit);
           const shownForReview = open ? forReview : forReview.slice(0, chipLimit);
           const shownAuto = open ? auto : auto.slice(0, Math.max(1, Math.floor(chipLimit / 2)));
           const hidden =
-            forReview.length - shownForReview.length + (auto.length - shownAuto.length);
+            expected.length -
+            shownExpected.length +
+            (forReview.length - shownForReview.length) +
+            (auto.length - shownAuto.length);
 
           const chip = (item: FeedItem, muted: boolean) => {
             const round = roundByItemId.get(item.id) ?? 0;
@@ -2285,6 +2325,33 @@ function CalendarView({
                   : cell.date}
               </p>
               <div className="space-y-0.5">
+                {shownExpected.length > 0 && (
+                  <div className="space-y-0.5">
+                    <p className="px-1 text-[8px] font-semibold uppercase tracking-wide text-stone">
+                      Expected
+                    </p>
+                    {shownExpected.map((item) => {
+                      const overdue = cell.day < today;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => item.task && onOpenTask(item.task.id)}
+                          title={`${item.task?.task_name ?? ""} — ${
+                            item.profiles?.full_name || item.profiles?.username || ""
+                          } — ${overdue ? "due, nothing submitted" : "due"}`}
+                          className={`flex w-full items-center gap-1 rounded border border-dashed px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
+                            overdue
+                              ? "border-terracotta/40 bg-terracotta-soft text-terracotta"
+                              : "border-stone/30 bg-parchment/50 text-walnut"
+                          }`}
+                        >
+                          <span className="truncate">{item.task?.task_name ?? "Task"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {shownForReview.map((item) => chip(item, false))}
 
                 {shownAuto.length > 0 && (
@@ -2304,7 +2371,7 @@ function CalendarView({
                     +{hidden} more
                   </button>
                 )}
-                {open && dayItems.length > chipLimit && (
+                {open && dayItems.length + expected.length > chipLimit && (
                   <button
                     onClick={() => toggleExpanded(cell.day)}
                     className="px-1 text-[9px] text-stone hover:text-espresso"
