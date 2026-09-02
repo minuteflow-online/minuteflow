@@ -284,6 +284,48 @@ const TIMELINESS_CHIP: Record<Timeliness, string> = {
  * fourth outcome — the day passed and nothing arrived.
  */
 const EXPECTED_CHIP = "border-sky-200 bg-sky-100/70 text-sky-600";
+
+/**
+ * Short forms for the calendar, where a chip has room for a task name and
+ * little else. Anything not listed falls back to its initials, so a new
+ * account still gets a sensible tag without an edit here.
+ */
+const ACCOUNT_ABBR: Record<string, string> = {
+  "Education Encompassed": "EE",
+  "TAT Foundation": "TAT",
+  "Quad Life": "QL",
+  "Thess Personal": "Tess",
+  "Thess Base": "TessB",
+  "Virtual Concierge": "VC",
+  "WSB Awesome Team": "WSB",
+  "Colina Portrait": "CP",
+  "SNAPS Sublimation": "SNAPS",
+  "Right Path Agency": "RPA",
+  TONIWSB: "TWSB",
+  Personal: "PERS",
+};
+
+function accountAbbr(account: string | null | undefined): string | null {
+  const name = account?.trim();
+  if (!name) return null;
+  if (ACCOUNT_ABBR[name]) return ACCOUNT_ABBR[name];
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+  return words
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 4);
+}
+
+/** First and last initial — Charinade Liezel David reads CD, not CLD. */
+function personInitials(person?: { full_name?: string | null; username?: string | null } | null) {
+  const name = person?.full_name?.trim() || person?.username?.trim();
+  if (!name) return null;
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
+}
 const MISSED_CHIP = "border-terracotta/30 bg-terracotta-soft text-terracotta";
 
 const TIMELINESS_LABEL: Record<Timeliness, string> = {
@@ -2303,9 +2345,17 @@ function CalendarView({
           const chipLabel = (item: FeedItem) => {
             const memo = item.task?.task_detail?.trim();
             const withMemo = (scale === "week" || scale === "day") && memo;
+            // Account and person, short enough to sit in front of the name:
+            // whose work it is and which client it's for, without a hover.
+            const tag = [accountAbbr(item.task?.account), personInitials(item.profiles)]
+              .filter(Boolean)
+              .join(" ");
             return (
               <span className="min-w-0 flex-1">
-                <span className="block truncate">{item.task?.task_name ?? "Task"}</span>
+                <span className="block truncate">
+                  {tag && <span className="mr-1 font-semibold opacity-60">{tag}</span>}
+                  {item.task?.task_name ?? "Task"}
+                </span>
                 {withMemo && (
                   <span
                     className={`block text-[8px] leading-snug opacity-75 ${
