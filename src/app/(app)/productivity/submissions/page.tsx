@@ -283,7 +283,7 @@ const TIMELINESS_CHIP: Record<Timeliness, string> = {
  * time, amber late the same day, plum a day or more late. Terracotta is the
  * fourth outcome — the day passed and nothing arrived.
  */
-const EXPECTED_CHIP = "border-sky-300 bg-sky-100 text-sky-700";
+const EXPECTED_CHIP = "border-sky-200 bg-sky-100/70 text-sky-600";
 const MISSED_CHIP = "border-terracotta/30 bg-terracotta-soft text-terracotta";
 
 const TIMELINESS_LABEL: Record<Timeliness, string> = {
