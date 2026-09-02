@@ -265,12 +265,26 @@ function timelinessOf(item: FeedItem, timezone: string): Timeliness {
     : "late_other_day";
 }
 
+/**
+ * Light blue is reserved for work that is due and not yet in — see
+ * EXPECTED_CHIP. A submission with no due date can't be judged on time, so it
+ * reads neutral rather than borrowing that blue.
+ */
 const TIMELINESS_CHIP: Record<Timeliness, string> = {
   on_time: "border-emerald-200 bg-emerald-50 text-emerald-700",
   late_same_day: "border-amber-200 bg-amber-50 text-amber-700",
   late_other_day: "border-plum/30 bg-plum-soft text-plum",
-  no_deadline: "border-sky-200 bg-sky-50 text-sky-600",
+  no_deadline: "border-sand bg-parchment/60 text-walnut",
 };
+
+/**
+ * A due date waiting on its work. It sits blue until something is turned in,
+ * and the submission that replaces it carries the verdict colour: green on
+ * time, amber late the same day, plum a day or more late. Terracotta is the
+ * fourth outcome — the day passed and nothing arrived.
+ */
+const EXPECTED_CHIP = "border-sky-200 bg-sky-50 text-sky-700";
+const MISSED_CHIP = "border-terracotta/30 bg-terracotta-soft text-terracotta";
 
 const TIMELINESS_LABEL: Record<Timeliness, string> = {
   on_time: "On time",
@@ -1290,13 +1304,13 @@ function SubmissionsLegend() {
       </span>
 
       <span className="flex w-full items-center gap-1.5 text-[11px] text-stone">
-        <span className="rounded border border-dashed border-stone/30 bg-parchment/50 px-2 py-[2px] text-[10px] font-semibold text-walnut">
-          Dashed
+        <span className={`rounded border px-2 py-[2px] text-[10px] font-semibold ${EXPECTED_CHIP}`}>
+          Due
         </span>
-        <span className="rounded border border-dashed border-terracotta/40 bg-terracotta-soft px-2 py-[2px] text-[10px] font-semibold text-terracotta">
-          Dashed red
+        <span className={`rounded border px-2 py-[2px] text-[10px] font-semibold ${MISSED_CHIP}`}>
+          Missed
         </span>
-        due, nothing submitted yet — red once the day has passed
+        waiting on the work — blue until it lands, terracotta once the day has passed
       </span>
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
@@ -2339,10 +2353,8 @@ function CalendarView({
                           title={`${item.task?.task_name ?? ""} — ${
                             item.profiles?.full_name || item.profiles?.username || ""
                           } — ${overdue ? "due, nothing submitted" : "due"}`}
-                          className={`flex w-full items-center gap-1 rounded border border-dashed px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
-                            overdue
-                              ? "border-terracotta/40 bg-terracotta-soft text-terracotta"
-                              : "border-stone/30 bg-parchment/50 text-walnut"
+                          className={`flex w-full items-center gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
+                            overdue ? MISSED_CHIP : EXPECTED_CHIP
                           }`}
                         >
                           <span className="truncate">{item.task?.task_name ?? "Task"}</span>
