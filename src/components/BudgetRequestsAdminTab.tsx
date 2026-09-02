@@ -244,7 +244,20 @@ export default function BudgetRequestsAdminTab() {
       {loading ? (
         <p className="text-[12px] text-stone">Loading…</p>
       ) : visible.length === 0 ? (
-        <p className="text-[12px] text-stone italic py-2">No {filter === "pending" ? "pending " : ""}budget requests.</p>
+        <p className="text-[12px] text-stone italic py-2">
+          No {filter === "pending" ? "pending " : ""}budget requests.
+          {filter === "pending" && requests.length > 0 && (
+            <>
+              {" "}
+              <button
+                onClick={() => setFilter("all")}
+                className="not-italic font-semibold text-terracotta hover:underline"
+              >
+                See all {requests.length} past request{requests.length === 1 ? "" : "s"}
+              </button>
+            </>
+          )}
+        </p>
       ) : (
         <div className="space-y-2">
           {visible.map((r) => (
