@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -43,21 +44,6 @@ import {
   formatTenure,
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
-import ProjectsTasksTab from "@/components/ProjectsTasksTab";
-import FinancialSummaryTab from "@/components/FinancialSummaryTab";
-import CaptureAlertsTab from "@/components/CaptureAlertsTab";
-import PaystubTab from "@/components/PaystubTab";
-import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
-import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
-import VaRequestsAdminTab from "@/components/VaRequestsAdminTab";
-import BugReportsAdminTab from "@/components/BugReportsAdminTab";
-import BudgetRequestsAdminTab from "@/components/BudgetRequestsAdminTab";
-import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
-import VaTokensAdminTab from "@/components/VaTokensAdminTab";
-import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
-import EmailStatusTab from "@/components/EmailStatusTab";
-import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
-import FixedPayTasksTab from "@/components/FixedPayTasksTab";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
@@ -65,6 +51,27 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
 import { applyCorrection } from "@/lib/applyCorrection";
 import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
+
+// Each of these renders behind its own `activeTab === "..."` check below, so
+// only one is ever visible at a time — but all 15 used to load eagerly on
+// every admin panel visit regardless. Loaded on demand instead, same skeleton
+// already used elsewhere on this page for a component that's still fetching.
+const tabLoading = () => <div className="h-48 animate-pulse rounded-xl border border-sand bg-white" />;
+const ProjectsTasksTab = dynamic(() => import("@/components/ProjectsTasksTab"), { loading: tabLoading });
+const FinancialSummaryTab = dynamic(() => import("@/components/FinancialSummaryTab"), { loading: tabLoading });
+const CaptureAlertsTab = dynamic(() => import("@/components/CaptureAlertsTab"), { loading: tabLoading });
+const PaystubTab = dynamic(() => import("@/components/PaystubTab"), { loading: tabLoading });
+const VaResourcesAdminTab = dynamic(() => import("@/components/VaResourcesAdminTab"), { loading: tabLoading });
+const VaFeedbackAdminTab = dynamic(() => import("@/components/VaFeedbackAdminTab"), { loading: tabLoading });
+const VaRequestsAdminTab = dynamic(() => import("@/components/VaRequestsAdminTab"), { loading: tabLoading });
+const BugReportsAdminTab = dynamic(() => import("@/components/BugReportsAdminTab"), { loading: tabLoading });
+const BudgetRequestsAdminTab = dynamic(() => import("@/components/BudgetRequestsAdminTab"), { loading: tabLoading });
+const VaReviewsAdminTab = dynamic(() => import("@/components/VaReviewsAdminTab"), { loading: tabLoading });
+const VaTokensAdminTab = dynamic(() => import("@/components/VaTokensAdminTab"), { loading: tabLoading });
+const VaBroadcastsAdminTab = dynamic(() => import("@/components/VaBroadcastsAdminTab"), { loading: tabLoading });
+const EmailStatusTab = dynamic(() => import("@/components/EmailStatusTab"), { loading: tabLoading });
+const TaskAssignmentsAdminTab = dynamic(() => import("@/components/TaskAssignmentsAdminTab"), { loading: tabLoading });
+const FixedPayTasksTab = dynamic(() => import("@/components/FixedPayTasksTab"), { loading: tabLoading });
 
 /* ── Constants ───────────────────────────────────────────── */
 
