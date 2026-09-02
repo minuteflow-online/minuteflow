@@ -283,7 +283,7 @@ const TIMELINESS_CHIP: Record<Timeliness, string> = {
  * time, amber late the same day, plum a day or more late. Terracotta is the
  * fourth outcome — the day passed and nothing arrived.
  */
-const EXPECTED_CHIP = "border-sky-200 bg-sky-50 text-sky-700";
+const EXPECTED_CHIP = "border-sky-300 bg-sky-100 text-sky-700";
 const MISSED_CHIP = "border-terracotta/30 bg-terracotta-soft text-terracotta";
 
 const TIMELINESS_LABEL: Record<Timeliness, string> = {
@@ -2297,6 +2297,28 @@ function CalendarView({
             (forReview.length - shownForReview.length) +
             (auto.length - shownAuto.length);
 
+          // Week and day squares have the room, so they carry the client memo
+          // under the task name — which is the line that actually says which
+          // "SMC_Planning" this one is. Month stays one line per chip.
+          const chipLabel = (item: FeedItem) => {
+            const memo = item.task?.task_detail?.trim();
+            const withMemo = (scale === "week" || scale === "day") && memo;
+            return (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{item.task?.task_name ?? "Task"}</span>
+                {withMemo && (
+                  <span
+                    className={`block text-[8px] leading-snug opacity-75 ${
+                      scale === "day" ? "" : "truncate"
+                    }`}
+                  >
+                    {memo}
+                  </span>
+                )}
+              </span>
+            );
+          };
+
           const chip = (item: FeedItem, muted: boolean) => {
             const round = roundByItemId.get(item.id) ?? 0;
             const timeliness = timelinessOf(item, orgTimezone);
@@ -2309,11 +2331,11 @@ function CalendarView({
                 }${round > 0 ? ` (revision ${round})` : ""} — ${TIMELINESS_LABEL[timeliness]}${
                   muted ? " — auto approved" : ""
                 }`}
-                className={`flex w-full items-center gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
+                className={`flex w-full items-start gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
                   TIMELINESS_CHIP[timeliness]
                 } ${muted ? "opacity-60" : ""}`}
               >
-                <span className="truncate">{item.task?.task_name ?? "Task"}</span>
+                {chipLabel(item)}
                 <RevisionBadge
                   count={round}
                   late={timeliness !== "on_time" && timeliness !== "no_deadline"}
@@ -2353,11 +2375,11 @@ function CalendarView({
                           title={`${item.task?.task_name ?? ""} — ${
                             item.profiles?.full_name || item.profiles?.username || ""
                           } — ${overdue ? "due, nothing submitted" : "due"}`}
-                          className={`flex w-full items-center gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
+                          className={`flex w-full items-start gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
                             overdue ? MISSED_CHIP : EXPECTED_CHIP
                           }`}
                         >
-                          <span className="truncate">{item.task?.task_name ?? "Task"}</span>
+                          {chipLabel(item)}
                         </button>
                       );
                     })}
