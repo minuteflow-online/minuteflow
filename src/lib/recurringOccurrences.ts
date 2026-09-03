@@ -106,9 +106,14 @@ export function occurrenceDates(template: OccurrenceTemplate, from: string): str
   return dates;
 }
 
-/** Whether this template produces Output Based work rather than hourly work. */
+/** Whether this template produces Output Based work rather than hourly work.
+ *  recurring_task_templates.pay_type has a DB check constraint allowing only
+ *  'fixed' or 'hourly' (matching task_library.billing_type's convention
+ *  elsewhere in the app) — 'output_based' was never a legal value, so this
+ *  check (and the save path writing it) silently never fired: no Output Based
+ *  recurring template has ever actually reached the database. */
 export function isOutputBased(template: Record<string, unknown>): boolean {
-  return template.pay_type === "output_based";
+  return template.pay_type === "fixed";
 }
 
 /** The fixed_pay_tasks row an Output Based template produces for one date. */

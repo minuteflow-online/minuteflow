@@ -975,7 +975,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           project_id: linkedProjectId || null,
           assigned_to_ids: isAdminOrManager ? vaIds : [currentUserId].filter(Boolean),
           assigned_by: assignedBy || currentUserId || null,
-          pay_type: mode === "output_based" ? "output_based" : null,
+          // recurring_task_templates.pay_type only allows 'fixed' or 'hourly'
+          // (see isOutputBased in recurringOccurrences.ts) — 'output_based'
+          // would have been rejected by the DB check constraint outright.
+          pay_type: mode === "output_based" ? "fixed" : null,
           rate: mode === "output_based" ? Number(rate) : null,
           ...templateExtra,
         };
@@ -1028,7 +1031,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             project_id: linkedProjectId || null,
             assigned_to_ids: effectiveVaIds,
             assigned_by: assignedBy || currentUserId || null,
-            pay_type: mode === "output_based" ? "output_based" : null,
+            // recurring_task_templates.pay_type only allows 'fixed' or 'hourly'
+          // (see isOutputBased in recurringOccurrences.ts) — 'output_based'
+          // would have been rejected by the DB check constraint outright.
+          pay_type: mode === "output_based" ? "fixed" : null,
             rate: mode === "output_based" ? Number(rate) : null,
             recurrence_type: templateRecurrenceType,
             repeat_until: templateRepeatUntil || null,
