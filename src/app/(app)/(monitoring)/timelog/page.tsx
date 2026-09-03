@@ -9,6 +9,7 @@ import { normalizePosition } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import ScreenshotMarkerModal from "@/components/ScreenshotMarkerModal";
 import { ScreenshotTile } from "@/components/ScreenshotTile";
 import { screenshotTileTitle } from "@/lib/screenshots";
 import CSVUploadModal from "@/components/CSVUploadModal";
@@ -238,6 +239,7 @@ export default function TimeLogPage() {
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
   const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [markerDetail, setMarkerDetail] = useState<TaskScreenshot | null>(null);
 
   /* ── Mood data ────────────────────────────────────────────── */
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
@@ -1585,6 +1587,10 @@ export default function TimeLogPage() {
                                         <button
                                           key={ss.id}
                                           onClick={() => {
+                                            if (ss.screenshot_type === "failed") {
+                                              setMarkerDetail(ss);
+                                              return;
+                                            }
                                             if (!url) return;
                                             const urls = logScreenshots
                                               .map((s) => signedUrls[s.id])
@@ -1781,6 +1787,10 @@ export default function TimeLogPage() {
             setLightboxIndex(0);
           }}
         />
+      )}
+
+      {markerDetail && (
+        <ScreenshotMarkerModal screenshot={markerDetail} onClose={() => setMarkerDetail(null)} />
       )}
 
       {showCSVUpload && (

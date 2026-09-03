@@ -9,6 +9,7 @@ import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
 import CorrectionRequestModal from "./CorrectionRequestModal";
 import ScreenshotLightbox from "./ScreenshotLightbox";
+import ScreenshotMarkerModal from "./ScreenshotMarkerModal";
 import { ScreenshotTile } from "./ScreenshotTile";
 import RevisionBadge from "@/components/RevisionBadge";
 import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
@@ -248,6 +249,7 @@ export default function ActivityLog({
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
   const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [markerDetail, setMarkerDetail] = useState<TaskScreenshot | null>(null);
 
   // Edited log IDs (for "edited" indicator)
   const [editedLogIds, setEditedLogIds] = useState<Set<number>>(new Set());
@@ -1082,6 +1084,10 @@ export default function ActivityLog({
                               <button
                                 type="button"
                                 onClick={() => {
+                                  if (ss.screenshot_type === "failed") {
+                                    setMarkerDetail(ss);
+                                    return;
+                                  }
                                   if (!url) return;
                                   const urls = logScreenshots
                                     .map((s) => signedUrls[s.id])
@@ -1472,6 +1478,10 @@ export default function ActivityLog({
             setLightboxIndex(0);
           }}
         />
+      )}
+
+      {markerDetail && (
+        <ScreenshotMarkerModal screenshot={markerDetail} onClose={() => setMarkerDetail(null)} />
       )}
     </>
   );

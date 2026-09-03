@@ -13,6 +13,7 @@ import type {
 } from "@/types/database";
 import { normalizePosition } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import ScreenshotMarkerModal from "@/components/ScreenshotMarkerModal";
 import { ScreenshotTile } from "@/components/ScreenshotTile";
 import { screenshotTileTitle } from "@/lib/screenshots";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
@@ -539,6 +540,7 @@ export default function TaskAssignmentsAdminTab({
   const [panelScreenshotsLoading, setPanelScreenshotsLoading] = useState(false);
   const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [markerDetail, setMarkerDetail] = useState<TaskScreenshot | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -2318,6 +2320,10 @@ export default function TaskAssignmentsAdminTab({
                             key={ss.id}
                             type="button"
                             onClick={() => {
+                              if (ss.screenshot_type === "failed") {
+                                setMarkerDetail(ss);
+                                return;
+                              }
                               if (!url) return;
                               const urls = panelScreenshots
                                 .map((s) => panelSignedUrls[s.id])
@@ -2513,6 +2519,9 @@ export default function TaskAssignmentsAdminTab({
             setLightboxIndex(0);
           }}
         />
+      )}
+      {markerDetail && (
+        <ScreenshotMarkerModal screenshot={markerDetail} onClose={() => setMarkerDetail(null)} />
       )}
       {scopeAsk && (
         <RecurringScopeDialog
