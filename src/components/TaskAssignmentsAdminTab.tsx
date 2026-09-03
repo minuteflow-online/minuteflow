@@ -13,6 +13,8 @@ import type {
 } from "@/types/database";
 import { normalizePosition } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import { ScreenshotTile } from "@/components/ScreenshotTile";
+import { screenshotTileTitle } from "@/lib/screenshots";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import { parseDurationToMinutes } from "@/lib/taskSchedule";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
@@ -2324,13 +2326,9 @@ export default function TaskAssignmentsAdminTab({
                               setLightboxIndex(Math.max(0, urls.indexOf(url)));
                             }}
                             className="relative group w-[48px] h-[36px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer hover:border-terracotta hover:scale-105 transition-all shrink-0"
-                            title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                            title={screenshotTileTitle(ss)}
                           >
-                            {url ? (
-                              <img src={url} alt="" className="w-full h-full object-cover" />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
-                            )}
+                            <ScreenshotTile ss={ss} url={url} />
                           </button>
                         );
                       })}

@@ -3,11 +3,13 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { countWords, screenshotCaptureTime } from "@/lib/utils";
+import { screenshotTileTitle } from "@/lib/screenshots";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
 import CorrectionRequestModal from "./CorrectionRequestModal";
 import ScreenshotLightbox from "./ScreenshotLightbox";
+import { ScreenshotTile } from "./ScreenshotTile";
 import RevisionBadge from "@/components/RevisionBadge";
 import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 
@@ -1088,16 +1090,12 @@ export default function ActivityLog({
                                   setLightboxIndex(Math.max(0, urls.indexOf(url)));
                                 }}
                                 className="w-[28px] h-[20px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer transition-all hover:border-terracotta hover:scale-105 flex-shrink-0"
-                                title={`${ss.screenshot_type || "manual"} — taken ${formatTime(
+                                title={`${screenshotTileTitle(ss)} — ${formatTime(
                                   screenshotCaptureTime(ss.filename) ?? ss.created_at,
                                   timezone
                                 )}`}
                               >
-                                {url ? (
-                                  <img src={url} alt="" className="w-full h-full object-cover" />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-[7px] text-stone">...</div>
-                                )}
+                                <ScreenshotTile ss={ss} url={url} />
                               </button>
                               {isAdminOrManager && (
                                 <button

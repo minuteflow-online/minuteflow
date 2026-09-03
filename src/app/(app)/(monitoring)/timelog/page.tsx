@@ -9,6 +9,8 @@ import { normalizePosition } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import { ScreenshotTile } from "@/components/ScreenshotTile";
+import { screenshotTileTitle } from "@/lib/screenshots";
 import CSVUploadModal from "@/components/CSVUploadModal";
 import TimeLogColumnFilter from "@/components/TimeLogColumnFilter";
 import RevisionBadge from "@/components/RevisionBadge";
@@ -1591,13 +1593,9 @@ export default function TimeLogPage() {
                                             setLightboxIndex(Math.max(0, urls.indexOf(url)));
                                           }}
                                           className="w-[28px] h-[20px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer transition-all hover:border-terracotta hover:scale-105 flex-shrink-0"
-                                          title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                                          title={screenshotTileTitle(ss)}
                                         >
-                                          {url ? (
-                                            <img src={url} alt="" className="w-full h-full object-cover" />
-                                          ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-[7px] text-stone">...</div>
-                                          )}
+                                          <ScreenshotTile ss={ss} url={url} />
                                         </button>
                                       );
                                     })
