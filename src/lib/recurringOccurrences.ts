@@ -127,6 +127,10 @@ export function outputRowFor(
     task_notes: template.task_notes ?? null,
     link: template.link ?? null,
     rate: template.rate ?? 0,
+    // Carried through same as taskRowFor's hourly path — dropped here before,
+    // so an Output Based template with a duration set produced occurrences
+    // with no length at all.
+    planned_minutes: template.planned_minutes ?? null,
     // The occurrence date is the start. Output Based work has no end date
     // unless someone sets one, so none is invented here.
     start_date: date,

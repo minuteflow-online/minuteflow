@@ -22,6 +22,7 @@ import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import type { Project } from "@/types/database";
+import { vaBudgetType } from "@/lib/budget";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -88,7 +89,12 @@ function computeQuantityTotal(unitRate: string, quantity: string): number | null
 
 type FormObjective = { id: number; account: string; project_name: string; sort_order: number };
 type FormTask = { id: number; task_name: string; billing_type: string; task_rate: number | null };
-export type TeamMemberOption = { id: string; full_name: string; username: string };
+// position/pay_rate_type are optional — only present when the caller's own
+// fetch selected them (see /api/team-members). Where they're missing,
+// vaBudgetType() reads them as unset and defaults to time_based, so the
+// Output Based assignment guard below just doesn't apply on that screen
+// rather than misfiring.
+export type TeamMemberOption = { id: string; full_name: string; username: string; position?: string | null; pay_rate_type?: string | null };
 
 // Loosely-typed prefill — callers pass whatever task row they already have
 // loaded (from assigned_tasks or fixed_pay_tasks) rather than TaskEditor
@@ -1753,23 +1759,34 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               <p className="text-[12px] text-stone/60">No team members to assign.</p>
             ) : (
               <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-sand bg-white p-1.5">
-                {assignToOptions.map((m) => (
+                {assignToOptions.map((m) => {
+                  // Output Based VAs are paid per output through fixed_pay_tasks,
+                  // not hourly through assigned_tasks — a Task Based (this list's
+                  // context whenever mode is time_based) assignment to one of them
+                  // creates a task their real pay/claim flow never sees. Already-
+                  // checked stays checked (and toggleable off) so a bad existing
+                  // assignment can still be corrected; it just can't be newly added.
+                  const isOutputBasedVa = vaBudgetType(m) === "output_based";
+                  const blocked = mode === "time_based" && isOutputBasedVa && !vaIds.includes(m.id);
+                  return (
                   <label
                     key={m.id}
+                    title={blocked ? `${m.full_name || m.username} is Output Based — assign this as an Output Based task instead` : undefined}
                     className={`flex items-center gap-2 rounded px-1.5 py-1 text-[12px] transition-colors ${
-                      readOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-cream"
+                      readOnly || blocked ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-cream"
                     }`}
                   >
                     <input
                       type="checkbox"
                       checked={vaIds.includes(m.id)}
                       onChange={() => toggleVaId(m.id)}
-                      disabled={readOnly}
+                      disabled={readOnly || blocked}
                       className="accent-terracotta"
                     />
                     <span className="truncate text-espresso">{m.full_name || m.username}</span>
                   </label>
-                ))}
+                  );
+                })}
               </div>
             )}
             {isAdminOrManager && (

@@ -54,6 +54,14 @@ export default function RecurringTemplatePanel({
   );
   const [isActive, setIsActive] = useState(() => template?.is_active ?? true);
   const [repeatUntil, setRepeatUntil] = useState(() => template?.repeat_until?.slice(0, 10) ?? "");
+  // Mode picker only for a brand-new template — an existing one's mode is
+  // fixed by which table its occurrences already live in (assigned_tasks vs.
+  // fixed_pay_tasks), same as TaskEditor's own create-only toggle elsewhere
+  // (assignment/page.tsx's New Task panel). Editing one seeds from its own
+  // pay_type so an existing Output Based template still opens correctly.
+  const [mode, setMode] = useState<"time_based" | "output_based">(() =>
+    template?.pay_type === "output_based" ? "output_based" : "time_based"
+  );
 
   // TaskEditor reads a task-shaped row, and a template is close enough to hand
   // it one directly — the column names line up on both sides. One exception:
@@ -104,13 +112,32 @@ export default function RecurringTemplatePanel({
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-5">
+            {!template && (
+              <div className="mb-4 flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setMode("time_based")}
+                  className={`flex-1 px-3 py-1.5 transition-colors ${mode === "time_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                >
+                  Time-based Task
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("output_based")}
+                  className={`flex-1 px-3 py-1.5 transition-colors ${mode === "output_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                >
+                  Output Based Task
+                </button>
+              </div>
+            )}
             {/* The same TaskEditor every other surface uses. This panel used to
                 be a hand-written copy of it, which is why it kept falling
                 behind — Review Required, Link, calendar hours, the duration
                 field and the assignee picker all landed there and never here.
                 One form now, with Repeat/Active added on top. */}
             <TaskEditor
-              mode="time_based"
+              key={mode}
+              mode={mode}
               templateMode
               editingTemplateId={template?.id ?? null}
               initialTask={initialTask}
