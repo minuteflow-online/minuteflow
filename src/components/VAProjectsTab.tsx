@@ -829,6 +829,36 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     }
   };
 
+  const handleDuplicateSubEdit = async () => {
+    if (!editingSubId) return;
+    setSavingSub(true);
+    setEditSubError(null);
+    try {
+      await editTaskEditorRef.current?.duplicate();
+      setEditingSubId(null);
+      void fetchSubtasks(selectedProject?.id ?? null);
+    } catch (e) {
+      setEditSubError(e instanceof Error ? e.message : "Failed to duplicate.");
+    } finally {
+      setSavingSub(false);
+    }
+  };
+
+  const handleConvertSubEdit = async (targetMode: "time_based" | "output_based") => {
+    if (!editingSubId) return;
+    setSavingSub(true);
+    setEditSubError(null);
+    try {
+      await editTaskEditorRef.current?.convert(targetMode);
+      setEditingSubId(null);
+      void fetchSubtasks(selectedProject?.id ?? null);
+    } catch (e) {
+      setEditSubError(e instanceof Error ? e.message : "Failed to convert.");
+    } finally {
+      setSavingSub(false);
+    }
+  };
+
   // Board View drag-and-drop: dropping a card into a column updates the task's
   // status via the same PATCH endpoint the list-view edit form uses. Optimistic
   // (Board View no longer changes status by dragging — status moves through the
@@ -1209,7 +1239,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 // so a card here can belong to a sub-objective. Locking every
                 // edit to selectedProject.id would silently reassign a child
                 // sub-objective's task to its parent on save.
-                lockedProjectId={sub.project_id ?? selectedProject?.id}
+                // Admins can move a task to a different Objective/Operation
+                // from here — locking it would leave no way to do that short
+                // of editing elsewhere. A VA stays locked to the row's own
+                // project so a routine edit can't wander a task off it.
+                lockedProjectId={isAdmin ? undefined : sub.project_id ?? selectedProject?.id}
                 hideFooter
                 onCancel={() => setEditingSubId(null)}
                 onSaved={() => {}}
@@ -1242,6 +1276,22 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 >
                   {savingSub ? "Saving..." : "Save"}
                 </button>
+                <button
+                  onClick={() => void handleDuplicateSubEdit()}
+                  disabled={savingSub}
+                  className="px-3 py-1 rounded-lg border border-sand text-[11px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
+                >
+                  Duplicate
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => void handleConvertSubEdit("output_based")}
+                    disabled={savingSub}
+                    className="px-3 py-1 rounded-lg border border-sand text-[11px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
+                  >
+                    Switch to Output Based
+                  </button>
+                )}
                 <button
                   onClick={() => setEditingSubId(null)}
                   className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
@@ -1401,7 +1451,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         currentUserId={currentUserId}
                         isAdminOrManager={isAdmin}
                         teamMembers={activeProfiles}
-                        lockedProjectId={sub.project_id ?? selectedProject?.id}
+                        // Admins can move a task to a different Objective/Operation
+                // from here — locking it would leave no way to do that short
+                // of editing elsewhere. A VA stays locked to the row's own
+                // project so a routine edit can't wander a task off it.
+                lockedProjectId={isAdmin ? undefined : sub.project_id ?? selectedProject?.id}
                         hideFooter
                         onCancel={() => setEditingSubId(null)}
                         onSaved={() => {}}
@@ -1426,7 +1480,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         <p className="text-[11px] text-red-600">{editSubError}</p>
                       )}
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => void handleSaveSubEdit()}
                           disabled={savingSub}
@@ -1434,6 +1488,22 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         >
                           {savingSub ? "Saving..." : "Save"}
                         </button>
+                        <button
+                          onClick={() => void handleDuplicateSubEdit()}
+                          disabled={savingSub}
+                          className="px-3 py-1 rounded-lg border border-sand text-[11px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
+                        >
+                          Duplicate
+                        </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => void handleConvertSubEdit("output_based")}
+                            disabled={savingSub}
+                            className="px-3 py-1 rounded-lg border border-sand text-[11px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
+                          >
+                            Switch to Output Based
+                          </button>
+                        )}
                         <button
                           onClick={() => setEditingSubId(null)}
                           className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
@@ -1543,7 +1613,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         currentUserId={currentUserId}
                         isAdminOrManager={isAdmin}
                         teamMembers={activeProfiles}
-                        lockedProjectId={task.project_id ?? selectedProject?.id}
+                        lockedProjectId={isAdmin ? undefined : task.project_id ?? selectedProject?.id}
                         onCancel={() => setEditingOutputId(null)}
                         onSaved={() => {
                           setEditingOutputId(null);

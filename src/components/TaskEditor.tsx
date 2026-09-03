@@ -150,6 +150,8 @@ export interface TaskEditorProps {
 
 export interface TaskEditorHandle {
   submit: () => Promise<void>;
+  duplicate: () => Promise<void>;
+  convert: (targetMode: "time_based" | "output_based") => Promise<void>;
 }
 
 const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:bg-parchment/40 disabled:text-stone";
@@ -646,6 +648,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [tasksByProject, setTasksByProject] = useState<Record<number, FormTask[]>>({});
 
   const [saving, setSaving] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [converting, setConverting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1300,6 +1304,185 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   ]);
 
 
+  // Clones the current form as a brand-new task — same fields, but never the
+  // status, screenshots, submissions, or to-dos, since those belong to one
+  // specific occurrence of doing the work, not the task's description. Built
+  // as its own POST rather than routed through handleSubmit/submitWithScope,
+  // which are edit-or-create-in-place and carry recurring-template/series
+  // logic that duplication has no business touching — this always creates,
+  // regardless of isEditing.
+  const handleDuplicate = async () => {
+    if (!isEditing || templateMode) return;
+    setDuplicating(true);
+    setError(null);
+    const effectiveVaIds = isAdminOrManager ? vaIds : [currentUserId].filter(Boolean);
+    try {
+      if (mode === "output_based") {
+        if (!rate.trim() || !Number.isFinite(Number(rate))) {
+          throw new Error("Enter a rate before duplicating an Output Based task.");
+        }
+        const body: Record<string, unknown> = {
+          task_name: taskName.trim(),
+          account: account || null,
+          project: project || null,
+          category: category || null,
+          rate: Number(rate),
+          review_required: true,
+          start_date: startDate || null,
+          due_date: dueDate || null,
+          end_date: endDate || null,
+          task_detail: taskDetail.trim() || null,
+          task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
+          instructions: instructions.trim() || null,
+          project_id: linkedProjectId || null,
+          assigned_to: effectiveVaIds[0] || null,
+          assigned_by: assignedBy || currentUserId || null,
+        };
+        const res = await fetch("/api/fixed-pay-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        showToast("success", "Task duplicated");
+        onSaved(data.task);
+      } else {
+        const body: Record<string, unknown> = {
+          account: account || null,
+          project: project || null,
+          task_name: taskName.trim(),
+          category,
+          task_detail: taskDetail.trim() || null,
+          task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
+          due_date: dueDate || null,
+          due_time: dueDate ? dueTime || null : null,
+          start_date: startDate || null,
+          end_date: endDate || null,
+          assigned_by: assignedBy || currentUserId || null,
+          project_id: linkedProjectId || null,
+          parent_task_id: parentTaskId ? Number(parentTaskId) : null,
+          instructions: instructionsEditable ? instructions.trim() || null : null,
+          planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
+          initial_status: isAdminOrManager ? initialStatus : "pending",
+        };
+        if (reviewRequired) body.review_required = reviewRequired === "yes";
+        if (hasSchedule && startDate && startTime && endTime) {
+          body.start_time = orgWallClockToUtc(startDate, startTime);
+          body.end_time = orgWallClockToUtc(startDate, endTime);
+        }
+        if (manageAssignment && effectiveVaIds.length > 0) body.va_ids = effectiveVaIds;
+        const res = await fetch("/api/assigned-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        showToast("success", "Task duplicated");
+        onSaved(data.task);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to duplicate task");
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  // Moves a task between assigned_tasks and fixed_pay_tasks — there is no
+  // "mode" column to just flip, they're two different tables, so this creates
+  // the equivalent row in the target table from the current form's fields and
+  // soft-deletes the original (DELETE on both endpoints is the same
+  // permission-gated soft-delete Trash already uses elsewhere, so this is
+  // recoverable, not destructive). Admin/manager only: it's a data-model
+  // migration, not an edit a VA should trigger on their own task. A task with
+  // several assignees narrows to the first when converting TO Output Based,
+  // same as Output Based has always kept only the first pick at creation.
+  const handleConvert = async (targetMode: "time_based" | "output_based") => {
+    if (!isEditing || templateMode || !isAdminOrManager || targetMode === mode) return;
+    setConverting(true);
+    setError(null);
+    const effectiveVaIds = isAdminOrManager ? vaIds : [currentUserId].filter(Boolean);
+    try {
+      if (targetMode === "output_based") {
+        if (!rate.trim() || !Number.isFinite(Number(rate))) {
+          throw new Error("Enter a rate before converting to Output Based.");
+        }
+        const body: Record<string, unknown> = {
+          task_name: taskName.trim(),
+          account: account || null,
+          project: project || null,
+          category: category || null,
+          rate: Number(rate),
+          review_required: true,
+          start_date: startDate || null,
+          due_date: dueDate || null,
+          end_date: endDate || null,
+          task_detail: taskDetail.trim() || null,
+          task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
+          instructions: instructions.trim() || null,
+          project_id: linkedProjectId || null,
+          assigned_to: effectiveVaIds[0] || null,
+          assigned_by: assignedBy || currentUserId || null,
+        };
+        const res = await fetch("/api/fixed-pay-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const delRes = await fetch(`/api/assigned-tasks/${editingTaskId}`, { method: "DELETE" });
+        if (!delRes.ok) {
+          const delData = await delRes.json().catch(() => ({}));
+          throw new Error(delData.error || "Created the Output Based task, but couldn't remove the original — both now exist.");
+        }
+        showToast("success", "Converted to Output Based");
+        onSaved(data.task);
+      } else {
+        const body: Record<string, unknown> = {
+          account: account || null,
+          project: project || null,
+          task_name: taskName.trim(),
+          category,
+          task_detail: taskDetail.trim() || null,
+          task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
+          due_date: dueDate || null,
+          start_date: startDate || null,
+          end_date: endDate || null,
+          assigned_by: assignedBy || currentUserId || null,
+          project_id: linkedProjectId || null,
+          instructions: instructions.trim() || null,
+          review_required: true,
+          initial_status: "pending",
+        };
+        if (effectiveVaIds.length > 0) body.va_ids = effectiveVaIds;
+        const res = await fetch("/api/assigned-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const delRes = await fetch(`/api/fixed-pay-tasks/${editingTaskId}`, { method: "DELETE" });
+        if (!delRes.ok) {
+          const delData = await delRes.json().catch(() => ({}));
+          throw new Error(delData.error || "Created the Time-based task, but couldn't remove the original — both now exist.");
+        }
+        showToast("success", "Converted to Time-based");
+        onSaved(data.task);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to convert task");
+    } finally {
+      setConverting(false);
+    }
+  };
+
   // A task generated from a recurring template belongs to a series, so saving
   // it raises the question the calendar apps all ask: this one, or all of them?
   // Asked only when it applies — a one-off saves straight through.
@@ -1313,7 +1496,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     if (choice === null) return; // cancelled — nothing saved
     return submitWithScope(choice);
   }, [belongsToSeries, readOnly, submitWithScope]);
-  useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
+  useImperativeHandle(ref, () => ({ submit: handleSubmit, duplicate: handleDuplicate, convert: handleConvert }), [handleSubmit, handleDuplicate, handleConvert]);
 
   // Unchecking "Also save as a recurring template" on a task that already has
   // one deletes it — the template row itself, not the task. Deletion cascades
@@ -2387,6 +2570,30 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   last resort for "why won't this save", not a running notice. */}
               {missingRequired.length > 0 && (
                 <InfoTip text={`Still needed: ${missingRequired.join(", ")}. The section holding each one is marked.`} />
+              )}
+              {isEditing && !templateMode && (
+                <button
+                  onClick={() => void handleDuplicate()}
+                  disabled={saving || duplicating || !taskName.trim() || !taskDetail.trim()}
+                  title="Create a new task with the same details — status, screenshots, and to-dos are not copied"
+                  className="px-4 py-2 rounded-lg border border-sand text-[13px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
+                >
+                  {duplicating ? "Duplicating..." : "Duplicate"}
+                </button>
+              )}
+              {isEditing && !templateMode && isAdminOrManager && (
+                <button
+                  onClick={() => void handleConvert(mode === "output_based" ? "time_based" : "output_based")}
+                  disabled={saving || converting}
+                  title={
+                    mode === "output_based"
+                      ? "Move this to a Time-based task — replaces this Output Based task with a new hourly one"
+                      : "Move this to an Output Based task — replaces this task with a new one paid per output"
+                  }
+                  className="px-4 py-2 rounded-lg border border-sand text-[13px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
+                >
+                  {converting ? "Converting..." : mode === "output_based" ? "Switch to Time-based" : "Switch to Output Based"}
+                </button>
               )}
               <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
                 Cancel
