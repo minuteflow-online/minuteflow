@@ -11,8 +11,20 @@
 //
 // Only fields with a value are rendered, so a sparse task stays short.
 
+import { useEffect, useState } from "react";
 import type { TaskEditorInitialTask } from "@/components/TaskEditor";
 import { timeOfDay, formatMinutesInput, formatDueTime, statusLabel } from "@/lib/taskSchedule";
+
+const RECURRENCE_LABEL: Record<string, string> = {
+  daily: "Daily",
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+  monthly: "Monthly",
+  every_2_months: "Every 2 months",
+  every_3_months: "Every 3 months",
+};
+const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const dayLabel = (d: unknown) => (typeof d === "number" ? (DAY_ABBR[d] ?? String(d)) : String(d).slice(0, 3));
 
 export default function TaskDetailsView({
   task,
@@ -37,10 +49,36 @@ export default function TaskDetailsView({
   const end = time("end_time");
   const todos = (task.task_todos ?? []) as Array<{ id: number; text: string; sort_order: number }>;
 
+  // A recurring task only carries the template id; fetch the template so the
+  // view can say *how* it recurs (Daily / Weekly · Mon,Wed / Monthly · day 15),
+  // not just that it does.
+  const templateId = task.recurring_template_id as string | number | null | undefined;
+  const [recurrence, setRecurrence] = useState<string | null>(null);
+  useEffect(() => {
+    if (templateId == null) { setRecurrence(null); return; }
+    let cancelled = false;
+    fetch(`/api/recurring-task-templates?id=${templateId}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || !d?.template) return;
+        const t = d.template as { recurrence_type?: string; recurrence_days?: unknown[]; recurrence_day_of_month?: number | null };
+        let label = RECURRENCE_LABEL[t.recurrence_type ?? ""] ?? t.recurrence_type ?? "Recurring";
+        if ((t.recurrence_type === "weekly" || t.recurrence_type === "biweekly") && Array.isArray(t.recurrence_days) && t.recurrence_days.length) {
+          label += ` · ${t.recurrence_days.map(dayLabel).join(", ")}`;
+        } else if (t.recurrence_type?.includes("month") && t.recurrence_day_of_month) {
+          label += ` · day ${t.recurrence_day_of_month}`;
+        }
+        setRecurrence(label);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [templateId]);
+
   const rows: Array<[string, string | null]> = [
     ["Account", str("account")],
     ["Objective", str("project")],
     ["Category", str("category")],
+    ["Recurs", templateId != null ? (recurrence ?? "Recurring") : null],
     ["Status", str("status") ? statusLabel(str("status") as string) : null],
     ["Client Detail", str("task_detail")],
     ["Notes", str("task_notes")],
