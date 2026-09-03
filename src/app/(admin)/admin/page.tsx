@@ -7453,6 +7453,7 @@ function ScreenshotLightbox({
   }, [onClose, onPrev, onNext]);
 
   const badge = screenshotTypeBadge(screenshot.screenshot_type);
+  const isMarker = screenshot.screenshot_type === "failed" || !screenshot.drive_file_id;
   // captured_at is the client's own stamp from the moment of capture; the filename
   // is the next best thing; created_at is when the row landed, which for a queued
   // upload can be hours later. Kept on hover either way for support questions.
@@ -7514,9 +7515,22 @@ function ScreenshotLightbox({
           </div>
         </div>
 
-        {/* Image */}
+        {/* Image, or the reason there isn't one */}
         <div className="flex-1 overflow-auto bg-espresso p-2">
-          {url ? (
+          {isMarker ? (
+            // A marker has no image and never will, so waiting on one says
+            // "Loading image…" forever. Arrow keys still walk onto these, so the
+            // lightbox has to state the reason rather than sit blank.
+            <div className="flex h-96 flex-col items-center justify-center gap-2 text-center">
+              <span className="text-3xl text-stone">&#8709;</span>
+              <span className="text-sm font-medium text-parchment">
+                {screenshot.failure_reason || "No screenshot was taken"}
+              </span>
+              <span className="text-xs text-stone">
+                Nothing was captured for this slot.
+              </span>
+            </div>
+          ) : url ? (
             <img
               src={url}
               alt="Screenshot full view"

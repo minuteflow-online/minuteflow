@@ -94,19 +94,16 @@ async function captureActiveTab() {
     // Get the last focused normal browser window (excludes extension popups)
     const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
     if (!win || !win.id) {
-      console.warn('[MinuteFlow] No browser window found');
-      return null;
+      return { blob: null, reason: 'Chrome was not open' };
     }
 
     const [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
     if (!tab || !tab.id) {
-      console.warn('[MinuteFlow] No active tab found');
-      return null;
+      return { blob: null, reason: 'No tab open in Chrome' };
     }
 
     if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://'))) {
-      console.warn('[MinuteFlow] Cannot capture browser internal page');
-      return null;
+      return { blob: null, reason: 'On a browser settings page' };
     }
 
     const dataUrl = await chrome.tabs.captureVisibleTab(win.id, {
@@ -116,10 +113,15 @@ async function captureActiveTab() {
 
     const res = await fetch(dataUrl);
     const blob = await res.blob();
-    return blob;
+    return { blob, reason: null };
   } catch (err) {
-    console.error('[MinuteFlow] Capture failed:', err.message);
-    return null;
+    // captureVisibleTab refuses when the window is not the one on screen, which
+    // is the common case by far: the VA is working in another application, or
+    // Chrome is minimised. Saying so beats a generic failure, because "not at
+    // the machine" and "working somewhere else" mean very different things when
+    // someone reviews the day.
+    console.warn('[MinuteFlow] Capture failed:', err.message);
+    return { blob: null, reason: 'Chrome was minimised or another app was in front' };
   }
 }
 
@@ -431,10 +433,14 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
     }
   }
 
-  const blob = await captureActiveTab();
+  const { blob, reason: captureFailure } = await captureActiveTab();
   if (!blob) {
     if (screenshotType === 'progress') {
-      await queueMarker(session.user.id, resolvedLogId, 'Screen could not be captured');
+      await queueMarker(
+        session.user.id,
+        resolvedLogId,
+        captureFailure || 'Screen could not be captured'
+      );
     }
     return;
   }
@@ -627,7 +633,7 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
     return null;
   }
 
-  const blob = await captureActiveTab();
+  const { blob } = await captureActiveTab();
   if (!blob) return null;
 
   try {
