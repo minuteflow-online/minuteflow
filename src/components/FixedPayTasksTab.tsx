@@ -13,11 +13,11 @@ import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import Section from "@/components/ui/Section";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
-  { value: "all", label: "All" },
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
   { value: "archived", label: "Archived" },
   { value: "trash", label: "Trash" },
+  { value: "all", label: "All" },
 ];
 
 const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
@@ -124,7 +124,7 @@ export default function FixedPayTasksTab() {
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("active");
   const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
@@ -283,6 +283,7 @@ export default function FixedPayTasksTab() {
 
   const filterBaseTasks = useMemo(() => {
     return tasks.filter((task) => {
+      if (activeFilter !== "trash" && task.deleted_at) return false;
       if (activeFilter === "active" && (!task.is_active || task.archived_at || task.deleted_at)) return false;
       if (activeFilter === "inactive" && (task.is_active || task.archived_at || task.deleted_at)) return false;
       if (activeFilter === "archived" && (!task.archived_at || task.deleted_at)) return false;

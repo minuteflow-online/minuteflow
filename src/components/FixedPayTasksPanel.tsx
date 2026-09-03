@@ -15,12 +15,12 @@ import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPref
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "submitted" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "submitted", label: "Submitted" },
   { value: "active", label: "Active" },
+  { value: "submitted", label: "Submitted" },
   { value: "inactive", label: "Inactive" },
   { value: "archived", label: "Archived" },
   { value: "trash", label: "Trash" },
+  { value: "all", label: "All" },
 ];
 
 const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
@@ -140,7 +140,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("active");
   const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
@@ -339,6 +339,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
   const filterBaseTasks = useMemo(() => {
     return tasks.filter((task) => {
+      if (activeFilter !== "trash" && task.deleted_at) return false;
       if (activeFilter === "submitted" && task.status !== "submitted") return false;
       if (activeFilter === "active" && (!task.is_active || task.archived_at || task.deleted_at)) return false;
       if (activeFilter === "inactive" && (task.is_active || task.archived_at || task.deleted_at)) return false;

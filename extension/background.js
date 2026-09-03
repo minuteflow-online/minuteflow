@@ -44,6 +44,13 @@ const CONFIG = {
   // not merely idle at the instant the alarm happened to fire.
   IDLE_THRESHOLD_SECONDS: 300,
 
+  // The app captures the whole monitor when a VA is sharing their screen, which
+  // is the only way to see work outside Chrome. This extension only sees a
+  // browser tab, so it defers: it fires 90 seconds after the app would have,
+  // and skips its own capture if the slot is already covered.
+  CAPTURE_OFFSET_MINUTES: 1.5,
+  SLOT_COVERED_MINUTES: 4,
+
   // Extension version
   // Read, never restated. This was hardcoded and the 1.2.2 release bumped
   // manifest.json without it, so every install on earth reported 1.2.1 —
@@ -482,6 +489,26 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
  * Any failure returns null (capture proceeds): a broken idle check must never
  * be able to mark a working VA as idle.
  */
+/**
+ * True when a screenshot already exists for this task within the current slot —
+ * meaning the app captured the monitor and there is nothing for a browser-only
+ * capture to add. Any failure answers false, so a lookup problem costs a
+ * duplicate rather than a missing screenshot.
+ */
+async function slotAlreadyCovered(logId) {
+  try {
+    const since = new Date(Date.now() - CONFIG.SLOT_COVERED_MINUTES * 60000).toISOString();
+    const rows = await DB.query('task_screenshots', {
+      filters:
+        `log_id=eq.${logId}&captured_at=gte.${since}&screenshot_type=neq.failed&select=id&limit=1`,
+    });
+    return Array.isArray(rows) && rows.length > 0;
+  } catch (err) {
+    console.warn('[MinuteFlow] Slot check failed, capturing anyway:', err.message);
+    return false;
+  }
+}
+
 async function idleReason() {
   try {
     const state = await chrome.idle.queryState(CONFIG.IDLE_THRESHOLD_SECONDS);
@@ -702,6 +729,10 @@ async function runScheduledCapture() {
   if (await isOnBreak(session.user.id)) return;
 
   if (currentTaskLogId) {
+    if (await slotAlreadyCovered(currentTaskLogId)) {
+      console.log('[MinuteFlow] Slot already captured by the app — skipping.');
+      return;
+    }
     await captureLocalThenUpload('progress', currentTaskLogId);
     return;
   }
@@ -722,7 +753,7 @@ async function runScheduledCapture() {
 function startCaptureSchedule() {
   chrome.alarms.create('minuteflow-capture', {
     periodInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
-    delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
+    delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES + CONFIG.CAPTURE_OFFSET_MINUTES,
   });
 }
 
@@ -777,7 +808,7 @@ async function onTaskStart(logId) {
   // the app's own in-page schedule and produced several times the intended volume.
   chrome.alarms.create('minuteflow-capture', {
     periodInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
-    delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
+    delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES + CONFIG.CAPTURE_OFFSET_MINUTES,
   });
 }
 
