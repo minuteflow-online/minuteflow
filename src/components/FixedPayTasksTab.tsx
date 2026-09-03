@@ -690,6 +690,36 @@ export default function FixedPayTasksTab() {
     }
   }, [panelMode, selectedTask, panelStatus, panelIsActive, updateTaskVisibility]);
 
+  const handleDuplicatePanelTask = useCallback(async () => {
+    setMessage(null);
+    setPanelSaving(true);
+    try {
+      await taskEditorRef.current?.duplicate();
+      void fetchTasks();
+      closePanel();
+    } catch (error) {
+      setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to duplicate task." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [fetchTasks, closePanel]);
+
+  const handleConvertPanelTask = useCallback(async () => {
+    setMessage(null);
+    setPanelSaving(true);
+    try {
+      // This tab only ever edits Output Based tasks, so the one meaningful
+      // direction here is always toward Time-based.
+      await taskEditorRef.current?.convert("time_based");
+      void fetchTasks();
+      closePanel();
+    } catch (error) {
+      setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to convert task." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [fetchTasks, closePanel]);
+
   const handleAttachmentPick = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setPendingAttachment(event.target.files?.[0] ?? null);
     setAttachmentMessage(null);
@@ -1135,6 +1165,26 @@ export default function FixedPayTasksTab() {
                 </div>
               ) : (
                 <div className="flex items-center justify-end gap-3">
+                  {panelMode === "edit" && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDuplicatePanelTask()}
+                      disabled={panelSaving}
+                      className="rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Duplicate
+                    </button>
+                  )}
+                  {panelMode === "edit" && (
+                    <button
+                      type="button"
+                      onClick={() => void handleConvertPanelTask()}
+                      disabled={panelSaving}
+                      className="rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Switch to Time-based
+                    </button>
+                  )}
                   <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
                     Cancel
                   </button>

@@ -1897,6 +1897,36 @@ export default function TaskListPage() {
     }
   }, [panelCanEditFields, handleSavePanel, closePanel]);
 
+  const handleDuplicatePanelTask = useCallback(async () => {
+    setPanelMsg(null);
+    setPanelSaving(true);
+    try {
+      await taskEditorRef.current?.duplicate();
+      await fetchTasks();
+      closePanel();
+    } catch {
+      setPanelMsg({ type: "err", text: "Unable to duplicate this task right now." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [fetchTasks, closePanel]);
+
+  const handleConvertPanelTask = useCallback(async () => {
+    setPanelMsg(null);
+    setPanelSaving(true);
+    try {
+      // This panel only ever shows Time-based tasks (selectedTask.assigned_tasks),
+      // so the one meaningful direction here is always toward Output Based.
+      await taskEditorRef.current?.convert("output_based");
+      await fetchTasks();
+      closePanel();
+    } catch {
+      setPanelMsg({ type: "err", text: "Unable to convert this task right now." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [fetchTasks, closePanel]);
+
 
   const patchTaskVisibility = useCallback(
     async (taskId: number, payload: Record<string, string | null>) => {
@@ -3087,6 +3117,26 @@ export default function TaskListPage() {
               </div>
 
               <div className="flex items-center gap-3">
+                {panelCanEditFields && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDuplicatePanelTask()}
+                    disabled={panelSaving}
+                    className="cursor-pointer rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Duplicate
+                  </button>
+                )}
+                {panelCanEditFields && isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => void handleConvertPanelTask()}
+                    disabled={panelSaving}
+                    className="cursor-pointer rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Switch to Output Based
+                  </button>
+                )}
                 <button type="button" onClick={closePanel} className="cursor-pointer text-xs text-stone hover:text-espresso">
                   Cancel
                 </button>

@@ -59,8 +59,11 @@ export default function RecurringTemplatePanel({
   // fixed_pay_tasks), same as TaskEditor's own create-only toggle elsewhere
   // (assignment/page.tsx's New Task panel). Editing one seeds from its own
   // pay_type so an existing Output Based template still opens correctly.
+  // 'fixed', not 'output_based' — recurring_task_templates.pay_type has a DB
+  // check constraint allowing only 'fixed'/'hourly' (see isOutputBased in
+  // recurringOccurrences.ts).
   const [mode, setMode] = useState<"time_based" | "output_based">(() =>
-    template?.pay_type === "output_based" ? "output_based" : "time_based"
+    template?.pay_type === "fixed" ? "output_based" : "time_based"
   );
 
   // TaskEditor reads a task-shaped row, and a template is close enough to hand

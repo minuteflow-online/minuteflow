@@ -914,6 +914,36 @@ export default function TaskAssignmentsAdminTab({
     }
   }, []);
 
+  const handleDuplicatePanelTask = useCallback(async () => {
+    setDetailSaveMsg(null);
+    setDetailSaving(true);
+    try {
+      await taskEditorRef.current?.duplicate();
+      await fetchTasks();
+      closePanel();
+    } catch {
+      setDetailSaveMsg({ type: "err", text: "Unable to duplicate task." });
+    } finally {
+      setDetailSaving(false);
+    }
+  }, [fetchTasks, closePanel]);
+
+  const handleConvertPanelTask = useCallback(async () => {
+    setDetailSaveMsg(null);
+    setDetailSaving(true);
+    try {
+      // This tab only ever edits Time-based tasks, so the one meaningful
+      // direction here is always toward Output Based.
+      await taskEditorRef.current?.convert("output_based");
+      await fetchTasks();
+      closePanel();
+    } catch {
+      setDetailSaveMsg({ type: "err", text: "Unable to convert task." });
+    } finally {
+      setDetailSaving(false);
+    }
+  }, [fetchTasks, closePanel]);
+
   // ─── Delete ───────────────────────────────────────────────────────────────────
 
   const handleDelete = useCallback(
@@ -2470,6 +2500,24 @@ export default function TaskAssignmentsAdminTab({
                   </p>
                 )}
                 <div className="flex items-center gap-3">
+                  {!isCreating && (
+                    <button
+                      onClick={() => void handleDuplicatePanelTask()}
+                      disabled={detailSaving}
+                      className="rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso cursor-pointer transition-colors hover:bg-parchment disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Duplicate
+                    </button>
+                  )}
+                  {!isCreating && (
+                    <button
+                      onClick={() => void handleConvertPanelTask()}
+                      disabled={detailSaving}
+                      className="rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso cursor-pointer transition-colors hover:bg-parchment disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Switch to Output Based
+                    </button>
+                  )}
                   <button
                     onClick={closePanel}
                     className="text-xs text-stone hover:text-espresso cursor-pointer"

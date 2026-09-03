@@ -1312,11 +1312,51 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // logic that duplication has no business touching — this always creates,
   // regardless of isEditing.
   const handleDuplicate = async () => {
-    if (!isEditing || templateMode) return;
+    if (!isEditing) return;
     setDuplicating(true);
     setError(null);
     const effectiveVaIds = isAdminOrManager ? vaIds : [currentUserId].filter(Boolean);
     try {
+      if (templateMode) {
+        if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
+          throw new Error("Enter a rate before duplicating an Output Based template.");
+        }
+        const body: Record<string, unknown> = {
+          title: taskName.trim(),
+          task_name: taskName.trim(),
+          account: account || null,
+          project: project || null,
+          category: category || null,
+          description: taskDetail.trim() || null,
+          task_detail: taskDetail.trim() || null,
+          task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
+          instructions: instructions.trim() || null,
+          review_required: mode === "output_based" ? true : reviewRequired === "yes",
+          start_date: startDate || null,
+          end_date: endDate || null,
+          due_time: dueTime || null,
+          start_time: hasSchedule && startTime ? startTime : null,
+          end_time: hasSchedule && endTime ? endTime : null,
+          planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
+          project_id: linkedProjectId || null,
+          assigned_to_ids: effectiveVaIds,
+          assigned_by: assignedBy || currentUserId || null,
+          pay_type: mode === "output_based" ? "fixed" : null,
+          rate: mode === "output_based" ? Number(rate) : null,
+          ...templateExtra,
+        };
+        const res = await fetch("/api/recurring-task-templates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        showToast("success", "Template duplicated");
+        onSaved({ id: 0, ...data.template });
+        return;
+      }
       if (mode === "output_based") {
         if (!rate.trim() || !Number.isFinite(Number(rate))) {
           throw new Error("Enter a rate before duplicating an Output Based task.");
@@ -1401,11 +1441,35 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // several assignees narrows to the first when converting TO Output Based,
   // same as Output Based has always kept only the first pick at creation.
   const handleConvert = async (targetMode: "time_based" | "output_based") => {
-    if (!isEditing || templateMode || !isAdminOrManager || targetMode === mode) return;
+    if (!isEditing || !isAdminOrManager || targetMode === mode) return;
     setConverting(true);
     setError(null);
     const effectiveVaIds = isAdminOrManager ? vaIds : [currentUserId].filter(Boolean);
     try {
+      if (templateMode) {
+        // A template has one pay_type column, not two tables — flipping it is
+        // a plain PATCH, no create-and-delete needed the way the two live
+        // tables require.
+        if (targetMode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
+          throw new Error("Enter a rate before converting to Output Based.");
+        }
+        const body: Record<string, unknown> = {
+          id: editingTemplateId,
+          pay_type: targetMode === "output_based" ? "fixed" : null,
+          rate: targetMode === "output_based" ? Number(rate) : null,
+          review_required: targetMode === "output_based" ? true : reviewRequired === "yes",
+        };
+        const res = await fetch(`/api/recurring-task-templates?id=${editingTemplateId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        showToast("success", targetMode === "output_based" ? "Converted to Output Based" : "Converted to Time-based");
+        onSaved({ id: 0, ...data.template });
+        return;
+      }
       if (targetMode === "output_based") {
         if (!rate.trim() || !Number.isFinite(Number(rate))) {
           throw new Error("Enter a rate before converting to Output Based.");
@@ -2571,24 +2635,28 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               {missingRequired.length > 0 && (
                 <InfoTip text={`Still needed: ${missingRequired.join(", ")}. The section holding each one is marked.`} />
               )}
-              {isEditing && !templateMode && (
+              {isEditing && (
                 <button
                   onClick={() => void handleDuplicate()}
                   disabled={saving || duplicating || !taskName.trim() || !taskDetail.trim()}
-                  title="Create a new task with the same details — status, screenshots, and to-dos are not copied"
+                  title={
+                    templateMode
+                      ? "Create a new recurring template with the same details"
+                      : "Create a new task with the same details — status, screenshots, and to-dos are not copied"
+                  }
                   className="px-4 py-2 rounded-lg border border-sand text-[13px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
                 >
                   {duplicating ? "Duplicating..." : "Duplicate"}
                 </button>
               )}
-              {isEditing && !templateMode && isAdminOrManager && (
+              {isEditing && isAdminOrManager && (
                 <button
                   onClick={() => void handleConvert(mode === "output_based" ? "time_based" : "output_based")}
                   disabled={saving || converting}
                   title={
                     mode === "output_based"
-                      ? "Move this to a Time-based task — replaces this Output Based task with a new hourly one"
-                      : "Move this to an Output Based task — replaces this task with a new one paid per output"
+                      ? `Move this ${templateMode ? "template" : "task"} to Time-based`
+                      : `Move this ${templateMode ? "template" : "task"} to Output Based`
                   }
                   className="px-4 py-2 rounded-lg border border-sand text-[13px] font-semibold text-espresso hover:bg-parchment transition-colors disabled:opacity-50"
                 >

@@ -1043,6 +1043,39 @@ export default function ProductivityCalendarPage() {
     }
   }, [editingBlockId, editingTaskFull, panelStatus, dayUserId, refreshAfterScheduleChange]);
 
+  const handleDuplicateEditPanel = useCallback(async () => {
+    if (!editingBlockId) return;
+    setPanelMsg(null);
+    setPanelSaving(true);
+    try {
+      await taskEditorRef.current?.duplicate();
+      await refreshAfterScheduleChange();
+      setShowForm(false);
+    } catch {
+      setPanelMsg({ type: "err", text: "Unable to duplicate this task right now." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [editingBlockId, refreshAfterScheduleChange]);
+
+  const handleConvertEditPanel = useCallback(async () => {
+    if (!editingBlockId) return;
+    setPanelMsg(null);
+    setPanelSaving(true);
+    try {
+      // The Calendar's block editor only ever shows Time-based tasks — this
+      // panel has no Output Based schedule to render — so the one meaningful
+      // direction here is always toward Output Based.
+      await taskEditorRef.current?.convert("output_based");
+      await refreshAfterScheduleChange();
+      setShowForm(false);
+    } catch {
+      setPanelMsg({ type: "err", text: "Unable to convert this task right now." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [editingBlockId, refreshAfterScheduleChange]);
+
   // "Remove from Calendar" used to live here — a one-click PATCH clearing
   // start_time/end_time. Removed along with its button rather than left behind
   // as dead code; clearing the hours is still reachable by unticking Add to
@@ -3816,6 +3849,26 @@ export default function ProductivityCalendarPage() {
                   {panelMsg?.type === "ok" && <p className="text-xs font-medium text-sage">{panelMsg.text}</p>}
 
                   <div className="flex items-center justify-end gap-3 pt-1">
+                    {editingBlockId && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDuplicateEditPanel()}
+                        disabled={panelSaving}
+                        className="cursor-pointer rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Duplicate
+                      </button>
+                    )}
+                    {editingBlockId && isAdminOrManager && (
+                      <button
+                        type="button"
+                        onClick={() => void handleConvertEditPanel()}
+                        disabled={panelSaving}
+                        className="cursor-pointer rounded-lg border border-sand px-3 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Switch to Output Based
+                      </button>
+                    )}
                     <button type="button" onClick={() => setShowForm(false)} className="cursor-pointer text-xs text-stone hover:text-espresso">
                       Cancel
                     </button>
