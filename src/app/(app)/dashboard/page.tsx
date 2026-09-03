@@ -2039,13 +2039,12 @@ export default function DashboardPage() {
         console.warn(`[Screenshot] Skipped (${screenshotType}): another capture is already in progress.`);
         return false;
       }
-      // Guard: the extension owns capture whenever it's running. Only it can see
-      // OS-level idle, so it takes the whole automatic schedule; this path exists
-      // for VAs without the extension. Manual captures are always honoured.
-      if (screenshotType !== 'manual' && extensionLiveRef.current) {
-        console.info(`[Screenshot] Skipped (${screenshotType}): SCE extension is capturing.`);
-        return false;
-      }
+      // This path captures the whole monitor, so it is the only one that can see
+      // work outside Chrome — a video call, a design tool, a spreadsheet app. The
+      // extension can only photograph a browser tab, which is why it used to own
+      // the schedule and why an hour in a meeting came back as a row of blanks.
+      // Whenever a screen share is running, this captures and the extension steps
+      // aside instead.
       // Guard: the capture Worker fires on a fixed schedule against whatever
       // logId it was last told, with no idea whether that log is still open —
       // it only stops when told to. Every path that closes a log as a safety
