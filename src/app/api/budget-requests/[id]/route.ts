@@ -41,13 +41,27 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   const body = await request.json().catch(() => ({}));
+  const admin = makeAdminClient();
+
+  // Archiving is a separate, reversible move: it files a reviewed request out
+  // of the way without touching the decision or who made it.
+  if (body.archived !== undefined) {
+    const { data, error } = await admin
+      .from("budget_requests")
+      .update({ archived_at: body.archived ? new Date().toISOString() : null })
+      .eq("id", requestId)
+      .select("id, archived_at")
+      .single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ request: data });
+  }
+
   const status = String(body.status ?? "");
   if (status !== "approved" && status !== "denied") {
     return Response.json({ error: "status must be 'approved' or 'denied'." }, { status: 400 });
   }
   const reviewNotes = typeof body.review_notes === "string" && body.review_notes.trim() ? body.review_notes.trim() : null;
 
-  const admin = makeAdminClient();
   const { data, error } = await admin
     .from("budget_requests")
     .update({
@@ -62,4 +76,26 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ request: data });
+}
+
+// DELETE — remove a request for good. Approving one already applied its budget,
+// so deleting is a records decision, not a way to claw the hours back.
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireAuthed();
+  if ("error" in auth) return auth.error;
+
+  if (!hasBroadAdminAccess({ role: auth.role })) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const requestId = Number(id);
+  if (!Number.isFinite(requestId)) {
+    return Response.json({ error: "Invalid request id" }, { status: 400 });
+  }
+
+  const admin = makeAdminClient();
+  const { error } = await admin.from("budget_requests").delete().eq("id", requestId);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ success: true });
 }

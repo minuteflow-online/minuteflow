@@ -112,7 +112,7 @@ export async function GET() {
 
   let query = admin
     .from("budget_requests")
-    .select("id, va_id, amount, unit, reason, status, reviewed_by, review_notes, created_at, reviewed_at, period")
+    .select("id, va_id, amount, unit, reason, status, reviewed_by, review_notes, created_at, reviewed_at, period, archived_at")
     .order("created_at", { ascending: false });
   if (!isAdminOrManager) query = query.eq("va_id", auth.userId);
 
