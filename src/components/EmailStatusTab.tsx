@@ -99,14 +99,14 @@ export default function EmailStatusTab() {
         .from("email_events")
         .select("resend_message_id, event_type, created_at")
         .order("created_at", { ascending: true }),
-      sb
-        .from("email_log_hidden")
-        .select("type, source_id"),
+      // email_log_hidden has no anon/authenticated grants — read through the
+      // service-role route instead of the browser client.
+      fetch("/api/email-log-hidden").then((r) => r.json()),
     ]);
 
     // Build hidden set
     const hidden = new Set<string>();
-    for (const h of (hiddenRes.data ?? []) as { type: string; source_id: string }[]) {
+    for (const h of (hiddenRes.hidden ?? []) as { type: string; source_id: string }[]) {
       hidden.add(`${h.type}:${h.source_id}`);
     }
 
@@ -275,8 +275,11 @@ export default function EmailStatusTab() {
   const handleDelete = useCallback(async (type: EmailType, id: string) => {
     const key = `${type}:${id}`;
     setDeleting(key);
-    const sb = createClient();
-    await sb.from("email_log_hidden").upsert({ type, source_id: id });
+    await fetch("/api/email-log-hidden", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: [{ type, source_id: id }] }),
+    });
     setRecords((prev) => prev.filter((r) => !(r.type === type && r.id === id)));
     setSelected((prev) => { const next = new Set(prev); next.delete(key); return next; });
     setDeleting(null);
@@ -286,12 +289,15 @@ export default function EmailStatusTab() {
   const handleBulkDelete = useCallback(async () => {
     if (selected.size === 0) return;
     setBulkDeleting(true);
-    const sb = createClient();
     const toDelete = Array.from(selected).map((key) => {
       const [type, ...rest] = key.split(":");
       return { type, source_id: rest.join(":") };
     });
-    await sb.from("email_log_hidden").upsert(toDelete);
+    await fetch("/api/email-log-hidden", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: toDelete }),
+    });
     setRecords((prev) =>
       prev.filter((r) => !selected.has(`${r.type}:${r.id}`))
     );

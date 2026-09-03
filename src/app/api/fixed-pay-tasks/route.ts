@@ -139,6 +139,10 @@ export async function GET(request: Request) {
   // card on that page. Without this the link was saved and then invisible —
   // that card only ever read assigned_tasks.
   const projectId = searchParams.get("projectId");
+  // Comma-separated for a whole branch (this objective + its sub-objectives) —
+  // a single id is just a one-element list, so every existing caller keeps
+  // working unchanged.
+  const projectIdList = projectId ? projectId.split(",").map((s) => s.trim()).filter(Boolean) : null;
 
   // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
   // RLS check (role stays "va"), so read via the service-role client once
@@ -150,7 +154,7 @@ export async function GET(request: Request) {
     .from("fixed_pay_tasks")
     .select(TASK_SELECT)
     .order("created_at", { ascending: false });
-  if (projectId) listQuery = listQuery.eq("project_id", projectId);
+  if (projectIdList && projectIdList.length > 0) listQuery = listQuery.in("project_id", projectIdList);
 
   const { data, error } = await listQuery;
 

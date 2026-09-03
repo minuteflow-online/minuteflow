@@ -57,7 +57,7 @@ export async function GET(request: Request) {
   let query = admin
     .from("task_submissions")
     .select(
-      "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, " +
+      "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, " +
         "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
         "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
     )
@@ -163,29 +163,7 @@ export async function GET(request: Request) {
   const reviewState: Record<number, string> = {};
 
   if (taskIds.length > 0) {
-    const taskMeta = new Map<
-      number,
-      { name: string | null; account: string | null; createdAt: string | null }
-    >();
-    for (const row of rows) {
-      if (row.assigned_tasks) {
-        taskMeta.set(row.assigned_tasks.id, {
-          name: row.assigned_tasks.task_name,
-          account: row.assigned_tasks.account,
-          createdAt: row.assigned_tasks.created_at,
-        });
-      }
-    }
-
-    const names = Array.from(
-      new Set(
-        Array.from(taskMeta.values())
-          .map((m) => m.name)
-          .filter((n): n is string => Boolean(n))
-      )
-    );
-
-    const [revisionRes, assigneeRes, logRes] = await Promise.all([
+    const [revisionRes, logRes] = await Promise.all([
       // Every thread entry, not just revisions: the newest one also tells us
       // whether the task is still awaiting review (see reviewState below).
       admin
@@ -196,16 +174,17 @@ export async function GET(request: Request) {
         // a mistaken reversal works by trashing it, so counting it here would
         // leave the task stuck in the state the mistake caused.
         .is("deleted_at", null),
+
+      // Logs now name the task they were worked under, so this asks for
+      // exactly the ones that belong to these tasks. It replaces matching on
+      // person + task name + account, which counted one session against every
+      // recurring instance sharing a name — an eight-hour total for someone
+      // on a four-hour day.
       admin
-        .from("assigned_task_assignees")
-        .select("assigned_task_id, va_id")
-        .in("assigned_task_id", taskIds),
-      names.length > 0
-        ? admin
-            .from("time_logs")
-            .select("user_id, task_name, account, start_time, duration_ms")
-            .in("task_name", names)
-        : Promise.resolve({ data: [] as never[] }),
+        .from("time_logs")
+        .select("assigned_task_id, start_time, duration_ms")
+        .in("assigned_task_id", taskIds)
+        .limit(20000),
     ]);
 
     const allEntries = (revisionRes.data ?? []) as Array<{
@@ -255,39 +234,20 @@ export async function GET(request: Request) {
               "awaiting";
     }
 
-    const vasByTask = new Map<number, string[]>();
-    for (const a of assigneeRes.data ?? []) {
-      const id = a.assigned_task_id as number;
-      vasByTask.set(id, (vasByTask.get(id) ?? []).concat(a.va_id as string));
-    }
-
-    // time_logs carry no task reference, so a log is matched to its task by
-    // person + task name + account.
-    const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+    // Each log names its task outright, so nothing has to be inferred.
     const logs = (logRes.data ?? []) as Array<{
-      user_id: string;
-      task_name: string | null;
-      account: string | null;
+      assigned_task_id: number | null;
       start_time: string | null;
       duration_ms: number | null;
     }>;
 
     for (const taskId of taskIds) {
-      const meta = taskMeta.get(taskId);
-      if (!meta) continue;
-      const vas = vasByTask.get(taskId) ?? [];
       const times = (revisionTimes.get(taskId) ?? []).slice().sort();
       const buckets: Record<number, number> = {};
 
       for (const log of logs) {
+        if (log.assigned_task_id !== taskId) continue;
         if (!log.start_time) continue;
-        if (!vas.includes(log.user_id)) continue;
-        if (norm(log.task_name) !== norm(meta.name)) continue;
-        if (norm(log.account) !== norm(meta.account)) continue;
-        // Work on a task can't predate the task. Without this, older logs that
-        // merely share a name and account (recurring work often does) get
-        // swallowed into round 0 and inflate the original-effort figure.
-        if (meta.createdAt && log.start_time < meta.createdAt) continue;
         const round = times.filter((t) => t < log.start_time!).length;
         buckets[round] = (buckets[round] ?? 0) + Number(log.duration_ms ?? 0);
       }
@@ -331,12 +291,163 @@ export async function GET(request: Request) {
     };
   });
 
+  // ── Expected work ────────────────────────────────────────────────────────
+  // The calendar could only ever show what came in, so a person with a full
+  // week of due dates and nothing submitted yet had an empty calendar. Tasks
+  // still outstanding are returned alongside the submissions and plotted on
+  // their due date, which is the question the calendar is actually asked:
+  // what am I waiting for, and what is already late.
+  //
+  // Trash is a view of deleted submissions; expected work has no place in it.
+  const expected: Array<Record<string, unknown>> = [];
+
+  if (!showTrash) {
+    // Statuses that mean the work is still owed. Anything submitted or
+    // finished is already represented by its submission entry.
+    const OPEN_STATUSES = new Set([
+      "unassigned",
+      "pending",
+      "on_queue",
+      "in_progress",
+      "revision_needed",
+    ]);
+
+    const { data: dueTasks } = await admin
+      .from("assigned_tasks")
+      .select(
+        "id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
+          "assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), " +
+          "projects(id, name, kind), assigned_task_assignees(id, va_id, status)"
+      )
+      .not("due_date", "is", null)
+      .is("deleted_at", null)
+      .is("archived_at", null)
+      // Explicit, because PostgREST silently truncates at 1000 rows otherwise.
+      .limit(5000);
+
+    type DueTask = {
+      id: number;
+      task_name: string;
+      task_detail: string | null;
+      account: string | null;
+      project: string | null;
+      project_id: string | null;
+      status: string | null;
+      due_date: string | null;
+      due_time: string | null;
+      end_date: string | null;
+      end_time: string | null;
+      category: string | null;
+      review_required: boolean | null;
+      assigned_by: string | null;
+      fixed_pay_task_id: number | null;
+      assigned_by_profile?: { id: string; full_name: string | null; username: string | null } | null;
+      projects?: { id: string; name: string; kind: string } | null;
+      assigned_task_assignees?: Array<{ id: number; va_id: string | null; status: string | null }>;
+    };
+
+    let dueRows = ((dueTasks ?? []) as unknown as DueTask[]).filter((t) =>
+      (t.assigned_task_assignees ?? []).some((a) => OPEN_STATUSES.has(a.status ?? ""))
+    );
+
+    // Same visibility rule as the submissions above: your own work, plus
+    // anything you assigned and are therefore waiting on.
+    if (!isAdminEquivalent) {
+      dueRows = dueRows.filter(
+        (t) =>
+          t.assigned_by === user.id ||
+          (t.assigned_task_assignees ?? []).some((a) => a.va_id === user.id)
+      );
+    }
+
+    if (isAdminEquivalent && va && va !== "all") {
+      dueRows = dueRows.filter((t) =>
+        (t.assigned_task_assignees ?? []).some((a) => a.va_id === va)
+      );
+    }
+
+    if (projectId && projectId !== "all") {
+      dueRows = dueRows.filter((t) => t.project_id === projectId);
+    } else if (scope === "adhoc") {
+      dueRows = dueRows.filter((t) => !t.project_id);
+    } else if (scope === "objective" || scope === "operation") {
+      dueRows = dueRows.filter((t) => t.projects?.kind === scope);
+    }
+
+    // Names for the people the work is owed by. One lookup rather than an
+    // embed, because assigned_tasks already embeds profiles once for
+    // assigned_by and a second path off the same row is ambiguous.
+    const waitingOnIds = [
+      ...new Set(
+        dueRows
+          .flatMap((t) => (t.assigned_task_assignees ?? []).map((a) => a.va_id))
+          .filter((v): v is string => Boolean(v))
+      ),
+    ];
+    let people: Record<string, { id: string; full_name: string | null; username: string | null }> = {};
+    if (waitingOnIds.length > 0) {
+      const { data: peopleRows } = await admin
+        .from("profiles")
+        .select("id, full_name, username")
+        .in("id", waitingOnIds);
+      people = Object.fromEntries((peopleRows ?? []).map((p) => [p.id, p]));
+    }
+
+    for (const task of dueRows) {
+      for (const assignee of task.assigned_task_assignees ?? []) {
+        if (!OPEN_STATUSES.has(assignee.status ?? "")) continue;
+        if (!assignee.va_id) continue;
+        expected.push({
+          // Negative so it can never collide with a submission id — the feed
+          // keys React nodes and the revision map off this.
+          id: -assignee.id,
+          assigned_task_id: task.id,
+          user_id: assignee.va_id,
+          message_type: "expected",
+          content: "",
+          submission_link: null,
+          submission_comment: null,
+          // The due moment, so anything that sorts the feed by time puts this
+          // where the work is owed. The calendar buckets on due_date itself.
+          created_at: `${task.due_date}T${task.due_time || "23:59:59"}`,
+          edited_at: null,
+          due_at: null,
+          attachments: [],
+          assignee_status: assignee.status,
+          profiles: people[assignee.va_id] ?? null,
+          task: {
+            id: task.id,
+            task_name: task.task_name,
+            task_detail: task.task_detail,
+            account: task.account,
+            project: task.project,
+            project_id: task.project_id,
+            project_kind: task.projects?.kind ?? null,
+            project_name: task.projects?.name ?? null,
+            status: task.status,
+            category: task.category,
+            review_required: task.review_required,
+            assigned_by: task.assigned_by,
+            is_output_based: task.fixed_pay_task_id != null,
+            assigned_by_name:
+              task.assigned_by_profile?.full_name ?? task.assigned_by_profile?.username ?? null,
+            due_date: task.due_date,
+            due_time: task.due_time,
+            end_date: task.end_date,
+            end_time: task.end_time,
+          },
+        });
+      }
+    }
+  }
+
   // `seesAll` is the broader admin-equivalent tier (who may view everyone's
   // submissions); `canReview` is the narrower Admin/CEO/Founder tier the POST
   // route actually enforces — returning the same flag for both would render
   // Approve buttons that 403 for a Manager.
   return Response.json({
     submissions,
+    expected,
     roundDurations,
     reviewState,
     seesAll: isAdminEquivalent,

@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus } from "@/types/database";
+import { countWords, submissionMeetsBar, MIN_SUBMISSION_WORDS } from "@/lib/submissions";
 
 /**
  * Run before turning work in. Instructions show the task's own text inline,
@@ -25,6 +27,9 @@ interface SubmitWorkModalProps {
   taskName: string;
   /** Shown inline under the first checklist item, so it's actually read. */
   instructions?: string | null;
+  /** When false, nobody reviews this task, so the checklist and the word bar
+   *  are dropped — they exist for a reader this work will never have. */
+  reviewRequired?: boolean | null;
   onClose: () => void;
   /**
    * Called once the submission is saved. Receives the status the task should
@@ -48,6 +53,7 @@ export default function SubmitWorkModal({
   taskId,
   taskName,
   instructions,
+  reviewRequired,
   onClose,
   onSubmitted,
 }: SubmitWorkModalProps) {
@@ -56,11 +62,22 @@ export default function SubmitWorkModal({
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /** "Uploading 3 of 7..." — a seven-file submission is not instant. */
+  const [progress, setProgress] = useState("");
+  const supabase = useMemo(() => createClient(), []);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
-  const hasContent = Boolean(message.trim() || link.trim() || files.length > 0);
-  const allChecked = CHECKLIST.every((c) => checked.has(c.key));
+  const words = countWords(message);
+  // A task nobody reviews only needs a submission that isn't empty — the
+  // 15-word bar exists for a reader this work never gets. The checklist still
+  // shows, because it's a prompt worth reading even when nothing enforces it;
+  // it just doesn't block submitting.
+  const needsEvidence = reviewRequired !== false;
+  const hasContent = needsEvidence
+    ? submissionMeetsBar({ message, link, fileCount: files.length })
+    : Boolean(message.trim() || link.trim() || files.length > 0);
+  const allChecked = !needsEvidence || CHECKLIST.every((c) => checked.has(c.key));
   const canSubmit = hasContent && allChecked;
 
   const addFiles = (list: FileList | null) => {
@@ -84,20 +101,75 @@ export default function SubmitWorkModal({
     setError("");
 
     try {
-      const formData = new FormData();
-      formData.append("message_type", "submission");
-      if (message.trim()) formData.append("message", message.trim());
-      if (link.trim()) formData.append("link", link.trim());
-      for (const file of files) formData.append("file", file);
+      // Attachments go straight from the browser to storage. Sending them
+      // through the submission POST puts every byte in the request body,
+      // which the platform caps at 4.5MB and rejects with a page we can't
+      // even read an error out of — seven flyer PNGs was enough to hit it.
+      const attachments: Array<{
+        path: string;
+        filename: string;
+        size: number;
+        mime_type: string | null;
+      }> = [];
+
+      for (const [index, file] of files.entries()) {
+        setProgress(`Uploading ${index + 1} of ${files.length}...`);
+
+        const slotRes = await fetch(
+          `/api/assigned-tasks/${taskId}/submissions/upload-url`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename: file.name, size: file.size }),
+          }
+        );
+        if (!slotRes.ok) {
+          const body = await slotRes.json().catch(() => ({}));
+          setError(body.error ?? `Couldn't upload ${file.name}. Nothing was recorded.`);
+          setProgress("");
+          setSaving(false);
+          return;
+        }
+        const { path, token } = await slotRes.json();
+
+        const { error: uploadError } = await supabase.storage
+          .from("task-attachments")
+          .uploadToSignedUrl(path, token, file);
+        if (uploadError) {
+          setError(`Couldn't upload ${file.name}: ${uploadError.message}. Nothing was recorded.`);
+          setProgress("");
+          setSaving(false);
+          return;
+        }
+
+        attachments.push({
+          path,
+          filename: file.name,
+          size: file.size,
+          mime_type: file.type || null,
+        });
+      }
+
+      setProgress(files.length > 0 ? "Saving submission..." : "");
 
       const res = await fetch(`/api/assigned-tasks/${taskId}/submissions`, {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message_type: "submission",
+          message: message.trim() || undefined,
+          link: link.trim() || undefined,
+          attachments,
+        }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Unable to save the submission. Nothing was recorded.");
+        setError(
+          data.error ??
+            `Unable to save the submission (${res.status}). Nothing was recorded.`
+        );
+        setProgress("");
         setSaving(false);
         return;
       }
@@ -106,6 +178,7 @@ export default function SubmitWorkModal({
       onSubmitted((data.autoStatus as AssignedTaskStatus) ?? "submitted");
     } catch {
       setError("Network error — nothing was recorded. Try again.");
+      setProgress("");
       setSaving(false);
     }
   };
@@ -197,7 +270,9 @@ export default function SubmitWorkModal({
           </div>
 
           <div className="rounded-lg border border-sand bg-cream/40 p-2">
-            <label className={labelClass}>Before you submit</label>
+            <label className={labelClass}>
+              Before you submit{needsEvidence ? "" : " (optional)"}
+            </label>
             <div className="space-y-1">
               {CHECKLIST.map((item) => (
                 <label key={item.key} className="flex cursor-pointer items-start gap-2">
@@ -228,10 +303,24 @@ export default function SubmitWorkModal({
             </div>
           </div>
 
+          {needsEvidence && !hasContent && (
+            <p className="rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[10px] leading-relaxed text-stone">
+              Attach a file or add a link — or, if the message is all there is,
+              describe the work in at least {MIN_SUBMISSION_WORDS} words.
+              {words > 0 && ` (${words} so far)`}
+            </p>
+          )}
+
           <p className="rounded-lg border border-amber/20 bg-amber-soft px-2 py-1.5 text-[10px] leading-relaxed text-walnut">
             Once submitted this can&apos;t be edited. If something changes, add a note to the
             task instead — the record stays as submitted.
           </p>
+
+          {progress && !error && (
+            <p className="rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[11px] text-stone">
+              {progress}
+            </p>
+          )}
 
           {error && (
             <p className="rounded-lg border border-terracotta/20 bg-terracotta-soft px-2 py-1.5 text-[11px] text-terracotta">

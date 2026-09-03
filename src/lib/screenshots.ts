@@ -79,6 +79,19 @@ export async function fetchScreenshotOwnersInRange(
   return rows;
 }
 
+/**
+ * Tooltip text for one screenshot tile. A marker (screenshot_type "failed") has
+ * no image, ever, by design — it exists to record *why* a slot is blank (idle,
+ * screen locked, on a MinuteFlow tab), so its tooltip should say that reason,
+ * not "Screenshot failed", which reads as a bug rather than the explanation it is.
+ */
+export function screenshotTileTitle(ss: TaskScreenshot): string {
+  if (ss.screenshot_type === "failed") {
+    return ss.failure_reason || "No screenshot for this slot";
+  }
+  return `Screenshot ${ss.screenshot_type || "manual"}`;
+}
+
 /** Group a flat screenshot list by log_id, the shape the log tables render from. */
 export function groupScreenshotsByLog(
   screenshots: TaskScreenshot[]

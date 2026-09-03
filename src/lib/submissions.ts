@@ -102,6 +102,32 @@ export function canEmptySubmissionTrash(
   return profile?.role === "founder";
 }
 
+/** A message on its own has to say something — this is the bar. */
+export const MIN_SUBMISSION_WORDS = 15;
+
+export function countWords(text: string | null | undefined): number {
+  return (text ?? "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * What counts as a real submission. A file or a link is evidence on its own,
+ * so either passes alone. A message with nothing attached has to carry the
+ * whole account of the work, which "Completed" plainly does not.
+ */
+export function submissionMeetsBar({
+  message,
+  link,
+  fileCount,
+}: {
+  message?: string | null;
+  link?: string | null;
+  fileCount: number;
+}): boolean {
+  if (fileCount > 0) return true;
+  if (link?.trim()) return true;
+  return countWords(message) >= MIN_SUBMISSION_WORDS;
+}
+
 export const SUBMISSION_TYPE_LABELS: Record<SubmissionMessageType, string> = {
   instruction: "Instruction",
   submission: "Submission",

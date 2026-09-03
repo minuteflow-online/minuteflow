@@ -608,6 +608,7 @@ export default function AssignedTasksWidget({
           taskId={submitTarget.assigned_tasks.id}
           taskName={submitTarget.assigned_tasks.task_name}
           instructions={submitTarget.assigned_tasks.instructions}
+          reviewRequired={submitTarget.assigned_tasks.review_required}
           onClose={() => setSubmitTarget(null)}
           onSubmitted={(status) => {
             const task = submitTarget;

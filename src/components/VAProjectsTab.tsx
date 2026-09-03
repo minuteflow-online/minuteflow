@@ -26,6 +26,7 @@ export interface OutputSubtaskRow {
   rate: number | null;
   account?: string | null;
   project?: string | null;
+  project_id?: string | null;
   category?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -44,6 +45,7 @@ export interface SubtaskRow {
   pay_type?: string | null;
   category?: string | null;
   project?: string | null;
+  project_id?: string | null;
   task_detail?: string | null;
   task_notes?: string | null;
   instructions?: string | null;
@@ -564,18 +566,23 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     []
   );
 
-  const fetchOutputSubtasks = useCallback(async (projectId: string) => {
+  // projectId null = every objective/operation of this kind (the landing
+  // page's List/Board View, nothing selected) — otherwise that one project
+  // plus its whole nested branch, same scope the Checklist view already uses.
+  const fetchOutputSubtasks = useCallback(async (projectId: string | null) => {
     try {
-      const res = await fetch(`/api/fixed-pay-tasks?projectId=${projectId}&view=active`, { cache: "no-store" });
+      const ids = projectId ? [projectId, ...descendantsOf(projectId)] : projects.map((p) => p.id);
+      if (ids.length === 0) { setOutputSubtasks([]); return; }
+      const res = await fetch(`/api/fixed-pay-tasks?projectId=${ids.join(",")}&view=active`, { cache: "no-store" });
       if (!res.ok) return;
       const d = await res.json();
       setOutputSubtasks((d.tasks ?? []) as OutputSubtaskRow[]);
     } catch {
       // ignore — the ordinary subtasks still render
     }
-  }, []);
+  }, [descendantsOf, projects]);
 
-  const fetchSubtasks = useCallback(async (projectId: string) => {
+  const fetchSubtasks = useCallback(async (projectId: string | null) => {
     setSubtasksLoading(true);
     try {
       // List/Board View for a branch, not just this one project — the
@@ -583,8 +590,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       // (see ObjectiveOverview's dataScopeIds); these two views were only
       // ever passed the one id, so a sub-objective's own subtasks never
       // showed up under its parent.
-      const ids = [projectId, ...descendantsOf(projectId)].join(",");
-      const res = await fetch(`/api/assigned-tasks?projectId=${ids}`, { cache: "no-store" });
+      const ids = projectId ? [projectId, ...descendantsOf(projectId)] : projects.map((p) => p.id);
+      if (ids.length === 0) { setSubtasks([]); return; }
+      const res = await fetch(`/api/assigned-tasks?projectId=${ids.join(",")}`, { cache: "no-store" });
       if (!res.ok) return;
       const d = await res.json();
       setSubtasks(d.tasks ?? []);
@@ -593,7 +601,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     } finally {
       setSubtasksLoading(false);
     }
-  }, [descendantsOf]);
+  }, [descendantsOf, projects]);
+
+  // Landing page's own Subtasks tab (nothing selected) — fetched lazily, only
+  // once that tab is actually open, since it's an org-wide pull across every
+  // objective/operation of this kind rather than one branch.
+  useEffect(() => {
+    if (selectedProject || landingTab !== "subtasks") return;
+    void fetchSubtasks(null);
+    void fetchOutputSubtasks(null);
+  }, [selectedProject, landingTab, fetchSubtasks, fetchOutputSubtasks]);
 
   // No ?mine=true here on purpose: the API's own rule already matches "VAs see
   // only what pertains to them, admins see all" — non-admins are filtered to
@@ -776,9 +793,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   };
 
   const handleSubtaskCreated = () => {
-    if (!selectedProject) return;
     setAddFormKey((k) => k + 1);
-    void fetchSubtasks(selectedProject.id);
+    void fetchSubtasks(selectedProject?.id ?? null);
   };
 
   const openSubtaskEdit = (sub: SubtaskRow) => {
@@ -788,7 +804,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   };
 
   const handleSaveSubEdit = async () => {
-    if (!editingSubId || !selectedProject) return;
+    if (!editingSubId) return;
     setSavingSub(true);
     setEditSubError(null);
     try {
@@ -805,7 +821,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       }
 
       setEditingSubId(null);
-      void fetchSubtasks(selectedProject.id);
+      void fetchSubtasks(selectedProject?.id ?? null);
     } catch (e) {
       setEditSubError(e instanceof Error ? e.message : "Failed to save.");
     } finally {
@@ -1091,8 +1107,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     </div>
   );
 
+  // No early "if (!selectedProject) return null" — this same card renders on
+  // the landing page too (nothing selected), scoped to every objective of
+  // this kind instead of one branch. Every selectedProject reference below is
+  // optional-chained for that reason.
   const renderSubtasksCard = () => {
-    if (!selectedProject) return null;
     return (
       <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1185,7 +1204,12 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 currentUserId={currentUserId}
                 isAdminOrManager={isAdmin}
                 teamMembers={activeProfiles}
-                lockedProjectId={selectedProject.id}
+                // The row's OWN project, not the page's — List/Board View now
+                // shows a whole branch (this objective + its sub-objectives),
+                // so a card here can belong to a sub-objective. Locking every
+                // edit to selectedProject.id would silently reassign a child
+                // sub-objective's task to its parent on save.
+                lockedProjectId={sub.project_id ?? selectedProject?.id}
                 hideFooter
                 onCancel={() => setEditingSubId(null)}
                 onSaved={() => {}}
@@ -1377,7 +1401,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         currentUserId={currentUserId}
                         isAdminOrManager={isAdmin}
                         teamMembers={activeProfiles}
-                        lockedProjectId={selectedProject.id}
+                        lockedProjectId={sub.project_id ?? selectedProject?.id}
                         hideFooter
                         onCancel={() => setEditingSubId(null)}
                         onSaved={() => {}}
@@ -1519,11 +1543,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         currentUserId={currentUserId}
                         isAdminOrManager={isAdmin}
                         teamMembers={activeProfiles}
-                        lockedProjectId={selectedProject.id}
+                        lockedProjectId={task.project_id ?? selectedProject?.id}
                         onCancel={() => setEditingOutputId(null)}
                         onSaved={() => {
                           setEditingOutputId(null);
-                          void fetchOutputSubtasks(selectedProject.id);
+                          void fetchOutputSubtasks(selectedProject?.id ?? null);
                         }}
                       />
                       <div className="flex">
@@ -1551,7 +1575,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             isAdmin={isAdmin}
             projects={projects}
             onSelect={handleSelectProject}
-            scopeId={selectedProject.id}
+            scopeId={selectedProject?.id ?? null}
             kindLabel={kindLabel as "Objective" | "Operation"}
             refreshSignal={dashboardRefresh}
             showOnly="subtasks"
@@ -1559,7 +1583,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         )}
 
         {/* Add Subtask form — toggled by the "+ Add Subtask" button in the
-            top-right button row; renders here at the very end when open. */}
+            top-right button row; renders here at the very end when open.
+            Landing (no selectedProject): TaskEditor gets no lockedProjectId,
+            so it falls back to its own open project picker instead of one
+            fixed objective — there's no single project to lock to here. */}
         {showAddSubtask && (
           <div className="border-t border-sand pt-4 space-y-3">
             <>
@@ -1575,11 +1602,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 key={`end-${addFormKey}-${addSubtaskMode}`}
                 mode={addSubtaskMode}
                 editingTaskId={null}
-                initialTask={{ account: selectedProject.account ?? null }}
+                initialTask={{ account: selectedProject?.account ?? null }}
                 currentUserId={currentUserId}
                 isAdminOrManager={isAdmin}
                 teamMembers={activeProfiles}
-                lockedProjectId={selectedProject.id}
+                lockedProjectId={selectedProject?.id}
                 onCancel={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
                 onSaved={() => { handleSubtaskCreated(); setShowAddSubtask(false); setDashboardRefresh((k) => k + 1); }}
               />
@@ -2384,16 +2411,23 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   </button>
                 ))}
               </div>
-              <ObjectiveOverview
-            currentUserId={currentUserId}
-            isAdmin={isAdmin}
-                projects={projects}
-                onSelect={handleSelectProject}
-                kindLabel={kindLabel as "Objective" | "Operation"}
-                showOnly={landingTab}
-                onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }}
-               
-              />
+              {landingTab === "subtasks" ? (
+                // Same Checklist/List View/Board View card the single-objective
+                // page uses (renderSubtasksCard), scoped to every objective of
+                // this kind instead of one branch — see fetchSubtasks/
+                // fetchOutputSubtasks's null-projectId case above.
+                renderSubtasksCard()
+              ) : (
+                <ObjectiveOverview
+                  currentUserId={currentUserId}
+                  isAdmin={isAdmin}
+                  projects={projects}
+                  onSelect={handleSelectProject}
+                  kindLabel={kindLabel as "Objective" | "Operation"}
+                  showOnly={landingTab}
+                  onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }}
+                />
+              )}
             </div>
           )}
         </div>

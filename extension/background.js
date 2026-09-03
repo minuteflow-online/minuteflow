@@ -45,7 +45,11 @@ const CONFIG = {
   IDLE_THRESHOLD_SECONDS: 300,
 
   // Extension version
-  VERSION: '1.2.1',
+  // Read, never restated. This was hardcoded and the 1.2.2 release bumped
+  // manifest.json without it, so every install on earth reported 1.2.1 —
+  // including the ones that had updated — and the server nagged all of them
+  // to install a version they already had.
+  VERSION: chrome.runtime.getManifest().version,
 
   // API base
   API_BASE: 'https://minuteflow.click',
@@ -90,19 +94,16 @@ async function captureActiveTab() {
     // Get the last focused normal browser window (excludes extension popups)
     const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
     if (!win || !win.id) {
-      console.warn('[MinuteFlow] No browser window found');
-      return null;
+      return { blob: null, reason: 'Chrome was not open' };
     }
 
     const [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
     if (!tab || !tab.id) {
-      console.warn('[MinuteFlow] No active tab found');
-      return null;
+      return { blob: null, reason: 'No tab open in Chrome' };
     }
 
     if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://'))) {
-      console.warn('[MinuteFlow] Cannot capture browser internal page');
-      return null;
+      return { blob: null, reason: 'On a browser settings page' };
     }
 
     const dataUrl = await chrome.tabs.captureVisibleTab(win.id, {
@@ -112,10 +113,15 @@ async function captureActiveTab() {
 
     const res = await fetch(dataUrl);
     const blob = await res.blob();
-    return blob;
+    return { blob, reason: null };
   } catch (err) {
-    console.error('[MinuteFlow] Capture failed:', err.message);
-    return null;
+    // captureVisibleTab refuses when the window is not the one on screen, which
+    // is the common case by far: the VA is working in another application, or
+    // Chrome is minimised. Saying so beats a generic failure, because "not at
+    // the machine" and "working somewhere else" mean very different things when
+    // someone reviews the day.
+    console.warn('[MinuteFlow] Capture failed:', err.message);
+    return { blob: null, reason: 'Chrome was minimised or another app was in front' };
   }
 }
 
@@ -296,28 +302,26 @@ async function uploadQueueItem(item) {
 
   try {
     // Markers carry no image — they record *why* a slot has no screenshot
-    // (idle, locked, on MinuteFlow). They go straight to the table rather than
-    // through the Drive upload route, but ride the same queue so a marker
-    // recorded while offline still lands once the connection comes back.
+    // (idle, locked, on MinuteFlow). They ride the same queue as real uploads
+    // so a marker recorded while offline still lands once the connection
+    // comes back, but they go through the server (service role), not a direct
+    // table write: task_screenshots has no anon/authenticated grants — every
+    // write to it goes through a route like this one, and a direct insert
+    // with the VA's own token was failing with 42501 on every single retry.
     if (item.kind === 'marker') {
-      const base = {
-        user_id: item.userId,
-        log_id: item.logId,
-        screenshot_type: 'failed',
-        failure_reason: item.failureReason,
-        filename: '',
-      };
-      try {
-        await DB.query('task_screenshots', {
-          method: 'POST',
-          body: { ...base, captured_at: item.timestamp },
-        });
-      } catch (err) {
-        // captured_at may not exist on the table yet. Record the marker without
-        // it rather than dropping it — the reason matters more than the exact
-        // stamp, and this starts working on its own once the column is added.
-        console.warn('[MinuteFlow] Marker insert with captured_at failed, retrying without:', err.message);
-        await DB.query('task_screenshots', { method: 'POST', body: base });
+      const res = await fetch(`${CONFIG.API_BASE}/api/screenshot-marker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: item.userId,
+          logId: item.logId,
+          failureReason: item.failureReason,
+          capturedAt: item.timestamp,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.details || err.error || `Marker insert failed: ${res.status}`);
       }
       await removeFromQueue(item.id);
       console.log(`[MinuteFlow] Marker recorded: ${item.failureReason}`);
@@ -429,10 +433,14 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
     }
   }
 
-  const blob = await captureActiveTab();
+  const { blob, reason: captureFailure } = await captureActiveTab();
   if (!blob) {
     if (screenshotType === 'progress') {
-      await queueMarker(session.user.id, resolvedLogId, 'Screen could not be captured');
+      await queueMarker(
+        session.user.id,
+        resolvedLogId,
+        captureFailure || 'Screen could not be captured'
+      );
     }
     return;
   }
@@ -625,7 +633,7 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
     return null;
   }
 
-  const blob = await captureActiveTab();
+  const { blob } = await captureActiveTab();
   if (!blob) return null;
 
   try {

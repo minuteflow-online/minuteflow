@@ -47,6 +47,12 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Logged, not just returned. The response body of a failed <img> request is
+    // never seen by anyone — the browser shows a broken image and the reason
+    // disappears. Drive returns very different problems through this one path
+    // (rate limit, permission, file gone), and telling them apart afterwards
+    // is impossible without this line.
+    console.error("drive-image: fetch failed", { fileId, message });
     return new Response(`Drive fetch failed: ${message}`, { status: 500 });
   }
 }

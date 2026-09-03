@@ -12,6 +12,7 @@ import {
 } from "@/lib/submissions";
 import RevisionBadge from "@/components/RevisionBadge";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
+import TaskDetailModal from "@/components/TaskDetailModal";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
@@ -26,6 +27,8 @@ type FeedItem = {
   submission_comment: string | null;
   created_at: string;
   edited_at: string | null;
+  /** Set on a revision entry: the new deadline for the rework. */
+  due_at: string | null;
   attachments: TaskSubmissionAttachment[];
   profiles?: { id: string; full_name: string | null; username: string | null } | null;
   task: {
@@ -128,6 +131,7 @@ const CARD_FIELDS: ColumnDef[] = [
   { key: "category", label: "Category", defaultWidth: 0 },
   { key: "submitter", label: "Submitted by", defaultWidth: 0 },
   { key: "count", label: "Submission count", defaultWidth: 0 },
+  { key: "total_time", label: "Total time", defaultWidth: 0 },
 ];
 
 /**
@@ -140,6 +144,9 @@ const TITLE_FIELDS = [
   ...CARD_FIELDS.map((f) => ({ value: f.key, label: f.label })),
 ];
 type TitleField = string;
+
+/** Enough to scan in one screenful without scrolling for a minute. */
+const THREADS_PER_PAGE = 25;
 
 const SCOPE_OPTIONS: Array<{ value: SubmissionScopeFilter; label: string }> = [
   { value: "all", label: "All work" },
@@ -205,12 +212,128 @@ function deadlineFor(task: FeedItem["task"], timezone: string): string | null {
  * "17:27" — which carries no timezone — anchored to the org's day, so the
  * verdict doesn't shift with the viewer's location.
  */
-function isLate(item: FeedItem, timezone: string): boolean | null {
-  const deadline = deadlineFor(item.task, timezone);
+/**
+ * The deadline in force when a submission landed.
+ *
+ * A revision can set a new due date for the rework. Judging every submission
+ * against whatever the task says today would let a moved deadline rewrite an
+ * earlier verdict — work that was on time becoming late months later. Each
+ * submission is measured against the most recent revision deadline before
+ * it, and the task's own due date only when no revision has moved it.
+ */
+function deadlineForSubmission(
+  item: FeedItem,
+  thread: FeedItem[],
+  timezone: string
+): string | null {
+  const priorRevision = thread
+    .filter((e) => e.message_type === "revision" && e.due_at && e.created_at < item.created_at)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+
+  if (priorRevision?.due_at) {
+    const when = new Date(priorRevision.due_at);
+    return `${localDay(priorRevision.due_at, timezone)} ${when.toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
+  }
+  return deadlineFor(item.task, timezone);
+}
+
+function isLate(item: FeedItem, timezone: string, thread?: FeedItem[]): boolean | null {
+  const deadline = thread
+    ? deadlineForSubmission(item, thread, timezone)
+    : deadlineFor(item.task, timezone);
   if (!deadline) return null;
   const submitted = `${localDay(item.created_at, timezone)} ${new Date(item.created_at).toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
   return submitted > deadline;
 }
+
+/**
+ * How a submission landed against its deadline.
+ *
+ * "same day" is separated from "another day" because they are different
+ * failures: an hour past the time is a slip, a day past it is a miss, and
+ * one colour for both hides which happened.
+ */
+type Timeliness = "on_time" | "late_same_day" | "late_other_day" | "no_deadline";
+
+function timelinessOf(item: FeedItem, timezone: string): Timeliness {
+  const deadline = deadlineFor(item.task, timezone);
+  if (!deadline) return "no_deadline";
+  const submitted = `${localDay(item.created_at, timezone)} ${new Date(item.created_at).toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
+  if (submitted <= deadline) return "on_time";
+  return localDay(item.created_at, timezone) === deadline.slice(0, 10)
+    ? "late_same_day"
+    : "late_other_day";
+}
+
+/**
+ * Light blue is reserved for work that is due and not yet in — see
+ * EXPECTED_CHIP. A submission with no due date can't be judged on time, so it
+ * reads neutral rather than borrowing that blue.
+ */
+const TIMELINESS_CHIP: Record<Timeliness, string> = {
+  on_time: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  late_same_day: "border-amber-200 bg-amber-50 text-amber-700",
+  late_other_day: "border-plum/30 bg-plum-soft text-plum",
+  no_deadline: "border-sand bg-parchment/60 text-walnut",
+};
+
+/**
+ * A due date waiting on its work. It sits blue until something is turned in,
+ * and the submission that replaces it carries the verdict colour: green on
+ * time, amber late the same day, plum a day or more late. Terracotta is the
+ * fourth outcome — the day passed and nothing arrived.
+ */
+const EXPECTED_CHIP = "border-sky-200 bg-sky-100/70 text-sky-600";
+
+/**
+ * Short forms for the calendar, where a chip has room for a task name and
+ * little else. Anything not listed falls back to its initials, so a new
+ * account still gets a sensible tag without an edit here.
+ */
+const ACCOUNT_ABBR: Record<string, string> = {
+  "Education Encompassed": "EE",
+  "TAT Foundation": "TAT",
+  "Quad Life": "QL",
+  "Thess Personal": "Tess",
+  "Thess Base": "TessB",
+  "Virtual Concierge": "VC",
+  "WSB Awesome Team": "WSB",
+  "Colina Portrait": "CP",
+  "SNAPS Sublimation": "SNAPS",
+  "Right Path Agency": "RPA",
+  TONIWSB: "TWSB",
+  Personal: "PERS",
+};
+
+function accountAbbr(account: string | null | undefined): string | null {
+  const name = account?.trim();
+  if (!name) return null;
+  if (ACCOUNT_ABBR[name]) return ACCOUNT_ABBR[name];
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+  return words
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 4);
+}
+
+/** First and last initial — Charinade Liezel David reads CD, not CLD. */
+function personInitials(person?: { full_name?: string | null; username?: string | null } | null) {
+  const name = person?.full_name?.trim() || person?.username?.trim();
+  if (!name) return null;
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
+}
+const MISSED_CHIP = "border-terracotta/30 bg-terracotta-soft text-terracotta";
+
+const TIMELINESS_LABEL: Record<Timeliness, string> = {
+  on_time: "On time",
+  late_same_day: "Late — same day",
+  late_other_day: "Late — another day",
+  no_deadline: "No due date set",
+};
 
 function scopeLabel(item: FeedItem) {
   if (!item.task?.project_id) return "Adhoc";
@@ -256,6 +379,9 @@ export default function SubmissionsPage() {
     }
   }, [currentUserId]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
@@ -341,7 +467,10 @@ export default function SubmissionsPage() {
     try {
       const res = await fetch(`/api/submissions${showTrash ? "?trash=1" : ""}`, { cache: "no-store" });
       const data = await res.json();
-      setItems(data.submissions ?? []);
+      // Expected work rides in the same list so every filter — VA, account,
+      // project, assigner — applies to it without a second copy of the
+      // filtering. Only the calendar reads it; the timeline skips it.
+      setItems([...(data.submissions ?? []), ...(data.expected ?? [])]);
       setRoundDurations(data.roundDurations ?? {});
       setReviewState(data.reviewState ?? {});
       setCanReview(Boolean(data.canReview));
@@ -354,6 +483,12 @@ export default function SubmissionsPage() {
     }
   }, [showTrash]);
 
+  // Any change to what's being shown starts at the first page — page 4 of a
+  // freshly filtered list is not where anyone wants to land.
+  useEffect(() => {
+    setPage(0);
+  }, [vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, statusFilter, assignedByFilter, ownerMode, showTrash, search]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -361,7 +496,7 @@ export default function SubmissionsPage() {
   // Approve / Request revision append a row to the same thread, then move the
   // task's status through the app's single status path.
   const review = useCallback(
-    async (item: FeedItem, outcome: ReviewOutcome, note?: string) => {
+    async (item: FeedItem, outcome: ReviewOutcome, note?: string, dueAt?: string) => {
       if (!item.task) return;
       setBusyId(item.id);
       try {
@@ -371,6 +506,7 @@ export default function SubmissionsPage() {
           body: JSON.stringify({
             message_type: outcome,
             message: note?.trim() || REVIEW_DEFAULT_NOTE[outcome],
+            due_at: dueAt || null,
           }),
         });
         if (!res.ok) {
@@ -618,6 +754,27 @@ This cannot be undone.`
       rows = rows.filter((r) => r.task?.assigned_by && assignedByFilter.has(r.task.assigned_by));
     }
 
+    // Searches what the card shows and what was written in the submission,
+    // so a keyword from a memo finds it as readily as a task name.
+    const term = search.trim().toLowerCase();
+    if (term) {
+      rows = rows.filter((r) =>
+        [
+          r.task?.task_name,
+          r.task?.task_detail,
+          r.task?.account,
+          r.task?.project_name,
+          r.submission_comment,
+          r.submission_link,
+          r.content,
+          r.profiles?.full_name,
+          r.profiles?.username,
+        ]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(term))
+      );
+    }
+
     if (statusFilter.size > 0) {
       rows = rows.filter((r) => {
         if (!r.task) return false;
@@ -655,7 +812,7 @@ This cannot be undone.`
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -672,6 +829,22 @@ This cannot be undone.`
     }
     return map;
   }, [visibleItems, orgTimezone]);
+
+  // Work that is owed, on the day it is owed. Bucketed on due_date itself
+  // rather than a converted timestamp — the due date is already the date the
+  // team agreed on, and running it through a timezone can only move it.
+  const expectedByDay = useMemo(() => {
+    const map = new Map<string, FeedItem[]>();
+    for (const item of visibleItems) {
+      if (item.message_type !== "expected") continue;
+      const day = item.task?.due_date;
+      if (!day) continue;
+      const list = map.get(day) ?? [];
+      list.push(item);
+      map.set(day, list);
+    }
+    return map;
+  }, [visibleItems]);
 
   // Which revision round each submission belongs to — its position in its
   // task's thread. The calendar shows loose submissions rather than threads, so
@@ -727,9 +900,11 @@ This cannot be undone.`
   // Timeline threads them instead: all submissions for one task form a single
   // card, oldest first, so a resubmission reads as the next entry under the
   // original rather than an unrelated card further down the page.
-  const threadsByDay = useMemo(() => {
+  const allThreads = useMemo(() => {
     const byTask = new Map<number, FeedItem[]>();
     for (const item of visibleItems) {
+      // Expected work has no thread — nothing has been turned in yet.
+      if (item.message_type === "expected") continue;
       const key = item.task?.id ?? item.assigned_task_id ?? -item.id;
       const list = byTask.get(key) ?? [];
       list.push(item);
@@ -741,21 +916,29 @@ This cannot be undone.`
       return { taskId, items: ordered, latest: ordered[ordered.length - 1] };
     });
 
-    // A thread sits on the day of its most recent submission, so reworked
-    // tasks resurface as current activity instead of staying buried on the
-    // date they were first submitted.
+    // Newest activity first. A thread sits on the day of its most recent
+    // submission, so reworked tasks resurface as current work rather than
+    // staying buried on the date they were first submitted.
+    threads.sort((a, b) => b.latest.created_at.localeCompare(a.latest.created_at));
+    return threads;
+  }, [visibleItems]);
+
+  const pageCount = Math.max(1, Math.ceil(allThreads.length / THREADS_PER_PAGE));
+  // Filtering down to fewer results than the current page would otherwise
+  // leave you staring at an empty page with no obvious way back.
+  const safePage = Math.min(page, pageCount - 1);
+
+  const threadsByDay = useMemo(() => {
+    const start = safePage * THREADS_PER_PAGE;
     const map = new Map<string, Thread[]>();
-    for (const thread of threads) {
+    for (const thread of allThreads.slice(start, start + THREADS_PER_PAGE)) {
       const day = localDay(thread.latest.created_at, orgTimezone);
       const list = map.get(day) ?? [];
       list.push(thread);
       map.set(day, list);
     }
-    for (const list of map.values()) {
-      list.sort((a, b) => b.latest.created_at.localeCompare(a.latest.created_at));
-    }
     return map;
-  }, [visibleItems, orgTimezone]);
+  }, [allThreads, safePage, orgTimezone]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-12">
@@ -787,7 +970,15 @@ This cannot be undone.`
       {/* Key sits in the filter bar rather than above it: two full-width
           bordered rows for one button was most of the page's dead space. */}
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white px-3 py-2">
-        <SubmissionsLegend />
+        {detailTaskId !== null && (
+        <TaskDetailModal
+          taskId={detailTaskId}
+          onClose={() => setDetailTaskId(null)}
+          canSetDue={canReview}
+        />
+      )}
+
+      <SubmissionsLegend />
 
         {/* Whose submissions is a filter like any other, so it sits with them
             rather than as a third tab strip competing with the view toggle. */}
@@ -914,7 +1105,14 @@ This cannot be undone.`
           </button>
         )}
 
-        <span className="ml-auto text-[11px] text-stone">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search submissions..."
+          className="ml-auto w-48 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none placeholder:text-stone/60"
+        />
+
+        <span className="text-[11px] text-stone">
           {loading ? "Loading..." : `${submissionCount} submission${submissionCount === 1 ? "" : "s"}`}
         </span>
       </div>
@@ -939,6 +1137,31 @@ This cannot be undone.`
         </div>
       )}
 
+      {view === "timeline" && pageCount > 1 && (
+        <div className="mb-3 flex items-center justify-between rounded-xl border border-sand bg-white px-3 py-2">
+          <span className="text-[11px] text-stone">
+            Page {safePage + 1} of {pageCount} · {allThreads.length} task
+            {allThreads.length === 1 ? "" : "s"}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((n) => Math.max(0, n - 1))}
+              disabled={safePage === 0}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+            >
+              ← Newer
+            </button>
+            <button
+              onClick={() => setPage((n) => Math.min(pageCount - 1, n + 1))}
+              disabled={safePage >= pageCount - 1}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+            >
+              Older →
+            </button>
+          </div>
+        </div>
+      )}
+
       {view === "timeline" ? (
         <TimelineView
           byDay={threadsByDay}
@@ -958,14 +1181,17 @@ This cannot be undone.`
           hiddenFields={hiddenFields}
           clientByAccount={clientByAccount}
           onCancelReversal={cancelReversal}
+          onOpenTask={setDetailTaskId}
         />
       ) : (
         <CalendarView
           byDay={itemsByDay}
+          expectedByDay={expectedByDay}
           anchor={monthAnchor}
           onAnchorChange={setMonthAnchor}
           orgTimezone={orgTimezone}
           roundByItemId={roundByItemId}
+          onOpenTask={setDetailTaskId}
         />
       )}
     </div>
@@ -1095,6 +1321,40 @@ function SubmissionsLegend() {
         original vs rework
       </span>
 
+      {/* Calendar-only colours. They answer a different question from the
+          review pills below — not what the reviewer decided, but whether the
+          work landed by its deadline — so they get their own row. */}
+      <span className="flex w-full items-center gap-1.5 text-[11px] text-stone">
+        {(["on_time", "late_same_day", "late_other_day", "no_deadline"] as const).map((key) => (
+          <span
+            key={key}
+            className={`rounded border px-2 py-[2px] text-[10px] font-semibold ${TIMELINESS_CHIP[key]}`}
+          >
+            {TIMELINESS_LABEL[key]}
+          </span>
+        ))}
+        calendar chips
+      </span>
+
+      <span className="flex w-full items-center gap-1.5 text-[11px] text-stone">
+        <span
+          className={`rounded border px-2 py-[2px] text-[10px] font-semibold opacity-60 ${TIMELINESS_CHIP.on_time}`}
+        >
+          Faded
+        </span>
+        auto approved — listed beneath the day&apos;s review queue
+      </span>
+
+      <span className="flex w-full items-center gap-1.5 text-[11px] text-stone">
+        <span className={`rounded border px-2 py-[2px] text-[10px] font-semibold ${EXPECTED_CHIP}`}>
+          Due
+        </span>
+        <span className={`rounded border px-2 py-[2px] text-[10px] font-semibold ${MISSED_CHIP}`}>
+          Missed
+        </span>
+        waiting on the work — blue until it lands, terracotta once the day has passed
+      </span>
+
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
         {(["awaiting", "revision_requested", "approved", "auto_approved"] as const).map((key) => (
           <span
@@ -1203,6 +1463,7 @@ function CardFieldsPicker({
 function SubmissionEntry({
   item,
   index,
+  thread,
   roundMs,
   timezone,
   canCancel,
@@ -1210,6 +1471,9 @@ function SubmissionEntry({
 }: {
   item: FeedItem;
   index: number;
+  /** The whole thread, so a submission is judged against the deadline that
+   *  applied when it landed rather than whatever the task says now. */
+  thread: FeedItem[];
   /** Time logged during this revision round, if any was tracked. */
   roundMs?: number;
   timezone: string;
@@ -1261,7 +1525,7 @@ function SubmissionEntry({
   }
 
   const isResubmission = index > 0;
-  const late = isLate(item, timezone);
+  const late = isLate(item, timezone, thread);
 
   return (
     <div
@@ -1369,11 +1633,12 @@ function ThreadCard({
   hiddenFields,
   clientByAccount,
   onCancelReversal,
+  onOpenTask,
 }: {
   thread: Thread;
   canReview: boolean;
   busy: boolean;
-  onReview: (item: FeedItem, outcome: ReviewOutcome, note?: string) => void;
+  onReview: (item: FeedItem, outcome: ReviewOutcome, note?: string, dueAt?: string) => void;
   onAddNote: (item: FeedItem, note: string) => void;
   /** round index -> ms logged during that round. */
   rounds: Record<string, number>;
@@ -1388,6 +1653,7 @@ function ThreadCard({
   hiddenFields: Set<string>;
   clientByAccount: Map<string, ClientRow>;
   onCancelReversal: (item: FeedItem) => void;
+  onOpenTask: (taskId: number) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1403,6 +1669,8 @@ function ThreadCard({
 
   // One place decides what every field says, so the title and the detail
   // lines can never disagree about the same field.
+  const totalMs = Object.values(rounds).reduce((sum, ms) => sum + ms, 0);
+
   const fieldValue = (key: string): string | null => {
     switch (key) {
       case "task":
@@ -1429,6 +1697,8 @@ function ThreadCard({
         return head.task?.category ?? null;
       case "submitter":
         return head.profiles?.full_name || head.profiles?.username || null;
+      case "total_time":
+        return totalMs > 0 ? formatDuration(totalMs) : null;
       case "count":
         return expanded
           ? null
@@ -1458,11 +1728,10 @@ function ThreadCard({
     .join(" · ");
   const [noteDraft, setNoteDraft] = useState("");
   const [noteMode, setNoteMode] = useState<null | "revision" | "note">(null);
+  const [revisionDue, setRevisionDue] = useState("");
 
   // Whole-task effort: every round summed. Grows with each resubmission, while
   // each entry below keeps its own round's figure.
-  const totalMs = Object.values(rounds).reduce((sum, ms) => sum + ms, 0);
-
   // Unknown state falls through to "awaiting" — better to offer the buttons
   // than to hide a decision that still needs making.
   // Allow-list, not a deny-list: listing the states that DON'T need review
@@ -1525,16 +1794,16 @@ function ThreadCard({
         {/* Straight into the real task editor rather than a second copy of it
             embedded here. Outside the collapse button so it isn't a nested. */}
         {head.task && (
-          <a
-            href={`/productivity/assignment?task=${head.task.id}`}
+          <button
+            onClick={() => onOpenTask(head.task!.id)}
             className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
-            title="Open this task"
+            title="View the full task without leaving this page"
           >
-            Open task
-          </a>
+            View task
+          </button>
         )}
 
-        {totalMs > 0 && (
+        {totalMs > 0 && !hiddenFields.has("total_time") && titleField !== "total_time" && (
           <span
             className="shrink-0 text-[11px] font-semibold tabular-nums text-walnut"
             title="Total time logged on this task across every round"
@@ -1622,6 +1891,7 @@ function ThreadCard({
                 key={item.id}
                 item={item}
                 index={idx}
+                thread={thread.items}
                 roundMs={item.message_type === "submission" ? rounds[String(idx)] : undefined}
                 timezone={timezone}
                 canCancel={canReview}
@@ -1647,14 +1917,39 @@ function ThreadCard({
                 }
                 className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
               />
+              {noteMode === "revision" && (
+                <div className="mt-1.5">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                    New due date (optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={revisionDue}
+                    onChange={(e) => setRevisionDue(e.target.value)}
+                    className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+                  />
+                  <p className="mt-0.5 text-[10px] text-stone">
+                    Moves the task&apos;s due date so the calendar shows what&apos;s expected.
+                    Earlier submissions keep the deadline they were judged against.
+                  </p>
+                </div>
+              )}
+
               <div className="mt-1.5 flex items-center gap-2">
                 <button
                   onClick={() => {
                     const note = noteDraft.trim();
                     if (!note) return;
-                    if (noteMode === "revision") onReview(latest, "revision", note);
-                    else onAddNote(latest, note);
+                    if (noteMode === "revision") {
+                      onReview(
+                        latest,
+                        "revision",
+                        note,
+                        revisionDue ? new Date(revisionDue).toISOString() : undefined
+                      );
+                    } else onAddNote(latest, note);
                     setNoteDraft("");
+                    setRevisionDue("");
                     setNoteMode(null);
                   }}
                   disabled={busy || !noteDraft.trim()}
@@ -1706,6 +2001,7 @@ function TimelineView({
   hiddenFields,
   clientByAccount,
   onCancelReversal,
+  onOpenTask,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1724,6 +2020,7 @@ function TimelineView({
   hiddenFields: Set<string>;
   clientByAccount: Map<string, ClientRow>;
   onCancelReversal: (item: FeedItem) => void;
+  onOpenTask: (taskId: number) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1765,6 +2062,7 @@ function TimelineView({
                 hiddenFields={hiddenFields}
                 clientByAccount={clientByAccount}
                 onCancelReversal={onCancelReversal}
+                onOpenTask={onOpenTask}
               />
             ))}
         </DayGroup>
@@ -1772,98 +2070,398 @@ function TimelineView({
     </div>
   );
 }
+/** How much of the calendar is on screen at once. */
+type CalendarScale = "month" | "week" | "day" | "custom";
+
+/** Local YYYY-MM-DD for a Date, with no timezone conversion applied. */
+function dayKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function parseDayKey(key: string) {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y || 1970, (m || 1) - 1, d || 1);
+}
+
+function shiftDays(d: Date, days: number) {
+  const next = new Date(d);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+/** A custom range wider than this is a scrolling wall, not a calendar. */
+const MAX_CUSTOM_DAYS = 92;
+
+/** Chips a day square shows before collapsing the rest behind "+N more". */
+const CHIP_LIMIT: Record<CalendarScale, number> = {
+  month: 3,
+  week: 8,
+  day: 60,
+  custom: 4,
+};
+
+const CELL_HEIGHT: Record<CalendarScale, string> = {
+  month: "min-h-[76px]",
+  week: "min-h-[170px]",
+  day: "min-h-[240px]",
+  custom: "min-h-[110px]",
+};
 
 function CalendarView({
   byDay,
+  expectedByDay,
   anchor,
   onAnchorChange,
   orgTimezone,
   roundByItemId,
+  onOpenTask,
 }: {
   byDay: Map<string, FeedItem[]>;
+  /** Tasks due that day with nothing turned in yet. */
+  expectedByDay: Map<string, FeedItem[]>;
   anchor: Date;
   onAnchorChange: (d: Date) => void;
   orgTimezone: string;
   roundByItemId: Map<number, number>;
+  onOpenTask: (taskId: number) => void;
 }) {
-  const year = anchor.getFullYear();
-  const month = anchor.getMonth();
-  const first = new Date(year, month, 1);
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const leading = first.getDay();
+  const [scale, setScale] = useState<CalendarScale>("month");
+  const [customStart, setCustomStart] = useState(() => dayKey(anchor));
+  const [customEnd, setCustomEnd] = useState(() => dayKey(shiftDays(anchor, 13)));
+  // Which day squares the reader has opened up past the chip limit.
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
 
-  const cells: Array<{ day: string; date: number } | null> = [];
-  for (let i = 0; i < leading; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) {
-    const day = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    cells.push({ day, date: d });
-  }
+  const toggleExpanded = (day: string) =>
+    setExpandedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+
+  // Every scale renders the same seven-column grid, so all any of them has to
+  // produce is the list of days plus however many blanks align the first one
+  // under its weekday. Day view is the exception: one square, full width.
+  const { cells, label } = useMemo(() => {
+    const pad = (count: number) => Array.from({ length: count }, () => null);
+
+    if (scale === "day") {
+      return {
+        cells: [{ day: dayKey(anchor), date: anchor.getDate() }] as Array<
+          { day: string; date: number } | null
+        >,
+        label: anchor.toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        }),
+      };
+    }
+
+    if (scale === "week") {
+      const start = shiftDays(anchor, -anchor.getDay());
+      const days = Array.from({ length: 7 }, (_, i) => {
+        const d = shiftDays(start, i);
+        return { day: dayKey(d), date: d.getDate() };
+      });
+      const end = shiftDays(start, 6);
+      const from = start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      // Hand-built rather than a second toLocaleDateString: asking Intl for
+      // day + year alone renders "2026 (day: 22)".
+      const to =
+        start.getMonth() === end.getMonth()
+          ? `${end.getDate()}, ${end.getFullYear()}`
+          : `${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${end.getFullYear()}`;
+      return {
+        cells: days as Array<{ day: string; date: number } | null>,
+        label: `${from} – ${to}`,
+      };
+    }
+
+    if (scale === "custom") {
+      const start = parseDayKey(customStart);
+      const end = parseDayKey(customEnd);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+        return { cells: [] as Array<{ day: string; date: number } | null>, label: "Pick a range" };
+      }
+      const span = Math.min(
+        Math.round((end.getTime() - start.getTime()) / 86400000) + 1,
+        MAX_CUSTOM_DAYS
+      );
+      const days = Array.from({ length: span }, (_, i) => {
+        const d = shiftDays(start, i);
+        return { day: dayKey(d), date: d.getDate() };
+      });
+      const last = shiftDays(start, span - 1);
+      return {
+        cells: [...pad(start.getDay()), ...days],
+        label: `${start.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        })} – ${last.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })}${span === MAX_CUSTOM_DAYS ? ` (first ${MAX_CUSTOM_DAYS} days)` : ""}`,
+      };
+    }
+
+    const year = anchor.getFullYear();
+    const month = anchor.getMonth();
+    const first = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const days = Array.from({ length: daysInMonth }, (_, i) => {
+      const d = new Date(year, month, i + 1);
+      return { day: dayKey(d), date: i + 1 };
+    });
+    return {
+      cells: [...pad(first.getDay()), ...days],
+      label: first.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+    };
+  }, [scale, anchor, customStart, customEnd]);
+
+  const step = (direction: 1 | -1) => {
+    if (scale === "month") {
+      onAnchorChange(new Date(anchor.getFullYear(), anchor.getMonth() + direction, 1));
+    } else if (scale === "week") {
+      onAnchorChange(shiftDays(anchor, 7 * direction));
+    } else {
+      onAnchorChange(shiftDays(anchor, direction));
+    }
+  };
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+  const chipLimit = CHIP_LIMIT[scale];
 
   return (
     <div className="rounded-xl border border-sand bg-white p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <button
-          onClick={() => onAnchorChange(new Date(year, month - 1, 1))}
-          className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone hover:bg-stone/20"
-        >
-          ← Prev
-        </button>
-        <p className="text-xs font-bold uppercase tracking-wide text-espresso">
-          {first.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-        </p>
-        <button
-          onClick={() => onAnchorChange(new Date(year, month + 1, 1))}
-          className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone hover:bg-stone/20"
-        >
-          Next →
-        </button>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
+          {(["month", "week", "day", "custom"] as CalendarScale[]).map((option) => (
+            <button
+              key={option}
+              onClick={() => {
+                if (option === scale) return;
+                setScale(option);
+                // Changing scale re-centres on now. Landing on the week of
+                // whatever month you happened to be browsing is never what
+                // "week" meant.
+                if (option !== "custom") onAnchorChange(new Date());
+                else {
+                  const today = new Date();
+                  setCustomStart(dayKey(shiftDays(today, -6)));
+                  setCustomEnd(dayKey(today));
+                }
+              }}
+              className={`rounded-md px-2.5 py-1 text-[10px] font-semibold capitalize transition-colors ${
+                scale === option
+                  ? "bg-white text-espresso shadow-sm"
+                  : "text-stone hover:text-espresso"
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+
+        <p className="text-xs font-bold uppercase tracking-wide text-espresso">{label}</p>
+
+        {scale === "custom" ? (
+          <div className="flex items-center gap-1">
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-2 py-1 text-[10px] text-espresso outline-none"
+            />
+            <span className="text-[10px] text-stone">to</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-2 py-1 text-[10px] text-espresso outline-none"
+            />
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => step(-1)}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone hover:bg-stone/20"
+            >
+              ← Prev
+            </button>
+            <button
+              onClick={() => onAnchorChange(new Date())}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone hover:bg-stone/20"
+            >
+              Today
+            </button>
+            <button
+              onClick={() => step(1)}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone hover:bg-stone/20"
+            >
+              Next →
+            </button>
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-7 gap-1">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="pb-1 text-center text-[10px] font-semibold uppercase text-walnut">
-            {d}
-          </div>
-        ))}
+      <div className={scale === "day" ? "grid grid-cols-1" : "grid grid-cols-7 gap-1"}>
+        {scale !== "day" &&
+          ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <div
+              key={d}
+              className="pb-1 text-center text-[10px] font-semibold uppercase text-walnut"
+            >
+              {d}
+            </div>
+          ))}
 
         {cells.map((cell, i) => {
-          if (!cell) return <div key={`pad-${i}`} className="min-h-[76px] rounded-lg" />;
+          if (!cell) return <div key={`pad-${i}`} className={`${CELL_HEIGHT[scale]} rounded-lg`} />;
           const dayItems = byDay.get(cell.day) ?? [];
+          // The calendar is a review queue first: work someone still has to look
+          // at leads, and work the system approved on its own sits underneath.
+          const forReview = dayItems.filter((item) => item.task?.review_required !== false);
+          const auto = dayItems.filter((item) => item.task?.review_required === false);
+          const expected = expectedByDay.get(cell.day) ?? [];
           const isToday = cell.day === today;
+          const open = expandedDays.has(cell.day);
+          const shownExpected = open ? expected : expected.slice(0, chipLimit);
+          const shownForReview = open ? forReview : forReview.slice(0, chipLimit);
+          const shownAuto = open ? auto : auto.slice(0, Math.max(1, Math.floor(chipLimit / 2)));
+          const hidden =
+            expected.length -
+            shownExpected.length +
+            (forReview.length - shownForReview.length) +
+            (auto.length - shownAuto.length);
+
+          // Week and day squares have the room, so they carry the client memo
+          // under the task name — which is the line that actually says which
+          // "SMC_Planning" this one is. Month stays one line per chip.
+          const chipLabel = (item: FeedItem) => {
+            const memo = item.task?.task_detail?.trim();
+            const withMemo = (scale === "week" || scale === "day") && memo;
+            // Account and person, short enough to sit in front of the name:
+            // whose work it is and which client it's for, without a hover.
+            const tag = [accountAbbr(item.task?.account), personInitials(item.profiles)]
+              .filter(Boolean)
+              .join(" ");
+            return (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">
+                  {tag && <span className="mr-1 font-semibold opacity-60">{tag}</span>}
+                  {item.task?.task_name ?? "Task"}
+                </span>
+                {withMemo && (
+                  <span
+                    className={`block text-[8px] leading-snug opacity-75 ${
+                      scale === "day" ? "" : "truncate"
+                    }`}
+                  >
+                    {memo}
+                  </span>
+                )}
+              </span>
+            );
+          };
+
+          const chip = (item: FeedItem, muted: boolean) => {
+            const round = roundByItemId.get(item.id) ?? 0;
+            const timeliness = timelinessOf(item, orgTimezone);
+            return (
+              <button
+                key={item.id}
+                onClick={() => item.task && onOpenTask(item.task.id)}
+                title={`${item.task?.task_name ?? ""} — ${
+                  item.profiles?.full_name || item.profiles?.username || ""
+                }${round > 0 ? ` (revision ${round})` : ""} — ${TIMELINESS_LABEL[timeliness]}${
+                  muted ? " — auto approved" : ""
+                }`}
+                className={`flex w-full items-start gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
+                  TIMELINESS_CHIP[timeliness]
+                } ${muted ? "opacity-60" : ""}`}
+              >
+                {chipLabel(item)}
+                <RevisionBadge
+                  count={round}
+                  late={timeliness !== "on_time" && timeliness !== "no_deadline"}
+                />
+              </button>
+            );
+          };
 
           return (
             <div
               key={cell.day}
-              className={`min-h-[76px] rounded-lg border p-1 ${
+              className={`${CELL_HEIGHT[scale]} rounded-lg border p-1 ${
                 isToday ? "border-terracotta bg-cream/60" : "border-sand bg-white"
               }`}
             >
-              <p className="mb-0.5 text-[10px] font-semibold text-stone">{cell.date}</p>
+              <p className="mb-0.5 text-[10px] font-semibold text-stone">
+                {scale === "day"
+                  ? parseDayKey(cell.day).toLocaleDateString("en-US", {
+                      weekday: "long",
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : cell.date}
+              </p>
               <div className="space-y-0.5">
-                {dayItems.slice(0, 3).map((item) => {
-                  const round = roundByItemId.get(item.id) ?? 0;
-                  const wasLate = isLate(item, orgTimezone) === true;
-                  return (
-                    <div
-                      key={item.id}
-                      title={`${item.task?.task_name ?? ""} — ${
-                        item.profiles?.full_name || item.profiles?.username || ""
-                      }${round > 0 ? ` (revision ${round})` : ""}${wasLate ? " — late" : ""}`}
-                      className={`flex items-center gap-1 rounded border px-1 py-[1px] text-[9px] ${
-                        round > 0
-                          ? "border-amber-200 bg-amber-50 text-amber-600"
-                          : "border-sky-200 bg-sky-50 text-sky-600"
-                      }`}
-                    >
-                      <span className="truncate">{item.task?.task_name ?? "Task"}</span>
-                      <RevisionBadge count={round} late={wasLate} />
-                    </div>
-                  );
-                })}
-                {dayItems.length > 3 && (
-                  <p className="px-1 text-[9px] text-stone">+{dayItems.length - 3} more</p>
+                {shownExpected.length > 0 && (
+                  <div className="space-y-0.5">
+                    <p className="px-1 text-[8px] font-semibold uppercase tracking-wide text-stone">
+                      Expected
+                    </p>
+                    {shownExpected.map((item) => {
+                      const overdue = cell.day < today;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => item.task && onOpenTask(item.task.id)}
+                          title={`${item.task?.task_name ?? ""} — ${
+                            item.profiles?.full_name || item.profiles?.username || ""
+                          } — ${overdue ? "due, nothing submitted" : "due"}`}
+                          className={`flex w-full items-start gap-1 rounded border px-1 py-[1px] text-left text-[9px] transition-opacity hover:opacity-80 ${
+                            overdue ? MISSED_CHIP : EXPECTED_CHIP
+                          }`}
+                        >
+                          {chipLabel(item)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {shownForReview.map((item) => chip(item, false))}
+
+                {shownAuto.length > 0 && (
+                  <div className="mt-1 space-y-0.5 border-t border-sand pt-1">
+                    <p className="px-1 text-[8px] font-semibold uppercase tracking-wide text-stone">
+                      Auto approved
+                    </p>
+                    {shownAuto.map((item) => chip(item, true))}
+                  </div>
+                )}
+
+                {hidden > 0 && (
+                  <button
+                    onClick={() => toggleExpanded(cell.day)}
+                    className="px-1 text-[9px] text-stone hover:text-espresso"
+                  >
+                    +{hidden} more
+                  </button>
+                )}
+                {open && dayItems.length + expected.length > chipLimit && (
+                  <button
+                    onClick={() => toggleExpanded(cell.day)}
+                    className="px-1 text-[9px] text-stone hover:text-espresso"
+                  >
+                    Show less
+                  </button>
                 )}
               </div>
             </div>

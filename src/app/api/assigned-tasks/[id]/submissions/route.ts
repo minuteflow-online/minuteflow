@@ -4,6 +4,8 @@ import { hasAdminPermission } from "@/lib/adminPermissions";
 import {
   canReviewSubmissions,
   submissionSummary,
+  submissionMeetsBar,
+  MIN_SUBMISSION_WORDS,
   type SubmissionMessageType,
 } from "@/lib/submissions";
 import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
@@ -234,6 +236,20 @@ export async function POST(request: Request, { params }: RouteContext) {
   let link = "";
   let messageType: SubmissionMessageType = "submission";
   let files: File[] = [];
+  /**
+   * Files the browser already uploaded straight to storage via
+   * submissions/upload-url. Anything larger than a few MB can't come through
+   * this request at all — Vercel caps the body at 4.5MB — so the bytes go
+   * direct and only the paths arrive here.
+   */
+  let pendingAttachments: Array<{
+    path: string;
+    filename: string;
+    size: number;
+    mime_type: string | null;
+  }> = [];
+  /** A revision may carry a new deadline for the rework. */
+  let dueAt: string | null = null;
 
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
@@ -250,9 +266,28 @@ export async function POST(request: Request, { params }: RouteContext) {
     files = formData.getAll("file").filter((entry): entry is File => entry instanceof File);
   } else {
     const body = await request.json().catch(() => ({}));
+    dueAt = typeof body.due_at === "string" && body.due_at ? body.due_at : null;
     message = String(body.message ?? "").trim();
     link = String(body.link ?? "").trim();
     messageType = (body.message_type ?? "submission") as SubmissionMessageType;
+
+    // Only paths under this task's own folder — the upload-url route is what
+    // hands those out, and a caller must not be able to claim someone else's
+    // file by naming its path here.
+    const prefix = `tasks/${id}/submissions/`;
+    pendingAttachments = (Array.isArray(body.attachments) ? body.attachments : [])
+      .filter(
+        (a: unknown): a is { path: string; filename?: string; size?: number; mime_type?: string } =>
+          Boolean(a) &&
+          typeof (a as { path?: unknown }).path === "string" &&
+          (a as { path: string }).path.startsWith(prefix)
+      )
+      .map((a: { path: string; filename?: string; size?: number; mime_type?: string }) => ({
+        path: a.path,
+        filename: String(a.filename ?? a.path.split("/").pop() ?? "attachment"),
+        size: Number(a.size ?? 0),
+        mime_type: a.mime_type ?? null,
+      }));
   }
 
   // Only Admin/CEO/Founder can post review outcomes; everyone with task access
@@ -270,12 +305,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 
-  if (messageType === "submission" && !message && !link && files.length === 0) {
-    return Response.json(
-      { error: "Add an attachment, a message, or a link before submitting" },
-      { status: 400 }
-    );
-  }
   if (messageType !== "submission" && !message && !link) {
     return Response.json({ error: "A message is required" }, { status: 400 });
   }
@@ -291,6 +320,28 @@ export async function POST(request: Request, { params }: RouteContext) {
     return Response.json({ error: "Task not found" }, { status: 404 });
   }
 
+  // The evidence bar exists so a reviewer has something to judge. A task
+  // flagged review_required = false is never read by one, so demanding 15
+  // words of it is friction with no reader — it only needs to not be empty,
+  // so the submission record still says something happened.
+  if (messageType === "submission") {
+    const fileCount = files.length + pendingAttachments.length;
+    const needsEvidence = task.review_required !== false;
+    const ok = needsEvidence
+      ? submissionMeetsBar({ message, link, fileCount })
+      : Boolean(message.trim() || link.trim() || fileCount > 0);
+    if (!ok) {
+      return Response.json(
+        {
+          error: needsEvidence
+            ? `Add an attachment or a link, or describe the work in at least ${MIN_SUBMISSION_WORDS} words.`
+            : "Add an attachment, a message, or a link before submitting.",
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   const { data: submission, error: insertError } = await admin
     .from("task_submissions")
     .insert({
@@ -298,7 +349,12 @@ export async function POST(request: Request, { params }: RouteContext) {
       va_task_assignment_id: null,
       user_id: user.id,
       message_type: messageType,
-      content: submissionSummary({ message, link, fileCount: files.length }),
+      due_at: dueAt,
+      content: submissionSummary({
+        message,
+        link,
+        fileCount: files.length + pendingAttachments.length,
+      }),
       submission_link: link || null,
       submission_comment: message || null,
     })
@@ -306,6 +362,10 @@ export async function POST(request: Request, { params }: RouteContext) {
     .single();
 
   if (insertError || !submission) {
+    // Files the browser already put in storage have nothing to hang off now.
+    if (pendingAttachments.length > 0) {
+      await admin.storage.from("task-attachments").remove(pendingAttachments.map((a) => a.path));
+    }
     return Response.json(
       { error: insertError?.message ?? "Unable to save submission" },
       { status: 400 }
@@ -315,8 +375,22 @@ export async function POST(request: Request, { params }: RouteContext) {
   // Upload files last: if any of them fails the whole submission is rolled
   // back, so a VA never ends up with a half-recorded submission they can't
   // edit their way out of.
-  const uploadedPaths: string[] = [];
+  const uploadedPaths: string[] = pendingAttachments.map((a) => a.path);
   try {
+    // Already in storage — they only need their row.
+    for (const attachment of pendingAttachments) {
+      const { error: attachError } = await admin.from("assigned_task_attachments").insert({
+        assigned_task_id: Number(id),
+        submission_id: submission.id,
+        filename: attachment.filename,
+        storage_path: attachment.path,
+        file_size: attachment.size || null,
+        mime_type: attachment.mime_type,
+        uploaded_by: user.id,
+      });
+      if (attachError) throw new Error(attachError.message);
+    }
+
     for (const [index, file] of files.entries()) {
       if (file.size > 52428800) throw new Error("File too large (max 50MB)");
 
@@ -525,6 +599,25 @@ export async function POST(request: Request, { params }: RouteContext) {
       "team",
       submissionCheer(mention(who, prof?.telegram_chat_id), task.task_name)
     );
+  }
+
+  // The task's own due date moves too, so the calendar and the task editor
+  // show what is expected now. Past verdicts are unaffected: a submission is
+  // judged against the deadline recorded on the revision before it, not
+  // against whatever the task says today. Splitting the timestamp keeps the
+  // task's date and time columns in the shape the rest of the app reads.
+  if (messageType === "revision" && dueAt) {
+    const when = new Date(dueAt);
+    if (!Number.isNaN(when.getTime())) {
+      await admin
+        .from("assigned_tasks")
+        .update({
+          due_date: dueAt.slice(0, 10),
+          due_time: dueAt.slice(11, 16),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+    }
   }
 
   const [withFiles] = await withAttachments(admin, [submission as never]);

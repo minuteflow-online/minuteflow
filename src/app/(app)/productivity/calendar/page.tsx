@@ -962,6 +962,55 @@ export default function ProductivityCalendarPage() {
     await Promise.all([fetchDaySchedule(), fetchAssignedTasksAll()]);
   }, [fetchDaySchedule, fetchAssignedTasksAll]);
 
+  // One-click "On Queue" shortcut on a Pending block — Edit Task still covers
+  // every other status change; this just skips the trip there for the single
+  // transition that matters for showing up on the Dashboard (Charinade's
+  // Calendar request). Hidden once a block leaves Pending.
+  const [quickQueueingId, setQuickQueueingId] = useState<number | null>(null);
+  const quickSetOnQueue = useCallback(
+    async (task: RawTask, vaId: string | null) => {
+      if (!vaId) return;
+      setQuickQueueingId(task.id);
+      try {
+        const res = await fetch(`/api/assigned-tasks/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "on_queue", va_id: vaId }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await Promise.all([refreshAfterScheduleChange(), fetchCompareSchedules()]);
+      } catch {
+        // Silent — Edit Task still covers this if the quick action fails.
+      } finally {
+        setQuickQueueingId(null);
+      }
+    },
+    [refreshAfterScheduleChange, fetchCompareSchedules]
+  );
+
+  const renderQueueButton = (task: RawTask, vaId: string | null) =>
+    task.status === "pending" && (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void quickSetOnQueue(task, vaId);
+        }}
+        disabled={quickQueueingId === task.id}
+        title="Move to On Queue"
+        // Badges in this app are always rounded-full pills — deliberately NOT
+        // that shape here, so this doesn't read as a status badge. Buttons are
+        // rounded-lg; this is the same shape at corner-chip scale, plus a
+        // border so it still pops against the sage fill at 8px. Inset (not
+        // escaping the block's edge like the "over" badge does) — blocks stack
+        // back-to-back with no gap, so anything poking past the top edge lands
+        // on the neighboring block above instead.
+        className="pointer-events-auto absolute top-0.5 right-0.5 z-10 rounded-md border border-sage-soft bg-sage px-1.5 py-[2px] text-[8px] font-bold uppercase leading-tight text-white shadow hover:bg-sage/90 disabled:opacity-50"
+      >
+        {quickQueueingId === task.id ? "…" : "+ Queue"}
+      </button>
+    );
+
   // Edit mode's own Save: TaskEditor's onSaved deliberately doesn't close the
   // form here (see the edit-only onSaved below) — this is what closes it,
   // after both the form fields AND the status have actually saved. Doing the
@@ -1794,10 +1843,17 @@ export default function ProductivityCalendarPage() {
                               const left = `calc(2px + (100% - 4px) * ${col} / ${cols})`;
                               const width = `calc((100% - 4px) / ${cols} - 2px)`;
                               return (
-                                <button
+                                <div
                                   key={task.id}
-                                  type="button"
+                                  role="button"
+                                  tabIndex={0}
                                   onClick={() => openEditBlock(task)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      openEditBlock(task);
+                                    }
+                                  }}
                                   className={`pointer-events-auto absolute rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                                   style={{ top, height, left, width }}
                                 >
@@ -1807,6 +1863,7 @@ export default function ProductivityCalendarPage() {
                                       style={{ height: overlay.shadeHeight }}
                                     />
                                   )}
+                                  {renderQueueButton(task, dayUserId)}
                                   <p className="relative truncate text-[9px] font-semibold leading-tight">
                                     {label && <span className="opacity-70">[{label}] </span>}
                                     {task.isRecurring && <RecurringMark className="mr-0.5" />}
@@ -1820,7 +1877,7 @@ export default function ProductivityCalendarPage() {
                                       {overlay.overMinutes}m over
                                     </p>
                                   )}
-                                </button>
+                                </div>
                               );
                             });
                           })()}
@@ -3063,10 +3120,17 @@ export default function ProductivityCalendarPage() {
                         const left = `calc(3.5rem + (100% - 3.5rem) * ${frac} / ${n})`;
                         const width = `calc((100% - 3.5rem) / ${n * cols} - 3px)`;
                         return (
-                          <button
+                          <div
                             key={`${vaId}-${task.id}`}
-                            type="button"
+                            role="button"
+                            tabIndex={0}
                             onClick={() => openEditBlock(task)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                openEditBlock(task);
+                              }
+                            }}
                             className={`pointer-events-auto absolute rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                             style={{ top, height, left, width }}
                           >
@@ -3076,6 +3140,7 @@ export default function ProductivityCalendarPage() {
                                 style={{ height: overlay.shadeHeight }}
                               />
                             )}
+                            {renderQueueButton(task, vaId)}
                             <p className="relative truncate text-[10px] font-semibold leading-tight">
                               {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
                               {task.isRecurring && <RecurringMark className="mr-0.5" />}
@@ -3095,7 +3160,7 @@ export default function ProductivityCalendarPage() {
                                 {overlay.overMinutes}m over
                               </p>
                             )}
-                          </button>
+                          </div>
                         );
                       });
                     })}
@@ -3314,10 +3379,17 @@ export default function ProductivityCalendarPage() {
                       const left = `calc(4rem + (100% - 4rem - 0.5rem - ${dueGutter}px) * ${col} / ${cols})`;
                       const width = `calc((100% - 4rem - 0.5rem - ${dueGutter}px) / ${cols} - 4px)`;
                       return (
-                        <button
+                        <div
                           key={task.id}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => openEditBlock(task)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openEditBlock(task);
+                            }
+                          }}
                           className={`pointer-events-auto absolute rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                           style={{ top, height, left, width }}
                         >
@@ -3327,6 +3399,7 @@ export default function ProductivityCalendarPage() {
                               style={{ height: overlay.shadeHeight }}
                             />
                           )}
+                          {renderQueueButton(task, dayUserId)}
                           {overlay?.isOver && (
                             <p
                               className="pointer-events-none absolute inset-x-0 -translate-y-full z-10 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white"
@@ -3375,7 +3448,7 @@ export default function ProductivityCalendarPage() {
                               </div>
                             )}
                           </div>
-                        </button>
+                        </div>
                       );
                     });
 

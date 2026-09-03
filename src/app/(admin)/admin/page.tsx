@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -43,21 +44,6 @@ import {
   formatTenure,
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
-import ProjectsTasksTab from "@/components/ProjectsTasksTab";
-import FinancialSummaryTab from "@/components/FinancialSummaryTab";
-import CaptureAlertsTab from "@/components/CaptureAlertsTab";
-import PaystubTab from "@/components/PaystubTab";
-import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
-import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
-import VaRequestsAdminTab from "@/components/VaRequestsAdminTab";
-import BugReportsAdminTab from "@/components/BugReportsAdminTab";
-import BudgetRequestsAdminTab from "@/components/BudgetRequestsAdminTab";
-import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
-import VaTokensAdminTab from "@/components/VaTokensAdminTab";
-import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
-import EmailStatusTab from "@/components/EmailStatusTab";
-import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
-import FixedPayTasksTab from "@/components/FixedPayTasksTab";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
@@ -65,6 +51,27 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
 import { applyCorrection } from "@/lib/applyCorrection";
 import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
+
+// Each of these renders behind its own `activeTab === "..."` check below, so
+// only one is ever visible at a time — but all 15 used to load eagerly on
+// every admin panel visit regardless. Loaded on demand instead, same skeleton
+// already used elsewhere on this page for a component that's still fetching.
+const tabLoading = () => <div className="h-48 animate-pulse rounded-xl border border-sand bg-white" />;
+const ProjectsTasksTab = dynamic(() => import("@/components/ProjectsTasksTab"), { loading: tabLoading });
+const FinancialSummaryTab = dynamic(() => import("@/components/FinancialSummaryTab"), { loading: tabLoading });
+const CaptureAlertsTab = dynamic(() => import("@/components/CaptureAlertsTab"), { loading: tabLoading });
+const PaystubTab = dynamic(() => import("@/components/PaystubTab"), { loading: tabLoading });
+const VaResourcesAdminTab = dynamic(() => import("@/components/VaResourcesAdminTab"), { loading: tabLoading });
+const VaFeedbackAdminTab = dynamic(() => import("@/components/VaFeedbackAdminTab"), { loading: tabLoading });
+const VaRequestsAdminTab = dynamic(() => import("@/components/VaRequestsAdminTab"), { loading: tabLoading });
+const BugReportsAdminTab = dynamic(() => import("@/components/BugReportsAdminTab"), { loading: tabLoading });
+const BudgetRequestsAdminTab = dynamic(() => import("@/components/BudgetRequestsAdminTab"), { loading: tabLoading });
+const VaReviewsAdminTab = dynamic(() => import("@/components/VaReviewsAdminTab"), { loading: tabLoading });
+const VaTokensAdminTab = dynamic(() => import("@/components/VaTokensAdminTab"), { loading: tabLoading });
+const VaBroadcastsAdminTab = dynamic(() => import("@/components/VaBroadcastsAdminTab"), { loading: tabLoading });
+const EmailStatusTab = dynamic(() => import("@/components/EmailStatusTab"), { loading: tabLoading });
+const TaskAssignmentsAdminTab = dynamic(() => import("@/components/TaskAssignmentsAdminTab"), { loading: tabLoading });
+const FixedPayTasksTab = dynamic(() => import("@/components/FixedPayTasksTab"), { loading: tabLoading });
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -814,7 +821,13 @@ export default function AdminPage() {
       if (allScreenshots.length === 0) return;
 
       const supabase = createClient();
-      const missing = allScreenshots.filter((s) => !screenshotUrls[s.id]);
+      // Marker rows record why there is no screenshot, so there is no image to
+      // fetch. Without this they fall through to the Supabase branch below and
+      // ask Storage for an empty path — a bucket that does not exist for
+      // screenshots — which stalls the whole preview loop behind failing calls.
+      const missing = allScreenshots.filter(
+        (s) => !screenshotUrls[s.id] && s.screenshot_type !== "failed" && (s.drive_file_id || s.storage_path)
+      );
       if (missing.length === 0) return;
 
       setLoadingUrls(true);
@@ -2277,7 +2290,16 @@ function TaskScreenshotCard({
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
   const unchangedCount = group.shots.filter((s) => s.unchanged).length;
-  const noCaptureCount = group.shots.filter((s) => s.screenshot_type === "failed").length;
+  // "Idle" is a claim about the person; everything else is a claim about the
+  // browser. Counting them together reads as an accusation the data does not
+  // support — a VA in a Zoom meeting produces "could not capture" all hour.
+  const AWAY_REASONS = ["Computer idle", "Screen locked"];
+  const idleCount = group.shots.filter(
+    (s) => s.screenshot_type === "failed" && AWAY_REASONS.includes(s.failure_reason ?? "")
+  ).length;
+  const notCapturedCount = group.shots.filter(
+    (s) => s.screenshot_type === "failed" && !AWAY_REASONS.includes(s.failure_reason ?? "")
+  ).length;
 
   return (
     <div>
@@ -2296,9 +2318,17 @@ function TaskScreenshotCard({
             {unchangedCount} unchanged
           </span>
         )}
-        {noCaptureCount > 0 && (
+        {idleCount > 0 && (
           <span className="rounded-full border border-stone/20 bg-stone/10 px-2 py-[1px] text-[9px] font-semibold text-stone">
-            {noCaptureCount} idle/no capture
+            {idleCount} away
+          </span>
+        )}
+        {notCapturedCount > 0 && (
+          <span
+            className="rounded-full border border-sand bg-parchment px-2 py-[1px] text-[9px] font-semibold text-bark"
+            title="Nothing to capture in the browser — working in another app, or on a page the extension cannot read. Not a claim about the person."
+          >
+            {notCapturedCount} no browser view
           </span>
         )}
         <span className="ml-auto text-[10px] text-stone">
@@ -7440,6 +7470,7 @@ function ScreenshotLightbox({
   }, [onClose, onPrev, onNext]);
 
   const badge = screenshotTypeBadge(screenshot.screenshot_type);
+  const isMarker = screenshot.screenshot_type === "failed" || !screenshot.drive_file_id;
   // captured_at is the client's own stamp from the moment of capture; the filename
   // is the next best thing; created_at is when the row landed, which for a queued
   // upload can be hours later. Kept on hover either way for support questions.
@@ -7501,9 +7532,22 @@ function ScreenshotLightbox({
           </div>
         </div>
 
-        {/* Image */}
+        {/* Image, or the reason there isn't one */}
         <div className="flex-1 overflow-auto bg-espresso p-2">
-          {url ? (
+          {isMarker ? (
+            // A marker has no image and never will, so waiting on one says
+            // "Loading image…" forever. Arrow keys still walk onto these, so the
+            // lightbox has to state the reason rather than sit blank.
+            <div className="flex h-96 flex-col items-center justify-center gap-2 text-center">
+              <span className="text-3xl text-stone">&#8709;</span>
+              <span className="text-sm font-medium text-parchment">
+                {screenshot.failure_reason || "No screenshot was taken"}
+              </span>
+              <span className="text-xs text-stone">
+                Nothing was captured for this slot.
+              </span>
+            </div>
+          ) : url ? (
             <img
               src={url}
               alt="Screenshot full view"

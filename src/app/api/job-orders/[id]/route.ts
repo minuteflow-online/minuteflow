@@ -55,6 +55,35 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ ok: true, order: data });
   }
 
+  // ── Reverse a decision — put a declined/expired/accepted order back to
+  //    offered so it can be decided again. Creator/admin or the offeree.
+  if (action === "reopen") {
+    const canReopen = order.created_by === user.id || hasBroadAdminAccess(profile) || order.offered_to === user.id;
+    if (!canReopen) return Response.json({ error: "Forbidden" }, { status: 403 });
+    if (order.status === "offered") return Response.json({ error: "This order is already open." }, { status: 409 });
+    // If it was accepted and produced a linked (time-based) task, cancel it.
+    if (order.status === "accepted" && order.accepted_task_id) {
+      await supabase.from("assigned_tasks").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", order.accepted_task_id);
+    }
+    const { error } = await supabase
+      .from("job_orders")
+      .update({ status: "offered", decline_reason: null, accepted_task_id: null, accepted_at: null, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) return Response.json({ error: error.message }, { status: 400 });
+    const rp = profile as { full_name?: string | null; username?: string | null } | null;
+    const byName = rp?.full_name || rp?.username || "Someone";
+    if (order.offered_to !== user.id) {
+      await notifyOne(supabase, {
+        targetUserId: order.offered_to,
+        senderId: user.id,
+        content: `${byName} reopened the job order “${order.title}” — it's offered to you again.`,
+        telegram: `🔄 <b>${esc(byName)}</b> reopened a job order\n\n<b>${esc(order.title)}</b> — offered to you again.`,
+        topic: "job_order",
+      });
+    }
+    return Response.json({ ok: true });
+  }
+
   // ── Founder sets the money ────────────────────────────────────────────────
   if (action === "set_rate") {
     if (!isFounder(profile)) return Response.json({ error: "Only the Founder can set the rate" }, { status: 403 });
@@ -88,9 +117,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
     if (action === "decline") {
       const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+      if (!reason) return Response.json({ error: "A reason is required to decline." }, { status: 400 });
       const { error } = await supabase
         .from("job_orders")
-        .update({ status: "declined", decline_reason: reason || null, updated_at: new Date().toISOString() })
+        .update({ status: "declined", decline_reason: reason, updated_at: new Date().toISOString() })
         .eq("id", id);
       if (error) return Response.json({ error: error.message }, { status: 400 });
       await notifyOne(supabase, {

@@ -31,6 +31,7 @@ interface FixedAssignment {
   quantity: number;
   amount: number;
   status: string;
+  date: string | null;
 }
 
 interface PreviewData {
@@ -344,6 +345,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     setError(null);
     setPreview(null);
     setSent(false);
+    setDraftSaved(false);
 
     if (!selectedUserId) { setError("Please select a VA."); return; }
     const range = getRange();
@@ -395,6 +397,60 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       setLoading(false);
     }
   }, [selectedUserId, preset, customStart, customEnd, orgTimezone]);
+
+  // Persist a manually-calculated preview as a draft, so it survives a
+  // navigate-away instead of only living in this component's state — same
+  // shape the 1st/16th auto-generation writes (src/lib/paystubGeneration.ts),
+  // so it shows up in Paystub Drafts below and reopens via Edit & Send.
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const handleSaveDraft = useCallback(async () => {
+    if (!preview) return;
+    const range = getRange();
+    if (!range) return;
+    setSavingDraft(true);
+    setError(null);
+    try {
+      const supabase = createClient();
+      const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
+      for (const [date, ms] of Object.entries(preview.byDate)) {
+        byDateWithRates[date] = { ms: Number(ms), rate: Number(preview.rateByDate?.[date] ?? preview.payRate) };
+      }
+      const payload = {
+        user_id: selectedUserId,
+        full_name: preview.vaName,
+        period_start: range.start,
+        period_end: range.end,
+        pay_period_label: range.label,
+        total_hours_ms: Math.round(preview.totalHours * 3_600_000),
+        pay_rate: preview.payRate,
+        gross_pay: preview.totalGrossPay ?? preview.grossPay,
+        by_date: byDateWithRates,
+        company_name: companyName.trim() || "MinuteFlow",
+      };
+      // Re-saving for the same VA + period refreshes the existing draft
+      // instead of piling up a duplicate row in the list.
+      const { data: existing } = await supabase
+        .from("paystub_snapshots")
+        .select("id")
+        .eq("user_id", selectedUserId)
+        .eq("period_start", range.start)
+        .eq("period_end", range.end)
+        .eq("status", "draft")
+        .maybeSingle();
+      if (existing) {
+        await supabase.from("paystub_snapshots").update(payload).eq("id", existing.id);
+      } else {
+        await supabase.from("paystub_snapshots").insert({ ...payload, amount_paid: 0, status: "draft" });
+      }
+      setDraftSaved(true);
+      loadDrafts();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Couldn't save draft.");
+    } finally {
+      setSavingDraft(false);
+    }
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, companyName, loadDrafts]);
 
   // "Edit" on a draft → pre-fill the generator with that VA + period, then
   // auto-calculate so the full form (line items, fee, custom amount) is ready.
@@ -671,7 +727,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </label>
             <select
               value={selectedUserId}
-              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setSent(false); }}
+              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); }}
               className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
             >
               <option value="">— Select VA —</option>
@@ -690,7 +746,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </label>
             <select
               value={preset}
-              onChange={(e) => { setPreset(e.target.value as PeriodPreset); setPreview(null); setSent(false); }}
+              onChange={(e) => { setPreset(e.target.value as PeriodPreset); setPreview(null); setSent(false); setDraftSaved(false); }}
               className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
             >
               {PRESET_OPTIONS.map((o) => (
@@ -707,7 +763,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 <input
                   type="date"
                   value={customStart}
-                  onChange={(e) => { setCustomStart(e.target.value); setPreview(null); setSent(false); }}
+                  onChange={(e) => { setCustomStart(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); }}
                   className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                 />
               </div>
@@ -716,7 +772,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 <input
                   type="date"
                   value={customEnd}
-                  onChange={(e) => { setCustomEnd(e.target.value); setPreview(null); setSent(false); }}
+                  onChange={(e) => { setCustomEnd(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); }}
                   className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                 />
               </div>
@@ -780,7 +836,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
               </div>
               <button
-                onClick={() => { setPreview(null); setSent(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); }}
+                onClick={() => { setPreview(null); setSent(false); setDraftSaved(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); }}
                 className="text-xs text-terracotta underline underline-offset-2 shrink-0"
               >
                 Send another
@@ -924,6 +980,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <thead>
                       <tr className="text-bark/40 border-b border-linen">
                         <th className="text-left pb-1.5 font-semibold">Task</th>
+                        <th className="text-left pb-1.5 font-semibold">Date</th>
                         <th className="text-right pb-1.5 font-semibold">Rate</th>
                         <th className="text-right pb-1.5 font-semibold">Amount</th>
                       </tr>
@@ -934,6 +991,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           <td className="py-1.5 text-bark/70">
                             {a.task_name}
                             {a.account && <span className="text-bark/40 ml-1">· {a.account}</span>}
+                          </td>
+                          <td className="py-1.5 text-bark/70">
+                            {a.date ? formatDateLabel(a.date.split("T")[0]) : "—"}
                           </td>
                           <td className="py-1.5 text-right text-bark/70">
                             {a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}
@@ -1239,8 +1299,17 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 />
               </div>
 
-              {/* Send button */}
-              <div className="px-5 py-4 border-t border-linen">
+              {/* Save Draft + Send buttons */}
+              <div className="px-5 py-4 border-t border-linen space-y-2">
+                {!sent && (
+                  <button
+                    onClick={handleSaveDraft}
+                    disabled={savingDraft}
+                    className="w-full py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {savingDraft ? "Saving…" : draftSaved ? "✓ Draft Saved — Save Again" : "Save as Draft"}
+                  </button>
+                )}
                 {sent ? (
                   <div className="w-full py-2.5 rounded-lg bg-sage-soft border border-sage/40 text-center text-sm font-semibold text-bark/60">
                     ✓ Paystub Sent

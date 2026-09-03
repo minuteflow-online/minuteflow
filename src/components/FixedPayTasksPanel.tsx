@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import { normalizePosition } from "@/types/database";
+import TaskDetailsView from "@/components/TaskDetailsView";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import ToolbarFilterDropdown from "@/components/table/ToolbarFilterDropdown";
@@ -922,6 +923,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     {!hiddenColumns.has("active") && (
                       <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
                     )}
+                    <th className="px-3 py-2.5 w-32"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -977,10 +979,33 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                           <td className="truncate px-3 py-3 text-[13px] text-walnut">{task.category || <span className="text-stone/60">—</span>}</td>
                         )}
                         {!hiddenColumns.has("status") && (
-                          <td className="px-3 py-3 text-[13px] text-walnut">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                              {STATUS_LABELS[task.status]}
-                            </span>
+                          /* Status is set from the row itself. Opening the
+                             panel to move one task on is a lot of clicks when
+                             the point of the table is working through a list.
+                             stopPropagation because the row opens the details
+                             panel on click. */
+                          <td className="px-3 py-3 text-[13px] text-walnut" onClick={(event) => event.stopPropagation()}>
+                            {isAdminOrManager ? (
+                              <select
+                                value={task.status}
+                                disabled={statusSaving}
+                                onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                                className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
+                              >
+                                {(STATUS_OPTIONS.includes(task.status)
+                                  ? STATUS_OPTIONS
+                                  : [task.status, ...STATUS_OPTIONS]
+                                ).map((status) => (
+                                  <option key={status} value={status}>
+                                    {STATUS_LABELS[status]}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                {STATUS_LABELS[task.status]}
+                              </span>
+                            )}
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (
@@ -1025,6 +1050,24 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                             </span>
                           </td>
                         )}
+                        <td className="px-3 py-3 text-right" onClick={(event) => event.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openViewPanel(task)}
+                              className="rounded-lg border border-sand px-2.5 py-1 text-[11px] text-walnut transition-colors hover:border-walnut"
+                            >
+                              View
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditPanel(task)}
+                              className="rounded-lg border border-sand px-2.5 py-1 text-[11px] text-walnut transition-colors hover:border-walnut"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1176,19 +1219,25 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
               {panelMode === "view" && selectedTask && (
                 <>
-                  <TaskEditor
-                    key={`view-${selectedTask.id}`}
-                    mode="output_based"
-                    editingTaskId={selectedTask.id}
-                    initialTask={selectedTask as unknown as Record<string, unknown>}
-                    currentUserId={currentUserId ?? ""}
-                    isAdminOrManager={isAdminOrManager}
-                    teamMembers={teamMembers}
-                    currentPayRate={currentPayRate ?? undefined}
-                    readOnly
-                    hideFooter
-                    onCancel={closePanel}
-                    onSaved={handleTaskSaved}
+                  <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                    <button
+                      type="button"
+                      className="flex-1 px-3 py-1.5 bg-terracotta text-white transition-colors cursor-pointer"
+                    >
+                      Details
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openEditPanel(selectedTask)}
+                      className="flex-1 px-3 py-1.5 bg-white text-stone hover:bg-cream transition-colors cursor-pointer"
+                    >
+                      Edit Task
+                    </button>
+                  </div>
+
+                  <TaskDetailsView
+                    task={selectedTask as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
+                    onEdit={() => openEditPanel(selectedTask)}
                   />
 
                   {renderStatusField(selectedTask)}
