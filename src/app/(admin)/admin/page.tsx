@@ -2290,7 +2290,16 @@ function TaskScreenshotCard({
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
   const unchangedCount = group.shots.filter((s) => s.unchanged).length;
-  const noCaptureCount = group.shots.filter((s) => s.screenshot_type === "failed").length;
+  // "Idle" is a claim about the person; everything else is a claim about the
+  // browser. Counting them together reads as an accusation the data does not
+  // support — a VA in a Zoom meeting produces "could not capture" all hour.
+  const AWAY_REASONS = ["Computer idle", "Screen locked"];
+  const idleCount = group.shots.filter(
+    (s) => s.screenshot_type === "failed" && AWAY_REASONS.includes(s.failure_reason ?? "")
+  ).length;
+  const notCapturedCount = group.shots.filter(
+    (s) => s.screenshot_type === "failed" && !AWAY_REASONS.includes(s.failure_reason ?? "")
+  ).length;
 
   return (
     <div>
@@ -2309,9 +2318,17 @@ function TaskScreenshotCard({
             {unchangedCount} unchanged
           </span>
         )}
-        {noCaptureCount > 0 && (
+        {idleCount > 0 && (
           <span className="rounded-full border border-stone/20 bg-stone/10 px-2 py-[1px] text-[9px] font-semibold text-stone">
-            {noCaptureCount} idle/no capture
+            {idleCount} away
+          </span>
+        )}
+        {notCapturedCount > 0 && (
+          <span
+            className="rounded-full border border-sand bg-parchment px-2 py-[1px] text-[9px] font-semibold text-bark"
+            title="Nothing to capture in the browser — working in another app, or on a page the extension cannot read. Not a claim about the person."
+          >
+            {notCapturedCount} no browser view
           </span>
         )}
         <span className="ml-auto text-[10px] text-stone">
