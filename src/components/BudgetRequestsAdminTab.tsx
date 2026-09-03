@@ -38,7 +38,6 @@ export default function BudgetRequestsAdminTab() {
   const [requests, setRequests] = useState<BudgetRequestRow[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"pending" | "all">("pending");
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [processing, setProcessing] = useState<Record<number, boolean>>({});
   const [error, setError] = useState<string | null>(null);
@@ -135,10 +134,12 @@ export default function BudgetRequestsAdminTab() {
     [notes, load]
   );
 
-  const visible = requests.filter((r) => (filter === "pending" ? r.status === "pending" : true));
-  const pendingCount = requests.filter((r) => r.status === "pending").length;
+  const pending = requests.filter((r) => r.status === "pending");
+  const history = requests.filter((r) => r.status !== "pending");
+  const pendingCount = pending.length;
 
   return (
+    <div className="space-y-4">
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">
@@ -152,22 +153,6 @@ export default function BudgetRequestsAdminTab() {
           >
             + Grant Budget
           </button>
-          <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-[11px] font-semibold">
-            <button
-              type="button"
-              onClick={() => setFilter("pending")}
-              className={`rounded-md px-3 py-1 transition-colors ${filter === "pending" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-            >
-              Pending
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilter("all")}
-              className={`rounded-md px-3 py-1 transition-colors ${filter === "all" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-            >
-              All
-            </button>
-          </div>
         </div>
       </div>
 
@@ -243,24 +228,11 @@ export default function BudgetRequestsAdminTab() {
 
       {loading ? (
         <p className="text-[12px] text-stone">Loading…</p>
-      ) : visible.length === 0 ? (
-        <p className="text-[12px] text-stone italic py-2">
-          No {filter === "pending" ? "pending " : ""}budget requests.
-          {filter === "pending" && requests.length > 0 && (
-            <>
-              {" "}
-              <button
-                onClick={() => setFilter("all")}
-                className="not-italic font-semibold text-terracotta hover:underline"
-              >
-                See all {requests.length} past request{requests.length === 1 ? "" : "s"}
-              </button>
-            </>
-          )}
-        </p>
+      ) : pending.length === 0 ? (
+        <p className="text-[12px] text-stone italic py-2">No pending budget requests.</p>
       ) : (
         <div className="space-y-2">
-          {visible.map((r) => (
+          {pending.map((r) => (
             <div key={r.id} className="rounded-lg border border-sand bg-white p-3 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -318,6 +290,66 @@ export default function BudgetRequestsAdminTab() {
           ))}
         </div>
       )}
+    </div>
+
+    {/* Reviewed requests are a record, not a queue — a table reads them at a
+        glance, and it sits outside the card so approving something never
+        leaves the panel looking empty. */}
+    {history.length > 0 && (
+      <div>
+        <h3 className="mb-2 text-xs font-bold text-espresso uppercase tracking-wide">
+          Past Requests <span className="text-stone font-semibold">({history.length})</span>
+        </h3>
+        <div className="rounded-xl border border-sand bg-white overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[12px]">
+              <thead>
+                <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-3 py-3">Amount</th>
+                  <th className="px-3 py-3">Period</th>
+                  <th className="px-3 py-3">Requested</th>
+                  <th className="px-3 py-3">Status</th>
+                  <th className="px-3 py-3">Reviewed By</th>
+                  <th className="px-3 py-3">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-parchment">
+                {history.map((r) => (
+                  <tr key={r.id} className="align-top hover:bg-parchment/20 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-espresso">{r.va_name}</td>
+                    <td className="px-3 py-3 font-semibold text-terracotta whitespace-nowrap">
+                      {formatAmount(r.amount, r.unit)}
+                    </td>
+                    <td className="px-3 py-3 text-espresso">
+                      {r.period === "day" ? "Daily" : r.period === "week" ? "Weekly" : "Monthly"}
+                    </td>
+                    <td className="px-3 py-3 text-stone whitespace-nowrap">{formatDateTime(r.created_at)}</td>
+                    <td className="px-3 py-3">
+                      <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${STATUS_BADGE[r.status]}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-stone whitespace-nowrap">
+                      {r.reviewed_by_name || "—"}
+                      {r.reviewed_at && (
+                        <span className="block text-[10px] text-stone/70">{formatDateTime(r.reviewed_at)}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-espresso max-w-[420px]">
+                      {r.reason || <span className="text-stone/40">—</span>}
+                      {r.review_notes && (
+                        <span className="block text-[11px] text-stone italic mt-0.5">&ldquo;{r.review_notes}&rdquo;</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 }
