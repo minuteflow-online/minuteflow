@@ -821,7 +821,13 @@ export default function AdminPage() {
       if (allScreenshots.length === 0) return;
 
       const supabase = createClient();
-      const missing = allScreenshots.filter((s) => !screenshotUrls[s.id]);
+      // Marker rows record why there is no screenshot, so there is no image to
+      // fetch. Without this they fall through to the Supabase branch below and
+      // ask Storage for an empty path — a bucket that does not exist for
+      // screenshots — which stalls the whole preview loop behind failing calls.
+      const missing = allScreenshots.filter(
+        (s) => !screenshotUrls[s.id] && s.screenshot_type !== "failed" && (s.drive_file_id || s.storage_path)
+      );
       if (missing.length === 0) return;
 
       setLoadingUrls(true);
