@@ -3513,11 +3513,17 @@ export default function DashboardPage() {
           ? "grid-cols-1 md:grid-cols-[1fr_240px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px]";
 
-        // Founder never gets the Quick Pick message actions; an admin gets
-        // them only once clocked in. Both start a tracked message task, which
-        // is meaningless when no clock is running.
-        const showQuickMessageActions =
-          role === "founder" ? false : hasBroadAdminAccess({ role }) ? sessionState !== "idle" : true;
+        // The Founder does not do tracked task work, so neither Quick Pick nor
+        // the tasks up for grabs belong on their dashboard. Admins are still
+        // staff and keep both.
+        const isFounder = role === "founder";
+
+        // Supervision and General Message both start a TRACKED message task, so
+        // they only mean anything once a clock is running. Quick Pick holds
+        // nothing else, so it appears exactly when they do — otherwise it is an
+        // empty titled box.
+        const showQuickPick = !isFounder && sessionState !== "idle";
+        const showAvailableTasks = !isFounder && (canWorkTasks || hasBroadAdminAccess({ role }));
 
         return (
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
@@ -3547,23 +3553,22 @@ export default function DashboardPage() {
             {/* Right column: Quick Pick, then the tasks up for grabs, then
                 team monitoring underneath. */}
             <div className="space-y-5">
-              {/* Quick Pick — hidden for VAs before clock-in */}
-              {(role !== "va" || sessionState !== "idle") && (
+              {/* Quick Pick — only once clocked in, and never for the Founder */}
+              {showQuickPick && (
                 <ProjectSidebar
                   onQuickAction={handleQuickAction}
                   onAutoHoldAction={handleAutoHoldAndStartMessage}
                   isAdmin={hasBroadAdminAccess({ role })}
-                  showMessageActions={showQuickMessageActions}
                 />
               )}
-              {/* Tasks up for grabs. Collapsed by default for anyone who is not
-                  actively picking one up. */}
-              {(canWorkTasks || hasBroadAdminAccess({ role })) && (
+              {/* Tasks up for grabs, collapsed — admins are staff too, they
+                  just are not usually shopping for one. */}
+              {showAvailableTasks && (
                 <AvailableTasksWidget
                   key={`avail-${claimRefreshKey}`}
                   onClaimed={() => setClaimRefreshKey((k) => k + 1)}
                   canSeeFixedPay={isPerTask || canSeeAvailable}
-                  startCollapsed={isVa || sessionState !== "idle"}
+                  startCollapsed
                 />
               )}
               {role !== "va" && (
