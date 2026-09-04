@@ -1401,8 +1401,16 @@ export default function DashboardPage() {
   const clockOut = useCallback(async () => {
     if (!userId) return;
 
+    // Personal time and breaks are not client work: there is no status to set
+    // and no memo to write, so demanding both before clocking out is asking for
+    // paperwork about a coffee. Close it and clock out.
+    const isOwnTime =
+      Boolean(activeTask?.isBreak) ||
+      (activeTask?.category ?? "").toLowerCase() === "personal" ||
+      (activeTask?.category ?? "").toLowerCase() === "break";
+
     // If there's an active task, show the close-task modal instead of clocking out directly
-    if (activeTask) {
+    if (activeTask && !isOwnTime) {
       // Pre-fill memos from the active task so the VA doesn't have to re-type them
       setClockOutClientMemo(activeTask.client_memo || "");
       setClockOutInternalMemo(activeTask.internal_memo || "");
