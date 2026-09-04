@@ -3514,7 +3514,7 @@ export default function DashboardPage() {
         // preview was truncating after a few words.
         const gridClass = isVa
           ? "grid-cols-1 md:grid-cols-[1fr_240px]"
-          : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[360px_1fr_280px]";
+          : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[300px_1fr_280px]";
 
         // The Founder does not do tracked task work, so neither Quick Pick nor
         // the tasks up for grabs belong on their dashboard. Admins are still

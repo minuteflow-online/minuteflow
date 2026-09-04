@@ -9,12 +9,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { getInitials, getAvatarColor } from "@/lib/utils";
 
 type Project = { id: string; name: string };
-type Comment = { id: number; body: string; created_at: string; author?: string };
-type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[] };
+type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null };
+type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null };
 type Notif = { id: number; content: string; read: boolean; created_at: string };
-type Member = { id: string; full_name?: string | null; username?: string | null };
+type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
 type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string };
 type DM = { id: number; body: string; created_at: string; mine: boolean; sender_name: string };
 
@@ -28,6 +29,37 @@ function ago(iso: string) {
   return `${Math.floor(s / 86400)}d`;
 }
 const nameOf = (m: Member) => m.full_name || m.username || "?";
+
+/**
+ * A person, small. Their photo when they have one, otherwise the initials
+ * circle used everywhere else in the app, coloured from their name so the same
+ * person is the same colour wherever they appear.
+ */
+function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; size?: number }) {
+  const label = member ? nameOf(member) : name || "?";
+  const style = { width: size, height: size, fontSize: Math.round(size * 0.42) };
+  if (member?.avatar_url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return (
+      <img
+        src={member.avatar_url}
+        alt={label}
+        title={label}
+        style={style}
+        className="rounded-full object-cover shrink-0 border border-white"
+      />
+    );
+  }
+  return (
+    <span
+      title={label}
+      style={{ ...style, backgroundColor: getAvatarColor(label) }}
+      className="inline-flex items-center justify-center rounded-full font-bold text-white shrink-0 border border-white"
+    >
+      {getInitials(label)}
+    </span>
+  );
+}
 
 export default function DashboardMessagePanel({ currentUserId }: { currentUserId: string }) {
   const [tab, setTab] = useState<Tab>("general");
@@ -72,6 +104,15 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const dmEndRef = useRef<HTMLDivElement>(null);
 
   const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
+  const memberById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
+
+  /** Everyone who has said something in a topic: its author, then repliers. */
+  const participantsOf = (t: Thread) => {
+    const ids: string[] = [];
+    if (t.author_id) ids.push(t.author_id);
+    for (const c of t.comments ?? []) if (c.author_id && !ids.includes(c.author_id)) ids.push(c.author_id);
+    return ids;
+  };
 
   // Threads narrowed by the search box and the project dropdown. Matching on
   // title, body and project name, so typing an objective name finds its topics.
@@ -314,8 +355,8 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const hasNewComments = notifs.some((n) => !n.read);
 
   return (
-    <div className="rounded-xl border border-sand bg-white shadow-sm flex flex-col h-[520px] overflow-hidden">
-      <div className="px-3 py-2.5 border-b border-sand">
+    <div className="rounded-xl border border-amber/30 bg-amber-soft/40 shadow-sm flex flex-col h-[520px] overflow-hidden">
+      <div className="px-3 py-2.5 border-b border-amber/20 bg-amber-soft/70">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Messages</h3>
       </div>
       <div className="flex items-center gap-1 px-2 pt-2">
@@ -363,9 +404,12 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 <p className="mt-1 text-[10px] text-bark">{projectName.get(activeThread.project_id) ?? "Project"} · {ago(activeThread.created_at)} ago</p>
               </div>
               {activeThread.comments.map((c) => (
-                <div key={c.id} className="rounded-lg border border-sand bg-white px-2.5 py-1.5">
-                  <p className="text-[11px] text-espresso whitespace-pre-wrap">{c.body}</p>
-                  <p className="mt-0.5 text-[10px] text-bark">{c.author ? `${c.author} · ` : ""}{ago(c.created_at)} ago</p>
+                <div key={c.id} className="flex gap-1.5">
+                  <Avatar member={c.author_id ? memberById.get(c.author_id) : undefined} name={c.author} size={20} />
+                  <div className="flex-1 min-w-0 rounded-lg border border-sand bg-white px-2.5 py-1.5">
+                    <p className="text-[11px] text-espresso whitespace-pre-wrap">{c.body}</p>
+                    <p className="mt-0.5 text-[10px] text-bark">{c.author ? `${c.author} · ` : ""}{ago(c.created_at)} ago</p>
+                  </div>
                 </div>
               ))}
               <div className="flex items-end gap-1.5 pt-1">
@@ -493,9 +537,17 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               ) : gLoading ? <p className="text-[12px] text-stone px-1">Loading…</p> : threads.length === 0 ? <p className="text-[12px] text-walnut px-1">No threads yet.</p> : visibleThreads.length === 0 ? <p className="text-[12px] text-walnut px-1">Nothing matches that.</p> : (
                 visibleThreads.map((t) => (
                   <button key={t.id} type="button" onClick={() => setActiveThread(t)} className="w-full text-left rounded-lg border border-sand bg-white px-2.5 py-2 hover:bg-cream transition-colors">
-                    <span className="flex items-center justify-between gap-2">
+                    <span className="flex items-start justify-between gap-2">
                       <span className="text-[12px] font-semibold text-espresso truncate">{t.title || "Untitled"}</span>
-                      {t.comment_count > 0 && <span className="shrink-0 text-[10px] text-stone">{t.comment_count}</span>}
+                      <span className="flex items-center gap-1 shrink-0">
+                        {/* Who is in this conversation, at a glance. */}
+                        <span className="flex -space-x-1">
+                          {participantsOf(t).slice(0, 3).map((id) => (
+                            <Avatar key={id} member={memberById.get(id)} size={16} />
+                          ))}
+                        </span>
+                        {t.comment_count > 0 && <span className="text-[10px] text-stone">{t.comment_count}</span>}
+                      </span>
                     </span>
                     {t.body && <span className="block text-[11px] text-walnut truncate">{t.body}</span>}
                     <span className="block text-[10px] text-bark truncate">{projectName.get(t.project_id) ?? "Project"} · {ago(t.created_at)} ago</span>
