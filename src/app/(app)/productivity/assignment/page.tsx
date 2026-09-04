@@ -22,7 +22,7 @@ import TeamWorkloadView from "@/components/TeamWorkloadView";
 import ObjectiveProgressView from "@/components/ObjectiveProgressView";
 import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
-import { CATEGORY_OPTIONS, collapseRecurringSeriesBy, DUE_DATE_FINISHED_STATUSES } from "@/lib/taskSchedule";
+import { CATEGORY_OPTIONS, collapseRecurringSeriesBy, DUE_DATE_FINISHED_STATUSES, formatDueTime } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import RevisionBadge from "@/components/RevisionBadge";
 import RecurringBadge from "@/components/RecurringBadge";
@@ -33,6 +33,7 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 200 },
   { key: "account", label: "Account", defaultWidth: 140 },
+  { key: "assigned_to", label: "Assigned To", defaultWidth: 140 },
   { key: "assigned_by", label: "Assigned By", defaultWidth: 140 },
   { key: "objective", label: "Project", defaultWidth: 140 },
   { key: "detail", label: "Client Detail", defaultWidth: 180 },
@@ -133,6 +134,7 @@ type VATaskRow = {
     task_detail: string | null;
     task_notes: string | null;
     due_date: string | null;
+    due_time: string | null;
     start_date: string | null;
     start_time: string | null;
     end_time: string | null;
@@ -213,6 +215,7 @@ type AdminTaskFlat = {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  due_time: string | null;
   start_date: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -1229,7 +1232,28 @@ export default function TaskListPage() {
         const vaName = task.profiles?.full_name || task.profiles?.username || "";
         if (!filterSubmittedBy.includes(vaName)) return false;
       }
-      if (taskNameSearchLower && !detail.task_name.toLowerCase().includes(taskNameSearchLower)) return false;
+      // Whole-row search — many of these tasks carry their real, descriptive
+      // title in Client Detail rather than Task Name (task_name is often just
+      // the project/category, e.g. "Promo Processing"), so a search that only
+      // checked task_name silently found nothing for those rows.
+      if (taskNameSearchLower) {
+        const haystack = [
+          detail.task_name,
+          detail.task_detail,
+          detail.task_notes,
+          detail.account,
+          detail.project,
+          detail.projects?.name,
+          detail.assigned_by_profile?.full_name,
+          detail.assigned_by_profile?.username,
+          task.profiles?.full_name,
+          task.profiles?.username,
+          task.status,
+        ]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(taskNameSearchLower));
+        if (!haystack) return false;
+      }
       if (filterDueDateMode === "has" && !dueTime) return false;
       if (filterDueDateMode === "none" && dueTime) return false;
       if (start && (!dueTime || dueTime < start.getTime())) return false;
@@ -2286,15 +2310,31 @@ export default function TaskListPage() {
                   </div>
                 </div>
 
-                {taskView === "active" && activeView === "my_tasks" && (
-                  <button
-                    type="button"
-                    onClick={openCreate}
-                    className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                  >
-                    + Create Task
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {/* Same taskNameSearch state the Task Name column header's
+                      own search box shares — matches against every visible
+                      field on the row (see filteredTasks below), not just
+                      the task name, since a task's real descriptive title
+                      often lives in Client Detail instead. Always-visible
+                      entry point next to Create Task, instead of needing to
+                      open that column's popover to find it. */}
+                  <input
+                    type="text"
+                    value={taskNameSearch}
+                    onChange={(e) => setTaskNameSearch(e.target.value)}
+                    placeholder="Search anything..."
+                    className="w-48 rounded-lg border border-sand bg-white px-2 py-2 text-xs text-espresso outline-none placeholder:text-stone/60"
+                  />
+                  {taskView === "active" && activeView === "my_tasks" && (
+                    <button
+                      type="button"
+                      onClick={openCreate}
+                      className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                    >
+                      + Create Task
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2498,7 +2538,7 @@ export default function TaskListPage() {
                             searchable
                             searchValue={taskNameSearch}
                             onSearchChange={setTaskNameSearch}
-                            searchPlaceholder="Search task names..."
+                            searchPlaceholder="Search anything..."
                           />
                         )}
                         {!hiddenColumns.has("account") && (
@@ -2509,6 +2549,13 @@ export default function TaskListPage() {
                             filterOptions={accountFilterOptions.map((v) => ({ value: v, label: v }))}
                             selected={filterAccounts}
                             onFilterChange={setFilterAccounts}
+                          />
+                        )}
+                        {!hiddenColumns.has("assigned_to") && (
+                          <ColumnHeader
+                            label="Assigned To"
+                            width={columnWidths.assigned_to}
+                            onResize={(w) => setColumnWidth("assigned_to", w)}
                           />
                         )}
                         {!hiddenColumns.has("assigned_by") && (
@@ -2677,6 +2724,12 @@ export default function TaskListPage() {
                               />
                             )}
 
+                            {!hiddenColumns.has("assigned_to") && (
+                              <td className="px-3 py-3 text-[13px] text-walnut truncate">
+                                {task.profiles?.full_name ?? task.profiles?.username ?? <span className="text-stone/30">—</span>}
+                              </td>
+                            )}
+
                             {!hiddenColumns.has("assigned_by") && (
                               <td className="px-3 py-3 text-[13px] text-walnut truncate">
                                 {detail.assigned_by_profile?.full_name ?? detail.assigned_by_profile?.username ?? <span className="text-stone/30">—</span>}
@@ -2759,6 +2812,15 @@ export default function TaskListPage() {
                                     <>
                                       {due.isOverdue ? "Overdue · " : ""}
                                       {due.label}
+                                      {/* A deadline with a time on it is a
+                                          different commitment from one due
+                                          "that day", and the column was
+                                          dropping the difference. */}
+                                      {detail.due_time && (
+                                        <span className="ml-1 text-[11px] font-normal text-stone">
+                                          {formatDueTime(detail.due_time)}
+                                        </span>
+                                      )}
                                     </>
                                   ) : (
                                     <span className="text-stone/30">—</span>

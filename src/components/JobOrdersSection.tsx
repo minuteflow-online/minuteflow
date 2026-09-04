@@ -158,6 +158,15 @@ export default function JobOrdersSection({
     .filter((d): d is string => Boolean(d))
     .sort()[0] ?? null;
 
+  // Admin-only overview across every order (not just what's offered to me):
+  // how many are still open, the total, and the soonest an open one must be
+  // accepted by. Shown on the header so it reads without opening the section.
+  const openOrders = orders.filter((o) => o.status === "offered");
+  const soonestOpenRespondBy = openOrders
+    .map((o) => o.respond_by)
+    .filter((d): d is string => Boolean(d))
+    .sort()[0] ?? null;
+
   const Row = ({ o }: { o: JobOrder }) => {
     const isOfferee = o.offered_to === currentUserId;
     const isExp = expanded === o.id;
@@ -280,6 +289,15 @@ export default function JobOrdersSection({
           <span className="text-amber text-[10px] w-3 shrink-0">{open ? "▼" : "▶"}</span>
           {offeredToMe.length > 0 && (
             <span className="text-[11px] font-bold px-2.5 py-[3px] rounded-full bg-amber text-white animate-pulse">{offeredToMe.length} offered to you — respond{!open && soonestRespondBy ? ` by ${fmtDate(soonestRespondBy)}` : ""}</span>
+          )}
+          {admin && orders.length > 0 && (
+            <span className="hidden sm:flex items-center gap-1.5">
+              <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-white border border-sand text-walnut">{openOrders.length} open</span>
+              <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-white border border-sand text-walnut">{orders.length} total</span>
+              {soonestOpenRespondBy && (
+                <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-white border border-terracotta/30 text-terracotta">accept by {fmtDate(soonestOpenRespondBy)}</span>
+              )}
+            </span>
           )}
         </button>
         {admin && open && (

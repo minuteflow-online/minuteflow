@@ -2,7 +2,8 @@ import { NextRequest } from "next/server";
 import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue, buildUnclaimed } from "@/lib/teamDigest";
 import { findProfileGaps, gapMessage } from "@/lib/profileGaps";
 import { notifyVaPrivately } from "@/lib/vaNotify";
-import { sendTelegram, sendTelegramSticker, telegramEnabled } from "@/lib/telegram";
+import { sendTelegram, sendTelegramTo, sendTelegramSticker, telegramEnabled, esc } from "@/lib/telegram";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -54,8 +55,53 @@ export async function GET(request: NextRequest) {
     const when = kind === "meeting-today" ? "today" : "tomorrow";
     const reminder = await buildMeetingReminder(when);
     if (!reminder) return Response.json({ ok: true, skipped: `no meeting ${when}` });
-    await sendTelegram("team", reminder);
-    return Response.json({ ok: true, kind });
+    await sendTelegram("team", reminder.groupMessage);
+
+    // And to each person directly. A group post is easy to scroll past on a
+    // busy chat, and this is the one thing everybody has to actually turn up
+    // for. Anyone without Telegram linked simply does not get the direct copy.
+    const admin = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    const { data: team } = await admin
+      .from("profiles")
+      .select("full_name, username, telegram_chat_id")
+      .eq("is_active", true);
+
+    let dmSent = 0;
+    const unlinked: string[] = [];
+    for (const person of team ?? []) {
+      const name = (person.full_name as string) || (person.username as string) || "Someone";
+      if (!person.telegram_chat_id) {
+        unlinked.push(name);
+        continue;
+      }
+      const result = await sendTelegramTo(
+        person.telegram_chat_id as number,
+        reminder.personalMessage,
+        "va"
+      );
+      if (result.ok) dmSent++;
+    }
+
+    // One summary rather than a log line per person. Toni asked to see what
+    // reaches people privately, but ten identical entries three times a meeting
+    // day would bury everything else in that chat.
+    if (telegramEnabled("ops")) {
+      await sendTelegram(
+        "ops",
+        [
+          `🔔 Meeting reminder (${when}) sent to the team chat and to <b>${dmSent}</b> people directly.`,
+          "",
+          esc(reminder.personalMessage.replace(/<[^>]+>/g, "")),
+          ...(unlinked.length > 0 ? ["", `No Telegram link: ${esc(unlinked.join(", "))}`] : []),
+        ].join("\n")
+      );
+    }
+
+    return Response.json({ ok: true, kind, dmSent, unlinked: unlinked.length });
   }
 
   // Each person hears only about their own profile, privately. A list of
