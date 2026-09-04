@@ -203,6 +203,9 @@ export default function ProductivityCalendarPage() {
   // is the same matching useRevisionByLogId uses when it has nothing better.
   // Powers the "shaded to actual time" overlay on each scheduled block.
   const [actualMinutesByKey, setActualMinutesByKey] = useState<Map<string, number>>(new Map());
+  // The log's own category, same key as actualMinutesByKey — an unattributed
+  // log has no task row to read a category from otherwise.
+  const [actualCategoryByKey, setActualCategoryByKey] = useState<Map<string, string | null>>(new Map());
   // Same overlay, but keyed by the specific task a log was actually stamped
   // against (assigned_tasks/[id]'s status-change route sets time_logs.
   // assigned_task_id when a task is started) — precise, unlike the name+account
@@ -1469,6 +1472,7 @@ export default function ProductivityCalendarPage() {
     (async () => {
       if (actualTimeVaIds.length === 0 || weekDates.length === 0) {
         setActualMinutesByKey(new Map());
+        setActualCategoryByKey(new Map());
         setActualMinutesByTaskId(new Map());
         setActualMinutesByVaDate(new Map());
         return;
@@ -1481,17 +1485,18 @@ export default function ProductivityCalendarPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from("time_logs")
-        .select("user_id, task_name, account, session_date, duration_ms, assigned_task_id")
+        .select("user_id, task_name, account, category, session_date, duration_ms, assigned_task_id")
         .in("user_id", actualTimeVaIds)
         .gte("session_date", rangeStart)
         .lte("session_date", rangeEnd)
         .is("deleted_at", null);
       if (cancelled) return;
       const byKey = new Map<string, number>();
+      const byKeyCategory = new Map<string, string | null>();
       const byTaskId = new Map<string, number>();
       const byVaDate = new Map<string, number>();
       for (const log of (data ?? []) as {
-        user_id: string; task_name: string | null; account: string | null;
+        user_id: string; task_name: string | null; account: string | null; category: string | null;
         session_date: string | null; duration_ms: number | null; assigned_task_id: number | null;
       }[]) {
         if (!log.session_date) continue;
@@ -1510,8 +1515,16 @@ export default function ProductivityCalendarPage() {
         }
         const key = actualMatchKey(log.user_id, log.session_date, log.task_name, log.account);
         byKey.set(key, (byKey.get(key) ?? 0) + minutes);
+        // Carries the log's own category through for unattributed entries
+        // (no assigned_task_id, so there's no task row to read a category
+        // from) — used so "worked, not on plan" can still fill with that
+        // category's real color instead of falling back to the no-category
+        // gray, e.g. Clock In (Planning) or Break keeping their own legend
+        // color rather than reading as an undifferentiated "Task".
+        if (!byKeyCategory.has(key)) byKeyCategory.set(key, log.category ?? null);
       }
       setActualMinutesByKey(byKey);
+      setActualCategoryByKey(byKeyCategory);
       setActualMinutesByTaskId(byTaskId);
       setActualMinutesByVaDate(byVaDate);
     })();
@@ -1707,7 +1720,7 @@ export default function ProductivityCalendarPage() {
         taskId: null,
         name: titleCase(nameLower || "Unknown task"),
         account: accountLower ? titleCase(accountLower) : null,
-        category: null,
+        category: actualCategoryByKey.get(matchKey) ?? null,
         minutes,
         plannedMinutes: null,
         moved: false,
