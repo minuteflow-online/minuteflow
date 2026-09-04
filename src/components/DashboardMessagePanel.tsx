@@ -96,7 +96,10 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [activeConv, setActiveConv] = useState<Conversation | null>(null);
   const [dms, setDms] = useState<DM[]>([]);
   const [dmText, setDmText] = useState("");
+  // team excludes you, because the DM picker should not offer you yourself.
+  // Avatars need everyone including you, or your own posts render as "?".
   const [team, setTeam] = useState<Member[]>([]);
+  const [allMembers, setAllMembers] = useState<Member[]>([]);
   const [composingChat, setComposingChat] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [groupTitle, setGroupTitle] = useState("");
@@ -104,7 +107,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const dmEndRef = useRef<HTMLDivElement>(null);
 
   const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
-  const memberById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
+  const memberById = useMemo(() => new Map(allMembers.map((m) => [m.id, m])), [allMembers]);
 
   /** Everyone who has said something in a topic: its author, then repliers. */
   const participantsOf = (t: Thread) => {
@@ -298,7 +301,14 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
     return () => clearInterval(t);
   }, [tab, loadConvs]);
   useEffect(() => {
-    fetch("/api/team-members", { cache: "no-store" }).then((r) => r.json()).then((d) => setTeam(((d.members ?? []) as Member[]).filter((m) => m.id !== currentUserId))).catch(() => {});
+    fetch("/api/team-members", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        const members = (d.members ?? []) as Member[];
+        setAllMembers(members);
+        setTeam(members.filter((m) => m.id !== currentUserId));
+      })
+      .catch(() => {});
   }, [currentUserId]);
 
   const openConv = useCallback(async (c: Conversation) => {
@@ -355,14 +365,14 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const hasNewComments = notifs.some((n) => !n.read);
 
   return (
-    <div className="rounded-xl border border-amber/30 bg-amber-soft/40 shadow-sm flex flex-col h-[520px] overflow-hidden">
-      <div className="px-3 py-2.5 border-b border-amber/20 bg-amber-soft/70">
+    <div className="rounded-xl border border-amber/30 bg-amber-soft/25 shadow-sm flex flex-col h-[520px] overflow-hidden">
+      <div className="px-3 py-2.5 border-b border-amber/20 bg-amber-soft/50">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Messages</h3>
       </div>
       <div className="flex items-center gap-1 px-2 pt-2">
         {([["general", "General"], ["personal", "Personal"], ["comments", "Comments"]] as [Tab, string][]).map(([k, label]) => (
           <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setComposingChat(false); }}
-            className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-amber text-white" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
+            className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
             {label}
             {k === "personal" && unreadTotal > 0 && <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-terracotta text-white text-[8px] align-middle">{unreadTotal}</span>}
             {k === "comments" && hasNewComments && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-terracotta align-middle" />}
@@ -436,7 +446,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                     className={`${input} resize-none w-full`}
                   />
                 </div>
-                <button type="button" onClick={() => void submitReply()} disabled={!reply.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 disabled:opacity-50 shrink-0">Send</button>
+                <button type="button" onClick={() => void submitReply()} disabled={!reply.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
           ) : (
@@ -472,7 +482,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                       type="button"
                       onClick={() => void createTopic()}
                       disabled={sending || !topicTitle.trim() || !topicBody.trim()}
-                      className="px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 disabled:opacity-50"
+                      className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50"
                     >
                       Post
                     </button>
@@ -485,7 +495,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 <button
                   type="button"
                   onClick={() => setComposingTopic(true)}
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 transition-colors disabled:opacity-50"
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 transition-colors disabled:opacity-50"
                 >
                   + New topic
                 </button>
@@ -543,7 +553,12 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                         {/* Who is in this conversation, at a glance. */}
                         <span className="flex -space-x-1">
                           {participantsOf(t).slice(0, 3).map((id) => (
-                            <Avatar key={id} member={memberById.get(id)} size={16} />
+                            <Avatar
+                              key={id}
+                              member={memberById.get(id)}
+                              name={(t.comments ?? []).find((c) => c.author_id === id)?.author}
+                              size={16}
+                            />
                           ))}
                         </span>
                         {t.comment_count > 0 && <span className="text-[10px] text-stone">{t.comment_count}</span>}
@@ -567,7 +582,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-0.5">
                 {dms.length === 0 && <p className="text-[11px] text-walnut">No messages yet — say hi.</p>}
                 {dms.map((m) => (
-                  <div key={m.id} className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "ml-auto bg-amber text-white" : "bg-parchment text-espresso"}`}>
+                  <div key={m.id} className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "ml-auto bg-amber-soft text-espresso border border-amber/20" : "bg-parchment text-espresso"}`}>
                     {activeConv.is_group && !m.mine && <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>}
                     <p className="whitespace-pre-wrap">{m.body}</p>
                     <p className={`mt-0.5 text-[9px] ${m.mine ? "text-white/70" : "text-bark"}`}>{ago(m.created_at)} ago</p>
@@ -577,7 +592,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               </div>
               <div className="flex items-end gap-1.5">
                 <textarea value={dmText} onChange={(e) => setDmText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDm(); } }} rows={1} placeholder="Message…" className={`${input} resize-none flex-1`} />
-                <button type="button" onClick={() => void sendDm()} disabled={sending || !dmText.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 disabled:opacity-50 shrink-0">Send</button>
+                <button type="button" onClick={() => void sendDm()} disabled={sending || !dmText.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
           ) : composingChat ? (
@@ -593,7 +608,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 ))}
               </div>
               {picked.size > 1 && <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} placeholder="Group name (optional)" className={input} />}
-              <button type="button" onClick={() => void startChat()} disabled={sending || picked.size === 0} className="w-full px-3 py-1.5 rounded-lg bg-amber text-white text-[12px] font-semibold hover:bg-amber/90 disabled:opacity-50">{picked.size > 1 ? "Start group chat" : "Start chat"}</button>
+              <button type="button" onClick={() => void startChat()} disabled={sending || picked.size === 0} className="w-full px-3 py-1.5 rounded-lg bg-amber-soft text-amber text-[12px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50">{picked.size > 1 ? "Start group chat" : "Start chat"}</button>
             </div>
           ) : (
             <div className="space-y-2">
