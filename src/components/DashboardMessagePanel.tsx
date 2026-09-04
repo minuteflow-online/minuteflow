@@ -46,6 +46,11 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [topicTitle, setTopicTitle] = useState("");
   const [topicBody, setTopicBody] = useState("");
   const [busyThread, setBusyThread] = useState<number | null>(null);
+  // Trashed topics are hidden from everyone; an admin can read them back here
+  // and put one returned. The endpoint answers with isAdmin so the Trash option
+  // is simply absent for everyone else.
+  const [trashed, setTrashed] = useState<Thread[]>([]);
+  const [canSeeTrash, setCanSeeTrash] = useState(false);
 
   // ── Comments feed ──────────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<Notif[]>([]);
@@ -78,6 +83,30 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
       );
     });
   }, [threads, search, projectFilter, projectName]);
+
+  useEffect(() => {
+    fetch("/api/project-messages/trash", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        setCanSeeTrash(Boolean(d.isAdmin));
+        setTrashed((d.messages ?? []) as Thread[]);
+      })
+      .catch(() => {});
+  }, [reloadKey]);
+
+  const restoreThread = useCallback(async (t: Thread) => {
+    setBusyThread(t.id);
+    try {
+      const r = await fetch("/api/project-messages/trash", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: t.id }),
+      });
+      if (r.ok) setReloadKey((k) => k + 1);
+    } finally {
+      setBusyThread(null);
+    }
+  }, []);
 
   const createTopic = useCallback(async () => {
     if (!topicProject || !topicTitle.trim() || !topicBody.trim()) return;
@@ -332,10 +361,35 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                   {projects.map((pr) => (
                     <option key={pr.id} value={pr.id}>{pr.name}</option>
                   ))}
+                  {canSeeTrash && <option value="__trash">Trash ({trashed.length})</option>}
                 </select>
               </div>
 
-              {gLoading ? <p className="text-[12px] text-stone px-1">Loading…</p> : threads.length === 0 ? <p className="text-[12px] text-walnut px-1">No threads yet.</p> : visibleThreads.length === 0 ? <p className="text-[12px] text-walnut px-1">Nothing matches that.</p> : (
+              {projectFilter === "__trash" ? (
+                trashed.length === 0 ? (
+                  <p className="text-[12px] text-walnut px-1">Nothing in the trash.</p>
+                ) : (
+                  trashed.map((t) => (
+                    <div key={t.id} className="rounded-lg border border-sand bg-parchment/30 px-2.5 py-2">
+                      <p className="text-[12px] font-semibold text-espresso truncate">{t.title || "Untitled"}</p>
+                      {t.body && <p className="text-[11px] text-walnut line-clamp-2 whitespace-pre-wrap">{t.body}</p>}
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-bark truncate">
+                          {projectName.get(t.project_id) ?? "Project"} · trashed
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void restoreThread(t)}
+                          disabled={busyThread === t.id}
+                          className="shrink-0 px-2 py-0.5 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20 disabled:opacity-50"
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )
+              ) : gLoading ? <p className="text-[12px] text-stone px-1">Loading…</p> : threads.length === 0 ? <p className="text-[12px] text-walnut px-1">No threads yet.</p> : visibleThreads.length === 0 ? <p className="text-[12px] text-walnut px-1">Nothing matches that.</p> : (
                 visibleThreads.map((t) => (
                   <button key={t.id} type="button" onClick={() => setActiveThread(t)} className="w-full text-left rounded-lg border border-sand bg-white px-2.5 py-2 hover:bg-cream transition-colors">
                     <span className="flex items-center justify-between gap-2">
