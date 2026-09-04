@@ -575,11 +575,30 @@ ${existingText}` : addition;
   try {
     const todayStr = new Date().toISOString().slice(0, 10);
     const saved = templates[0] as unknown as { is_active: boolean; paused_until: string | null };
+    // Whether this save touched a field that decides WHICH dates the
+    // template lands on (not just what an occurrence says once it exists).
+    const scheduleFieldsChanged =
+      body.start_date !== undefined ||
+      body.recurrence_type !== undefined ||
+      body.repeat_until !== undefined ||
+      body.end_date !== undefined ||
+      body.due_time !== undefined;
     if (saved.is_active === false) {
       // A pause has to take the dates back off the calendar too. Stopping
       // future generation alone would change nothing anyone can see, because
       // the next two months were already written when the template was saved.
       await clearPausedWindow(serviceClient(), id, todayStr, saved.paused_until ?? null);
+    } else if (scheduleFieldsChanged) {
+      // Moving the start date (or the recurrence pattern, or the end of it)
+      // invalidates whatever was already generated under the old one — the
+      // calendar otherwise keeps showing the stale dates forever, since
+      // generateOccurrences below only ever fills in what's missing, never
+      // what no longer matches. Not-yet-started occurrences are pure
+      // placeholders with nothing done on them, so they're cleared here and
+      // rebuilt fresh from what the template says now. Anything started,
+      // submitted, or otherwise touched is left alone — same rule as pausing
+      // or deleting a template.
+      await clearPausedWindow(serviceClient(), id, todayStr, null);
     }
     // Runs even while paused: fallsOn skips every date inside the pause window,
     // so this only fills in the ones after it ends — and on Resume it puts the

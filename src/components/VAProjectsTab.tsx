@@ -1471,12 +1471,19 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         {names}
                       </span>
                     )}
-                    {sub.created_at && (
+                    {/* Used to repeat the assignee's name a second time here
+                        (the creator, which is almost always the same person as
+                        `names` above) next to the created date — a recurring
+                        task Shem made for himself read as "Shem Delgado Shem
+                        Delgado". The due/start date is the thing worth a
+                        second glance at a distance; the name already is one. */}
+                    {(sub.due_date || sub.start_date || sub.created_at) && (
                       <span className="text-[11px] text-bark shrink-0 hidden lg:block">
-                        {sub.created_by_profile?.full_name || sub.created_by_profile?.username
-                          ? `${sub.created_by_profile.full_name || sub.created_by_profile.username} · `
-                          : ""}
-                        {formatDate(sub.created_at)}
+                        {sub.due_date
+                          ? `Due ${formatDate(sub.due_date)}`
+                          : sub.start_date
+                          ? `Starts ${formatDate(sub.start_date)}`
+                          : formatDate(sub.created_at)}
                       </span>
                     )}
                     {sub.pay_type && (
