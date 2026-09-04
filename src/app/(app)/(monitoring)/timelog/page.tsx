@@ -509,28 +509,39 @@ export default function TimeLogPage() {
     Object.values(screenshots).forEach((arr) => allScreenshots.push(...arr));
     if (allScreenshots.length === 0) return;
 
-    const missing = allScreenshots.filter((s) => !signedUrls[s.id]);
+    // Markers (screenshot_type "failed") never have an image — drive_file_id
+    // is always null for one, by design. Without this exclusion every marker
+    // on the page fell into the Supabase Storage fallback below, which
+    // targets a "screenshots" bucket that doesn't exist. On a busy day with
+    // many markers, that queued dozens of doomed calls ahead of the real
+    // screenshots' URLs in the one batched loop below — and since state only
+    // committed once, at the very end, real screenshots that resolved
+    // instantly stayed invisible until every marker's guaranteed-failing call
+    // finished too.
+    const missing = allScreenshots.filter((s) => !signedUrls[s.id] && s.screenshot_type !== "failed");
     if (missing.length === 0) return;
 
     async function generateUrls() {
       const supabase = createClient();
-      const newUrls: Record<number, string> = { ...signedUrls };
+      // Tracked separately and merged via a functional update at the end,
+      // rather than overwriting signedUrls from a snapshot this closure
+      // captured — the same fix as the Admin gallery's equivalent effect,
+      // applied here for the same reason: a second run (e.g. from paging to
+      // another day) must not erase what an earlier run already resolved.
+      const resolved: Record<number, string> = {};
 
       // Screenshots already synced to Drive — use public Drive URL (no Supabase hit)
       const driveReady = missing.filter((s) => s.drive_file_id);
       driveReady.forEach((ss) => {
-        newUrls[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
+        resolved[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
       });
 
-      // Screenshots not yet synced — fall back to Supabase signed URL
+      // Legacy rows predating the Drive-only migration — fall back to Supabase signed URL
       const needSigned = missing.filter((s) => !s.drive_file_id);
       for (let i = 0; i < needSigned.length; i += 20) {
         const batch = needSigned.slice(i, i + 20);
         const results = await Promise.all(
           batch.map(async (ss) => {
-            if (ss.drive_file_id) {
-              return { id: ss.id, url: `/api/drive-image?id=${ss.drive_file_id}` };
-            }
             const { data } = await supabase.storage
               .from("screenshots")
               .createSignedUrl(ss.storage_path, 3600);
@@ -538,10 +549,10 @@ export default function TimeLogPage() {
           })
         );
         results.forEach((r) => {
-          if (r.url) newUrls[r.id] = r.url;
+          if (r.url) resolved[r.id] = r.url;
         });
       }
-      setSignedUrls(newUrls);
+      setSignedUrls((prev) => ({ ...prev, ...resolved }));
     }
     generateUrls();
     // eslint-disable-next-line react-hooks/exhaustive-deps
