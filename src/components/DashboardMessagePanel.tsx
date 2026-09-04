@@ -441,7 +441,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
           aria-label={expanded ? "Close expanded messages" : "Expand messages"}
           className="text-[12px] leading-none text-bark hover:text-espresso transition-colors px-1"
         >
-          {expanded ? "\u2715" : "\u2921"}
+          {expanded ? "\u2715" : "\u2922"}
         </button>
       </div>
       <div className="flex items-center gap-1 px-2 pt-2">
