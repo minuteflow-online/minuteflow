@@ -33,7 +33,7 @@ interface TaskWidgetsTabsProps {
 }
 
 const TAB_LABELS: Record<Tab, string> = {
-  log: "Log a Task",
+  log: "Log an Activity",
   assigned: "Assigned Tasks",
   budget: "Budget and Limit",
 };
