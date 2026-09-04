@@ -162,13 +162,16 @@ export default function JobOrdersSection({
             <span className="min-w-0">
               <span className="block text-[13px] font-semibold text-espresso leading-tight truncate">{o.title}</span>
               {/* Respond by leads the line — it's the one thing that expires,
-                  so it shouldn't take expanding the row to see. Only shown
-                  while there's still a response to give. */}
+                  so it shouldn't take expanding the row to see. Shown
+                  (with a "—" fallback, same convention the expanded detail
+                  table already uses) for the whole time there's still a
+                  response to give, set or not — an order with no deadline
+                  should say so rather than silently having no line at all. */}
               <span className="block text-[11px] text-stone/80 truncate">
-                {o.respond_by && o.status === "offered" && (
+                {o.status === "offered" && (
                   <span className="font-semibold text-terracotta">Respond by {fmtDate(o.respond_by)}</span>
                 )}
-                {o.respond_by && o.status === "offered" && (o.account || o.type || o.deadline || o.rate != null) ? " · " : ""}
+                {o.status === "offered" && (o.account || o.type || o.deadline || o.rate != null) ? " · " : ""}
                 {[o.account, o.type === "adhoc" ? "Adhoc" : o.type].filter(Boolean).join(" · ")}
                 {o.deadline ? ` · Due ${fmtDate(o.deadline)}` : ""}
                 {o.rate != null ? ` · $${o.rate}` : ""}
