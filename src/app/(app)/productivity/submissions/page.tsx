@@ -1577,8 +1577,10 @@ function SubmissionEntry({
         )}
       </div>
 
+      {/* Capped with its own scroll: a write-up can run to twenty lines, and at
+          full height one entry pushes every other submission off the screen. */}
       {item.submission_comment && (
-        <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-snug text-espresso">
+        <p className="mt-1.5 max-h-44 overflow-y-auto whitespace-pre-wrap pr-1 text-[12px] leading-snug text-espresso">
           {item.submission_comment}
         </p>
       )}
