@@ -1,8 +1,8 @@
 "use client";
 
 // The dashboard's message inbox (under Quick Pick). Three tabs:
-//  • General  — objective + operation message boards, merged, read + reply here.
-//               New threads are started from the Objective/Operation page.
+//  • General  — objective + operation message boards, merged. Start a topic,
+//               search and filter them, read, reply, and bin one here.
 //  • Personal — direct messages and group chats (conversations + direct_messages).
 //  • Comments — the in-app notification feed (the `messages` table the bell reads):
 //               submission comments, @mentions, job orders, and new DMs.
@@ -39,6 +39,18 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [gLoading, setGLoading] = useState(true);
   const [activeThread, setActiveThread] = useState<Thread | null>(null);
   const [reply, setReply] = useState("");
+  const [search, setSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
+  const [composingTopic, setComposingTopic] = useState(false);
+  const [topicProject, setTopicProject] = useState("");
+  const [topicTitle, setTopicTitle] = useState("");
+  const [topicBody, setTopicBody] = useState("");
+  const [busyThread, setBusyThread] = useState<number | null>(null);
+  // Trashed topics are hidden from everyone; an admin can read them back here
+  // and put one returned. The endpoint answers with isAdmin so the Trash option
+  // is simply absent for everyone else.
+  const [trashed, setTrashed] = useState<Thread[]>([]);
+  const [canSeeTrash, setCanSeeTrash] = useState(false);
 
   // ── Comments feed ──────────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<Notif[]>([]);
@@ -56,6 +68,85 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const dmEndRef = useRef<HTMLDivElement>(null);
 
   const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
+
+  // Threads narrowed by the search box and the project dropdown. Matching on
+  // title, body and project name, so typing an objective name finds its topics.
+  const visibleThreads = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return threads.filter((t) => {
+      if (projectFilter !== "all" && t.project_id !== projectFilter) return false;
+      if (!q) return true;
+      return (
+        (t.title ?? "").toLowerCase().includes(q) ||
+        (t.body ?? "").toLowerCase().includes(q) ||
+        (projectName.get(t.project_id) ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [threads, search, projectFilter, projectName]);
+
+  useEffect(() => {
+    fetch("/api/project-messages/trash", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        setCanSeeTrash(Boolean(d.isAdmin));
+        setTrashed((d.messages ?? []) as Thread[]);
+      })
+      .catch(() => {});
+  }, [reloadKey]);
+
+  const restoreThread = useCallback(async (t: Thread) => {
+    setBusyThread(t.id);
+    try {
+      const r = await fetch("/api/project-messages/trash", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: t.id }),
+      });
+      if (r.ok) setReloadKey((k) => k + 1);
+    } finally {
+      setBusyThread(null);
+    }
+  }, []);
+
+  const createTopic = useCallback(async () => {
+    if (!topicProject || !topicTitle.trim() || !topicBody.trim()) return;
+    setSending(true);
+    try {
+      const r = await fetch("/api/project-messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: topicProject, title: topicTitle.trim(), body: topicBody.trim() }),
+      });
+      if (r.ok) {
+        setComposingTopic(false);
+        setTopicTitle("");
+        setTopicBody("");
+        setReloadKey((k) => k + 1);
+      }
+    } finally {
+      setSending(false);
+    }
+  }, [topicProject, topicTitle, topicBody]);
+
+  // Soft delete: the route stamps deleted_at, so the topic leaves every list
+  // without the replies underneath it being destroyed. Author or admin only,
+  // enforced server-side.
+  const trashThread = useCallback(
+    async (t: Thread) => {
+      if (!confirm(`Move "${t.title || "Untitled"}" to trash?\n\nIt disappears from Messages. Replies are kept.`)) return;
+      setBusyThread(t.id);
+      try {
+        const r = await fetch(`/api/project-messages?id=${t.id}`, { method: "DELETE" });
+        if (r.ok) {
+          setActiveThread(null);
+          setReloadKey((k) => k + 1);
+        }
+      } finally {
+        setBusyThread(null);
+      }
+    },
+    []
+  );
 
   // General: objectives + operations and their threads.
   useEffect(() => {
@@ -194,7 +285,17 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
           /* ── General ── */
           activeThread ? (
             <div className="flex flex-col gap-2">
-              <button type="button" onClick={() => setActiveThread(null)} className="text-[10px] font-semibold text-slate-blue hover:underline self-start">← Back</button>
+              <div className="flex items-center justify-between">
+                <button type="button" onClick={() => setActiveThread(null)} className="text-[10px] font-semibold text-slate-blue hover:underline">← Back</button>
+                <button
+                  type="button"
+                  onClick={() => void trashThread(activeThread)}
+                  disabled={busyThread === activeThread.id}
+                  className="text-[10px] font-semibold text-bark hover:text-terracotta transition-colors disabled:opacity-50"
+                >
+                  Trash
+                </button>
+              </div>
               <div className="rounded-lg border border-sand bg-cream/40 p-2.5">
                 <p className="text-[12px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
                 {activeThread.body && <p className="mt-1 text-[11px] text-espresso whitespace-pre-wrap">{activeThread.body}</p>}
@@ -213,9 +314,83 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
             </div>
           ) : (
             <div className="space-y-2">
-              <p className="text-[10px] text-stone/80 bg-parchment/50 rounded-lg px-2 py-1.5">Start a thread from an Objective or Operation. New posts and replies land here.</p>
-              {gLoading ? <p className="text-[12px] text-stone px-1">Loading…</p> : threads.length === 0 ? <p className="text-[12px] text-walnut px-1">No threads yet.</p> : (
-                threads.map((t) => (
+              {composingTopic ? (
+                <div className="rounded-lg border border-sand bg-cream/40 p-2.5 space-y-1.5">
+                  <select value={topicProject} onChange={(e) => setTopicProject(e.target.value)} className={input}>
+                    <option value="">Objective or Operation…</option>
+                    {projects.map((pr) => (
+                      <option key={pr.id} value={pr.id}>{pr.name}</option>
+                    ))}
+                  </select>
+                  <input value={topicTitle} onChange={(e) => setTopicTitle(e.target.value)} placeholder="Topic" className={input} />
+                  <textarea value={topicBody} onChange={(e) => setTopicBody(e.target.value)} rows={3} placeholder="What is this about?" className={`${input} resize-none`} />
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void createTopic()}
+                      disabled={sending || !topicProject || !topicTitle.trim() || !topicBody.trim()}
+                      className="px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50"
+                    >
+                      Post
+                    </button>
+                    <button type="button" onClick={() => setComposingTopic(false)} className="px-2.5 py-1.5 rounded-lg bg-stone/10 text-stone text-[11px] font-semibold hover:bg-stone/20">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setComposingTopic(true); setTopicProject(projects[0]?.id ?? ""); }}
+                  disabled={projects.length === 0}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                >
+                  + New topic
+                </button>
+              )}
+
+              <div className="flex gap-1.5">
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search topics…"
+                  className={`${input} flex-1`}
+                />
+                <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className={`${input} w-[38%]`}>
+                  <option value="all">All topics</option>
+                  {projects.map((pr) => (
+                    <option key={pr.id} value={pr.id}>{pr.name}</option>
+                  ))}
+                  {canSeeTrash && <option value="__trash">Trash ({trashed.length})</option>}
+                </select>
+              </div>
+
+              {projectFilter === "__trash" ? (
+                trashed.length === 0 ? (
+                  <p className="text-[12px] text-walnut px-1">Nothing in the trash.</p>
+                ) : (
+                  trashed.map((t) => (
+                    <div key={t.id} className="rounded-lg border border-sand bg-parchment/30 px-2.5 py-2">
+                      <p className="text-[12px] font-semibold text-espresso truncate">{t.title || "Untitled"}</p>
+                      {t.body && <p className="text-[11px] text-walnut line-clamp-2 whitespace-pre-wrap">{t.body}</p>}
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-bark truncate">
+                          {projectName.get(t.project_id) ?? "Project"} · trashed
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void restoreThread(t)}
+                          disabled={busyThread === t.id}
+                          className="shrink-0 px-2 py-0.5 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20 disabled:opacity-50"
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )
+              ) : gLoading ? <p className="text-[12px] text-stone px-1">Loading…</p> : threads.length === 0 ? <p className="text-[12px] text-walnut px-1">No threads yet.</p> : visibleThreads.length === 0 ? <p className="text-[12px] text-walnut px-1">Nothing matches that.</p> : (
+                visibleThreads.map((t) => (
                   <button key={t.id} type="button" onClick={() => setActiveThread(t)} className="w-full text-left rounded-lg border border-sand bg-white px-2.5 py-2 hover:bg-cream transition-colors">
                     <span className="flex items-center justify-between gap-2">
                       <span className="text-[12px] font-semibold text-espresso truncate">{t.title || "Untitled"}</span>
