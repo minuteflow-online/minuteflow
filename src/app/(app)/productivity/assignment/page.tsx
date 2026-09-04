@@ -22,7 +22,7 @@ import TeamWorkloadView from "@/components/TeamWorkloadView";
 import ObjectiveProgressView from "@/components/ObjectiveProgressView";
 import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
-import { CATEGORY_OPTIONS, collapseRecurringSeriesBy, DUE_DATE_FINISHED_STATUSES } from "@/lib/taskSchedule";
+import { CATEGORY_OPTIONS, collapseRecurringSeriesBy, DUE_DATE_FINISHED_STATUSES, formatDueTime } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import RevisionBadge from "@/components/RevisionBadge";
 import RecurringBadge from "@/components/RecurringBadge";
@@ -134,6 +134,7 @@ type VATaskRow = {
     task_detail: string | null;
     task_notes: string | null;
     due_date: string | null;
+    due_time: string | null;
     start_date: string | null;
     start_time: string | null;
     end_time: string | null;
@@ -214,6 +215,7 @@ type AdminTaskFlat = {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  due_time: string | null;
   start_date: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -2810,6 +2812,15 @@ export default function TaskListPage() {
                                     <>
                                       {due.isOverdue ? "Overdue · " : ""}
                                       {due.label}
+                                      {/* A deadline with a time on it is a
+                                          different commitment from one due
+                                          "that day", and the column was
+                                          dropping the difference. */}
+                                      {detail.due_time && (
+                                        <span className="ml-1 text-[11px] font-normal text-stone">
+                                          {formatDueTime(detail.due_time)}
+                                        </span>
+                                      )}
                                     </>
                                   ) : (
                                     <span className="text-stone/30">—</span>
