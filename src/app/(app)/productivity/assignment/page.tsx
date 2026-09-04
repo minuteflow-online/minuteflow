@@ -1230,7 +1230,28 @@ export default function TaskListPage() {
         const vaName = task.profiles?.full_name || task.profiles?.username || "";
         if (!filterSubmittedBy.includes(vaName)) return false;
       }
-      if (taskNameSearchLower && !detail.task_name.toLowerCase().includes(taskNameSearchLower)) return false;
+      // Whole-row search — many of these tasks carry their real, descriptive
+      // title in Client Detail rather than Task Name (task_name is often just
+      // the project/category, e.g. "Promo Processing"), so a search that only
+      // checked task_name silently found nothing for those rows.
+      if (taskNameSearchLower) {
+        const haystack = [
+          detail.task_name,
+          detail.task_detail,
+          detail.task_notes,
+          detail.account,
+          detail.project,
+          detail.projects?.name,
+          detail.assigned_by_profile?.full_name,
+          detail.assigned_by_profile?.username,
+          task.profiles?.full_name,
+          task.profiles?.username,
+          task.status,
+        ]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(taskNameSearchLower));
+        if (!haystack) return false;
+      }
       if (filterDueDateMode === "has" && !dueTime) return false;
       if (filterDueDateMode === "none" && dueTime) return false;
       if (start && (!dueTime || dueTime < start.getTime())) return false;
@@ -2289,14 +2310,17 @@ export default function TaskListPage() {
 
                 <div className="flex items-center gap-2">
                   {/* Same taskNameSearch state the Task Name column header's
-                      own search already filters on — just a second, always-
-                      visible entry point next to Create Task instead of
-                      needing to open that column's popover to find it. */}
+                      own search box shares — matches against every visible
+                      field on the row (see filteredTasks below), not just
+                      the task name, since a task's real descriptive title
+                      often lives in Client Detail instead. Always-visible
+                      entry point next to Create Task, instead of needing to
+                      open that column's popover to find it. */}
                   <input
                     type="text"
                     value={taskNameSearch}
                     onChange={(e) => setTaskNameSearch(e.target.value)}
-                    placeholder="Search tasks..."
+                    placeholder="Search anything..."
                     className="w-48 rounded-lg border border-sand bg-white px-2 py-2 text-xs text-espresso outline-none placeholder:text-stone/60"
                   />
                   {taskView === "active" && activeView === "my_tasks" && (
@@ -2512,7 +2536,7 @@ export default function TaskListPage() {
                             searchable
                             searchValue={taskNameSearch}
                             onSearchChange={setTaskNameSearch}
-                            searchPlaceholder="Search task names..."
+                            searchPlaceholder="Search anything..."
                           />
                         )}
                         {!hiddenColumns.has("account") && (
