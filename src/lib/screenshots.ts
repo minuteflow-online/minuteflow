@@ -47,36 +47,48 @@ export async function fetchScreenshotsForLogs(
   return rows;
 }
 
-/** Just enough of a screenshot row to count and attribute it. */
-export type ScreenshotOwnerRow = Pick<TaskScreenshot, "id" | "user_id" | "created_at">;
+export type ScreenshotCountsByUser = {
+  total: number;
+  byUser: Record<string, number>;
+};
 
 /**
- * Owner rows for every screenshot captured in a date range, paged past the 1000-row
- * cap. Used where only counts matter — a week of team captures runs well past 1000,
- * so a single request would under-report.
+ * Screenshot counts (overall + per user) for a date range, without paging through
+ * every row. A wide range (a quarter, a year) can cover tens of thousands of rows —
+ * fetching and paginating the rows themselves to then just count them client-side
+ * turned "This Year" into dozens of sequential round trips. `count: "exact", head:
+ * true` gets Postgres to do the counting and only the number crosses the wire.
  */
-export async function fetchScreenshotOwnersInRange(
+export async function fetchScreenshotCountsInRange(
   supabase: SupabaseBrowserClient,
   startIso: string,
-  endIso: string
-): Promise<ScreenshotOwnerRow[]> {
-  const rows: ScreenshotOwnerRow[] = [];
+  endIso: string,
+  userIds: string[]
+): Promise<ScreenshotCountsByUser> {
+  const ids = Array.from(new Set(userIds));
 
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
+  const [totalRes, ...userResults] = await Promise.all([
+    supabase
       .from("task_screenshots")
-      .select("id, user_id, created_at")
+      .select("id", { count: "exact", head: true })
       .gte("created_at", startIso)
-      .lte("created_at", endIso)
-      .order("id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
+      .lte("created_at", endIso),
+    ...ids.map((uid) =>
+      supabase
+        .from("task_screenshots")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", uid)
+        .gte("created_at", startIso)
+        .lte("created_at", endIso)
+    ),
+  ]);
 
-    if (error || !data || data.length === 0) break;
-    rows.push(...(data as ScreenshotOwnerRow[]));
-    if (data.length < PAGE_SIZE) break;
-  }
+  const byUser: Record<string, number> = {};
+  ids.forEach((uid, i) => {
+    byUser[uid] = userResults[i].count ?? 0;
+  });
 
-  return rows;
+  return { total: totalRes.count ?? 0, byUser };
 }
 
 /**
