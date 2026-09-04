@@ -86,7 +86,9 @@ export default function JobOrdersSection({
   const admin = hasBroadAdminAccess(profile);
   const founder = isFounder(profile);
 
-  const [open, setOpen] = useState(true);
+  // Collapsed by default — the header badge carries the count and the soonest
+  // respond-by, so the section stays out of the way until you open it.
+  const [open, setOpen] = useState(false);
   const [orders, setOrders] = useState<JobOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
