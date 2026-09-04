@@ -285,26 +285,34 @@ export default function ActivityLog({
   const loadSignedUrls = useCallback(async () => {
     if (allVisibleScreenshots.length === 0) return;
     const supabase = createClient();
-    const missing = allVisibleScreenshots.filter((s) => !signedUrls[s.id]);
+    // Markers (screenshot_type "failed") never have an image — drive_file_id
+    // is always null for one, by design. Without this exclusion every marker
+    // fell into the Supabase Storage fallback below, which targets a
+    // "screenshots" bucket that doesn't exist — queuing guaranteed-failing
+    // calls ahead of real screenshots in the one batched loop, and since
+    // state only committed once at the end, real screenshots that resolved
+    // instantly stayed invisible until every marker's doomed call finished too.
+    const missing = allVisibleScreenshots.filter((s) => !signedUrls[s.id] && s.screenshot_type !== "failed");
     if (missing.length === 0) return;
 
-    const newUrls: Record<number, string> = { ...signedUrls };
+    // Tracked separately and merged via a functional update at the end,
+    // rather than overwriting signedUrls from the snapshot this closure
+    // captured — a second overlapping call must not erase what an earlier
+    // one already resolved.
+    const resolved: Record<number, string> = {};
 
     // Screenshots already synced to Drive — use public Drive URL directly (no Supabase hit)
     const driveReady = missing.filter((s) => s.drive_file_id);
     driveReady.forEach((ss) => {
-      newUrls[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
+      resolved[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
     });
 
-    // Screenshots not yet synced — fall back to Supabase signed URL
+    // Legacy rows predating the Drive-only migration — fall back to Supabase signed URL
     const needSigned = missing.filter((s) => !s.drive_file_id);
     for (let i = 0; i < needSigned.length; i += 20) {
       const batch = needSigned.slice(i, i + 20);
       const results = await Promise.all(
         batch.map(async (ss) => {
-          if (ss.drive_file_id) {
-            return { id: ss.id, url: `/api/drive-image?id=${ss.drive_file_id}` };
-          }
           const { data } = await supabase.storage
             .from("screenshots")
             .createSignedUrl(ss.storage_path, 3600);
@@ -312,10 +320,10 @@ export default function ActivityLog({
         })
       );
       results.forEach((r) => {
-        if (r.url) newUrls[r.id] = r.url;
+        if (r.url) resolved[r.id] = r.url;
       });
     }
-    setSignedUrls(newUrls);
+    setSignedUrls((prev) => ({ ...prev, ...resolved }));
   }, [allVisibleScreenshots, signedUrls]);
 
   const handleDeleteScreenshot = useCallback(

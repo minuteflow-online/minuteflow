@@ -797,6 +797,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     () => objectiveOptionsForAccount.find((p) => p.project_name === project)?.id,
     [objectiveOptionsForAccount, project]
   );
+  // Whether this session moved the task to a different account or project.
+  const [projectChanged, setProjectChanged] = useState(false);
+
   const taskOptionsForObjective = useMemo(
     () => (selectedObjectiveId ? tasksByProject[selectedObjectiveId] ?? [] : []),
     [tasksByProject, selectedObjectiveId]
@@ -805,8 +808,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // An existing task keeps its name as-is when the current objective’s task
   // list doesn’t contain it — there is nothing safe to preselect, and picking
   // something else from the list would silently retarget the task.
+  //
+  // Unless the account or project was just changed here. That is the one moment
+  // the name MUST change, and the old name is guaranteed not to be in the new
+  // list — so the lock fired exactly when it was most in the way, leaving a
+  // task stuck on a name belonging to a project it no longer sits in.
   const taskNameLocked =
-    isEditing && Boolean(taskName) && !taskOptionsForObjective.some((t) => t.task_name === taskName);
+    isEditing &&
+    !projectChanged &&
+    Boolean(taskName) &&
+    !taskOptionsForObjective.some((t) => t.task_name === taskName);
   const linkedObjectives = useMemo(() => linkedProjects.filter((p) => p.kind === "objective"), [linkedProjects]);
   const linkedOperations = useMemo(() => linkedProjects.filter((p) => p.kind === "operation"), [linkedProjects]);
   // Parents first with their children indented beneath, so the dropdown shows
@@ -1652,8 +1663,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               const value = e.target.value;
               setAccount(value);
               setProject("");
-              if (!isEditing) setTaskName("");
-              applyAutoCategory(value, "", isEditing ? taskName : "");
+              setProjectChanged(true);
+              setTaskName("");
+              applyAutoCategory(value, "", "");
             }}
             disabled={readOnly}
             className={inputClass}
@@ -1672,8 +1684,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             onChange={(e) => {
               const value = e.target.value;
               setProject(value);
-              if (!isEditing) setTaskName("");
-              applyAutoCategory(account, value, isEditing ? taskName : "");
+              setProjectChanged(true);
+              // Only clear a name the new project cannot offer; re-picking the
+              // same project should not wipe a valid choice.
+              const nextObjectiveId = objectiveOptionsForAccount.find((p) => p.project_name === value)?.id;
+              const stillValid = nextObjectiveId
+                ? (tasksByProject[nextObjectiveId] ?? []).some((t) => t.task_name === taskName)
+                : false;
+              if (!stillValid) setTaskName("");
+              applyAutoCategory(account, value, stillValid ? taskName : "");
             }}
             disabled={!account || readOnly}
             className={inputClass}

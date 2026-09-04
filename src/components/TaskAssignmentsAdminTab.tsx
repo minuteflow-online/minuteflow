@@ -709,7 +709,11 @@ export default function TaskAssignmentsAdminTab({
       setPanelScreenshots(screenshots);
 
       const signedUrls: Record<number, string> = {};
-      const missing = screenshots.filter((ss) => !ss.drive_file_id);
+      // Markers (screenshot_type "failed") never have an image — drive_file_id
+      // is always null for one, by design — so they must not be sent to the
+      // Supabase Storage fallback below, which targets a "screenshots" bucket
+      // that doesn't exist and can only ever fail for them.
+      const missing = screenshots.filter((ss) => !ss.drive_file_id && ss.screenshot_type !== "failed");
 
       screenshots.forEach((ss) => {
         if (ss.drive_file_id) {

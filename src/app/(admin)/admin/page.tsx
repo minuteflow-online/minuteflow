@@ -831,12 +831,21 @@ export default function AdminPage() {
       if (missing.length === 0) return;
 
       setLoadingUrls(true);
-      const newUrls: Record<number, string> = { ...screenshotUrls };
+      // Built fresh per run and merged in with a functional update at the end,
+      // rather than copying the screenshotUrls snapshot this closure captured.
+      // The realtime subscription above re-triggers this effect on every new
+      // screenshot insert — on a busy day that's constant, so overlapping runs
+      // are normal, not rare. Copying a stale snapshot meant whichever run
+      // finished last always won and silently erased every URL a faster,
+      // earlier run had already resolved — which is why real screenshots with
+      // a perfectly good drive_file_id sat on "Loading..." forever: they kept
+      // getting resolved, then un-resolved by the next run finishing after them.
+      const resolved: Record<number, string> = {};
 
       // Screenshots already synced to Drive — use public Drive URL (no Supabase hit)
       const driveReady = missing.filter((s) => s.drive_file_id);
       driveReady.forEach((ss) => {
-        newUrls[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
+        resolved[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
       });
 
       // Screenshots not yet synced — fall back to Supabase signed URL
@@ -852,11 +861,11 @@ export default function AdminPage() {
           })
         );
         results.forEach((r) => {
-          if (r.url) newUrls[r.id] = r.url;
+          if (r.url) resolved[r.id] = r.url;
         });
       }
 
-      setScreenshotUrls(newUrls);
+      setScreenshotUrls((prev) => ({ ...prev, ...resolved }));
       setLoadingUrls(false);
     }
 

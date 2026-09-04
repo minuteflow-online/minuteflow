@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import RecurringTemplatePanel from "@/components/RecurringTemplatePanel";
+import TaskDetailsView from "@/components/TaskDetailsView";
+import { orgWallClockToUtc } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import PauseTemplateDialog from "@/components/ui/PauseTemplateDialog";
@@ -295,6 +297,7 @@ export default function RecurringTemplatesManager({
     setNotice(null);
   }, []);
   const [pausing, setPausing] = useState<RecurringTaskTemplate | null>(null);
+  const [viewing, setViewing] = useState<RecurringTaskTemplate | null>(null);
 
   const setPaused = useCallback(
     async (template: RecurringTaskTemplate, pausedUntil: string | null) => {
@@ -593,6 +596,12 @@ export default function RecurringTemplatesManager({
                     <td className="px-3 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
+                          onClick={() => setViewing(template)}
+                          className="rounded-lg border border-sand px-3 py-1.5 text-[12px] text-walnut hover:border-walnut cursor-pointer"
+                        >
+                          View
+                        </button>
+                        <button
                           onClick={() => openEdit(template)}
                           className="rounded-lg border border-sand px-3 py-1.5 text-[12px] text-walnut hover:border-walnut cursor-pointer"
                         >
@@ -637,6 +646,65 @@ export default function RecurringTemplatesManager({
           }}
         />
       )}
+      {viewing && (
+        <div className="fixed inset-0 z-50 bg-black/40">
+          <div className="absolute inset-y-0 right-0 flex w-full justify-end">
+            <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-sand px-6 py-4">
+                <div>
+                  <h2 className="text-sm font-bold text-espresso">Recurring template</h2>
+                  <p className="text-[11px] text-stone">Everything on the template, and how often it repeats.</p>
+                </div>
+                <button onClick={() => setViewing(null)} className="text-stone hover:text-espresso cursor-pointer">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
+                {/* The same summary every other View uses, so a template reads
+                    like a task — every field listed, blanks shown as --. The
+                    clock times are re-anchored onto a date first for the same
+                    reason the editor does it (see RecurringTemplatePanel). */}
+                <TaskDetailsView
+                  task={{
+                    ...(viewing as unknown as Record<string, unknown>),
+                    task_name: viewing.title ?? viewing.task_name ?? "",
+                    task_detail: viewing.task_detail ?? viewing.description ?? "",
+                    start_time: viewing.start_time
+                      ? orgWallClockToUtc(viewing.start_date || new Date().toISOString().slice(0, 10), viewing.start_time)
+                      : null,
+                    end_time: viewing.end_time
+                      ? orgWallClockToUtc(viewing.start_date || new Date().toISOString().slice(0, 10), viewing.end_time)
+                      : null,
+                  } as Parameters<typeof TaskDetailsView>[0]["task"]}
+                  onEdit={() => { const t = viewing; setViewing(null); openEdit(t); }}
+                />
+
+                <dl className="divide-y divide-sand rounded-lg border border-sand overflow-hidden">
+                  {([
+                    ["Repeat", RECURRENCE_OPTIONS.find((o) => o.value === viewing.recurrence_type)?.label ?? viewing.recurrence_type],
+                    ["Repeat until", viewing.repeat_until ? formatDate(viewing.repeat_until, orgTimezone) : null],
+                    ["Paused until", viewing.paused_until ? formatDate(viewing.paused_until, orgTimezone) : null],
+                    ["State", viewing.is_active ? "Active" : "Paused"],
+                    ["Assigned to", displayAssignedTo(viewing, activeProfiles, profilesLoaded)],
+                  ] as [string, string | null | undefined][]).map(([label, value]) => (
+                    <div key={label} className="flex gap-3 px-3 py-1.5">
+                      <dt className="w-28 shrink-0 text-[10px] font-bold uppercase tracking-wide text-walnut">{label}</dt>
+                      <dd className={`min-w-0 flex-1 break-words text-[12px] ${value ? "text-espresso" : "text-stone/50"}`}>
+                        {value || "--"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pausing && (
         <PauseTemplateDialog
           templateName={pausing.title}
