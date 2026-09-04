@@ -12,6 +12,7 @@ import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled,
 import { reviewLinks, cheerApproval } from "@/lib/reviewLinks";
 import { submissionCheer } from "@/lib/submissionCheer";
 import { notifyRecipients } from "@/lib/notifyRecipients";
+import { notifyOne } from "@/lib/notifyOne";
 import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -519,6 +520,31 @@ export async function POST(request: Request, { params }: RouteContext) {
       telegramMessage: `📤 <b>New submission</b> from ${esc(submitter)}\n\nTask: ${esc(task.task_name ?? "a task")}`,
       topic: "submissions",
     });
+  }
+
+  // A note/comment on the thread notifies everyone involved in the task — the
+  // assignee(s) and the creator — except whoever wrote it, so a comment doesn't
+  // sit unseen. Bell + Telegram, best-effort.
+  if (messageType === "comment") {
+    const { data: cProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
+    const commenter = cProf?.full_name || cProf?.username || "Someone";
+    const [{ data: assignees }, { data: taskRow }] = await Promise.all([
+      admin.from("assigned_task_assignees").select("va_id").eq("assigned_task_id", id),
+      admin.from("assigned_tasks").select("created_by").eq("id", id).single(),
+    ]);
+    const targets = new Set<string>();
+    for (const a of assignees ?? []) if (a.va_id && a.va_id !== user.id) targets.add(a.va_id as string);
+    if (taskRow?.created_by && taskRow.created_by !== user.id) targets.add(taskRow.created_by as string);
+    const snippet = message && message.length > 160 ? `${message.slice(0, 160)}…` : (message || "");
+    for (const target of targets) {
+      await notifyOne(admin, {
+        targetUserId: target,
+        senderId: user.id,
+        content: `${commenter} commented on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
+        telegram: `💬 <b>${esc(commenter)}</b> commented on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
+        topic: "submissions",
+      });
+    }
   }
 
   if (messageType === "submission" && telegramEnabled("submissions")) {
