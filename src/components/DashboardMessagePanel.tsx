@@ -447,14 +447,17 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 </button>
               )}
 
-              <div className="flex gap-1.5">
+              {/* Stacked, not side by side: the select is as wide as its
+                  longest topic title, which in this column left the search box
+                  a few pixels wide. */}
+              <div className="space-y-1.5">
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search topics…"
-                  className={`${input} flex-1`}
+                  className={`${input} w-full`}
                 />
-                <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className={`${input} w-[38%]`}>
+                <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className={`${input} w-full`}>
                   <option value="all">All topics</option>
                   {topicTitles.map((t) => (
                     <option key={t} value={t}>{t}</option>
