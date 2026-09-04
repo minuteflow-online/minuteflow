@@ -2232,12 +2232,12 @@ export default function ProductivityCalendarPage() {
                         if (task) void openScheduleExisting(task, dateStr);
                       }}
                       title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged, not scheduled this day`}
-                      className={`w-full overflow-hidden rounded-md border-2 border-blue-500 bg-blue-50 px-1.5 py-1 text-left shadow-sm ${
+                      className={`w-full overflow-hidden rounded-md border-2 border-plum bg-plum-soft px-1.5 py-1 text-left shadow-sm ${
                         item.taskId == null ? "cursor-default" : "cursor-pointer hover:opacity-90"
                       }`}
                     >
-                      <p className="truncate text-[11px] font-semibold text-blue-700">{item.name}</p>
-                      <p className="truncate text-[9px] text-blue-600/80">
+                      <p className="truncate text-[11px] font-semibold text-plum">{item.name}</p>
+                      <p className="truncate text-[9px] text-plum/80">
                         {[item.account, formatDuration(item.minutes)].filter(Boolean).join(" | ")} · not on plan
                       </p>
                     </button>
@@ -3381,7 +3381,7 @@ export default function ProductivityCalendarPage() {
                   if (unscheduled.length === 0) return null;
                   return (
                   <div className="space-y-1.5 border-t border-sand p-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-plum">
                       Worked, not on this day&apos;s plan
                     </p>
                     {unscheduled.map((item) => (
@@ -3395,17 +3395,17 @@ export default function ProductivityCalendarPage() {
                           if (task) void openScheduleExisting(task, selectedDate);
                         }}
                         title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged today, not scheduled today`}
-                        className={`flex w-full items-center justify-between gap-3 rounded-md border-2 border-blue-500 bg-blue-50 px-2 py-1.5 text-left shadow-sm transition-opacity ${
+                        className={`flex w-full items-center justify-between gap-3 rounded-md border-2 border-plum bg-plum-soft px-2 py-1.5 text-left shadow-sm transition-opacity ${
                           item.taskId == null ? "cursor-default" : "hover:opacity-90 cursor-pointer"
                         }`}
                       >
                         <span className="min-w-0">
-                          <span className="block truncate text-[13px] font-semibold text-blue-700">{item.name}</span>
-                          <span className="block truncate text-[10px] text-blue-600/80">
+                          <span className="block truncate text-[13px] font-semibold text-plum">{item.name}</span>
+                          <span className="block truncate text-[10px] text-plum/80">
                             {item.account ?? "—"} · scheduled on a different day
                           </span>
                         </span>
-                        <span className="shrink-0 text-right text-[12px] font-semibold text-blue-700">
+                        <span className="shrink-0 text-right text-[12px] font-semibold text-plum">
                           {formatDuration(item.minutes)}
                         </span>
                       </button>
