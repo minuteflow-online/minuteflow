@@ -19,8 +19,10 @@ async function requireUser() {
 /**
  * PATCH /api/job-orders/[id]
  * body: { action: "accept" | "decline" | "set_rate" | "cancel", ... }
- *  - accept  : offeree only. Materializes the order into a real subtask and
- *              flips status to accepted.
+ *  - accept  : offeree only. Links the real task they already built in
+ *              TaskEditor (task_id, required) and flips status to accepted —
+ *              the task itself is created client-side now, not here; see
+ *              JobOrdersSection's AcceptJobOrderPanel.
  *  - decline : offeree only. status → declined, with a reason, back to creator.
  *  - set_rate: Founder only. Attach/adjust the money.
  *  - cancel  : creator/admin. status → expired (pull a still-offered order).
@@ -36,7 +38,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   if (readErr) return Response.json({ error: readErr.message }, { status: 500 });
   if (!order) return Response.json({ error: "Job order not found" }, { status: 404 });
 
-  const body = (await request.json()) as { action?: string; reason?: string; rate?: number; task_title?: string; project?: string; fields?: Record<string, unknown> };
+  const body = (await request.json()) as { action?: string; reason?: string; rate?: number; task_id?: number; fields?: Record<string, unknown> };
   const action = body.action;
 
   // ── Creator/admin edits an open order ─────────────────────────────────────
@@ -133,75 +135,40 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return Response.json({ ok: true });
     }
 
-    // accept → materialize the work. The VA supplies the task title (and
-    // project) as they take it on. A "create later" order is created unlinked
-    // for now — it lands in their list to attach to the node they create.
-    const vaTaskTitle = typeof body.task_title === "string" && body.task_title.trim() ? body.task_title.trim() : null;
-    const vaProject = typeof body.project === "string" && body.project.trim() ? body.project.trim() : null;
-    const projectId = order.create_later ? null : (order.linked_project_id ?? null);
+    // accept → the VA has already built the real task in TaskEditor (see
+    // JobOrdersSection's AcceptJobOrderPanel) and, for output work, claimed
+    // it via /api/fixed-pay-tasks/[id]/grab — this just links that task back
+    // to the order and flips status. Confirms the task is actually theirs
+    // before linking, so a malformed/forged task_id can't attach an
+    // unrelated task to someone else's order.
+    const taskId = typeof body.task_id === "number" && Number.isFinite(body.task_id) ? body.task_id : null;
+    if (!taskId) return Response.json({ error: "task_id is required" }, { status: 400 });
     const now = new Date().toISOString();
     let acceptedTaskId: number | null = null;
 
-    // Carry the check-in schedule onto the task so the VA has the milestones.
-    const checkIns = Array.isArray(order.check_ins) ? (order.check_ins as { label?: string; date?: string | null }[]) : [];
-    const scheduleNote = checkIns.length
-      ? "Check-ins — " + checkIns.map((c) => `${c.label}: ${c.date || "TBD"}`).join(" · ")
-      : null;
-
     if (order.work_type === "output") {
-      // Output work → a fixed_pay_task, assigned + claimed to the VA, so it
-      // shows in the Output Based Tasks tab with the (Founder-set) rate.
-      const { error: fptErr } = await supabase
+      const { data: fpt, error: fptErr } = await supabase
         .from("fixed_pay_tasks")
-        .insert({
-          task_name: vaTaskTitle || order.title,
-          task_detail: order.title,
-          task_notes: scheduleNote,
-          account: order.account,
-          project: vaProject || order.project,
-          project_id: projectId,
-          rate: order.rate,
-          status: "pending",
-          review_required: order.review_required,
-          start_date: order.start_date,
-          due_date: order.deadline,
-          is_active: true,
-          assigned_to: order.offered_to,
-          assigned_by: order.created_by,
-          claimed_by: order.offered_to,
-          claimed_at: now,
-          created_by: order.created_by,
-        });
-      if (fptErr) return Response.json({ error: fptErr.message }, { status: 400 });
+        .select("id, claimed_by")
+        .eq("id", taskId)
+        .maybeSingle();
+      if (fptErr) return Response.json({ error: fptErr.message }, { status: 500 });
+      if (!fpt || fpt.claimed_by !== order.offered_to) {
+        return Response.json({ error: "That task isn't claimed by you." }, { status: 403 });
+      }
       // accepted_task_id FK is to assigned_tasks, so it stays null for output.
     } else {
-      const { data: task, error: taskErr } = await supabase
-        .from("assigned_tasks")
-        .insert({
-          task_name: vaTaskTitle || order.title,
-          task_detail: order.title, // the client-memo entry
-          task_notes: scheduleNote,
-          account: order.account,
-          project: vaProject || order.project,
-          project_id: projectId,
-          due_date: order.deadline,
-          start_date: order.start_date,
-          status: "pending",
-          review_required: order.review_required,
-          review_required_locked: true,
-          category: "Task",
-          created_by: order.created_by,
-          assigned_by: order.created_by,
-        })
-        .select("id")
-        .single();
-      if (taskErr) return Response.json({ error: taskErr.message }, { status: 400 });
-
-      const { error: assignErr } = await supabase
+      const { data: assignee, error: assigneeErr } = await supabase
         .from("assigned_task_assignees")
-        .insert({ assigned_task_id: task.id, va_id: order.offered_to });
-      if (assignErr) return Response.json({ error: assignErr.message }, { status: 400 });
-      acceptedTaskId = task.id as number;
+        .select("id")
+        .eq("assigned_task_id", taskId)
+        .eq("va_id", order.offered_to)
+        .maybeSingle();
+      if (assigneeErr) return Response.json({ error: assigneeErr.message }, { status: 500 });
+      if (!assignee) {
+        return Response.json({ error: "That task isn't assigned to you." }, { status: 403 });
+      }
+      acceptedTaskId = taskId;
     }
 
     const { error: updErr } = await supabase
