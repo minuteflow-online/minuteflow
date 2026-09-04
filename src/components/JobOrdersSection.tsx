@@ -149,6 +149,12 @@ export default function JobOrdersSection({
 
   const offeredToMe = orders.filter((o) => o.offered_to === currentUserId && o.status === "offered");
   const rest = orders.filter((o) => !(o.offered_to === currentUserId && o.status === "offered"));
+  // Soonest deadline among what's offered to me — shown on the collapsed header
+  // so the one thing that expires is visible without opening the section.
+  const soonestRespondBy = offeredToMe
+    .map((o) => o.respond_by)
+    .filter((d): d is string => Boolean(d))
+    .sort()[0] ?? null;
 
   const Row = ({ o }: { o: JobOrder }) => {
     const isOfferee = o.offered_to === currentUserId;
@@ -271,7 +277,7 @@ export default function JobOrdersSection({
           <h3 className="text-sm font-extrabold text-espresso uppercase tracking-wide">Job Orders</h3>
           <span className="text-amber text-[10px] w-3 shrink-0">{open ? "▼" : "▶"}</span>
           {offeredToMe.length > 0 && (
-            <span className="text-[11px] font-bold px-2.5 py-[3px] rounded-full bg-amber text-white animate-pulse">{offeredToMe.length} offered to you — respond</span>
+            <span className="text-[11px] font-bold px-2.5 py-[3px] rounded-full bg-amber text-white animate-pulse">{offeredToMe.length} offered to you — respond{!open && soonestRespondBy ? ` by ${fmtDate(soonestRespondBy)}` : ""}</span>
           )}
         </button>
         {admin && open && (
