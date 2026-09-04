@@ -3087,16 +3087,20 @@ export default function DashboardPage() {
     }
   }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
 
-  // Submitting the assigned task the VA is currently clocked into should end
-  // that clock right there and hand them straight to the next thing — not
-  // leave the timer quietly running against work that's already turned in.
-  // AssignedTasksWidget calls this only when the submitted task matches
-  // activeAssignedTaskId, i.e. it really is the one running right now.
-  const handleActiveTaskSubmitted = useCallback(async () => {
-    await stopCurrentTask();
+  // Submitting the assigned task the VA is currently clocked into should hand
+  // them straight to the next thing — but the clock and screen monitoring for
+  // the just-submitted task keep running through that transition, same as
+  // switching tasks anywhere else in the app. The Log an Activity form below
+  // still has an active task (hasActiveTask stays tied to activeTask), so
+  // starting the next one goes through its own close-old-task wizard and
+  // closes this one atomically at that moment — no gap, and the time spent
+  // picking what's next still counts against the task just submitted instead
+  // of vanishing. AssignedTasksWidget calls this only when the submitted task
+  // matches activeAssignedTaskId, i.e. it really is the one running right now.
+  const handleActiveTaskSubmitted = useCallback(() => {
     setNextActivityReason("submit");
     setShowNextActivityModal(true);
-  }, [stopCurrentTask]);
+  }, []);
 
   // ─── Notes modal ──────────────────────────────────────────
 
@@ -4185,9 +4189,14 @@ export default function DashboardPage() {
           into — a break ending with the old task Completed (In Progress / On
           Hold ones just auto-resume in endBreak, no modal), or submitting the
           task currently being worked (handleActiveTaskSubmitted) — so the VA
-          transitions straight to the next thing instead of the clock quietly
-          running against work that's already done. Same tab pattern as the
-          dashboard's own Log an Activity / Assigned Tasks box. */}
+          transitions straight to picking what's next instead of dwelling on
+          something already done. In the submit case the just-submitted task
+          is still running underneath this: picking the next activity below
+          goes through the normal close-old-task wizard and closes it
+          atomically at that moment, so the time spent choosing still counts
+          toward the task just submitted instead of vanishing into a gap.
+          Same tab pattern as the dashboard's own Log an Activity / Assigned
+          Tasks box. */}
       {showNextActivityModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4 py-8 overflow-y-auto">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md my-auto">
@@ -4220,7 +4229,15 @@ export default function DashboardPage() {
                     setShowNextActivityModal(false);
                     await handleCheckAndStartTask(data);
                   }}
-                  hasActiveTask={false}
+                  // Still tied to activeTask on purpose: after a submit, the
+                  // just-submitted task is still running (see
+                  // handleActiveTaskSubmitted), so this must go through the
+                  // close-old-task wizard rather than skip straight to
+                  // starting the new one. After a break-with-nothing-to-
+                  // resume, activeTask is already null and this is false,
+                  // same as before.
+                  hasActiveTask={!!activeTask}
+                  activeTaskClientMemo={activeTask?.client_memo || ""}
                   role={role}
                   sessionState={sessionState}
                   bare
@@ -4231,7 +4248,7 @@ export default function DashboardPage() {
                     key={`post-break-assigned-${claimRefreshKey}`}
                     userId={userId}
                     sessionState={sessionState}
-                    hasActiveTask={false}
+                    hasActiveTask={!!activeTask}
                     onPlayAssignedTask={(task) => {
                       setShowNextActivityModal(false);
                       handlePlayAssignedTask(task);

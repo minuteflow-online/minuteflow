@@ -17,8 +17,10 @@ interface AssignedTasksWidgetProps {
   onPlayAssignedTask: (task: VAAssignedTask) => void;
   onPlayTodo: (task: VAAssignedTask, todo: TaskTodo) => void;
   /** Called after a submit whose task matches activeAssignedTaskId — the VA just
-   *  submitted the task they're currently clocked into, so the caller should stop
-   *  that clock and prompt for the next activity instead of leaving it running. */
+   *  submitted the task they're currently clocked into, so the caller should
+   *  prompt for the next activity right away instead of leaving them to dwell
+   *  on it. The clock itself keeps running until they actually start the next
+   *  thing, same as any other task switch — no gap in what's tracked. */
   onActiveTaskSubmitted?: () => void;
   orgTimezone?: string;
   /** Increment to force a re-fetch from the server (e.g. after wizard cancel or task start). */
