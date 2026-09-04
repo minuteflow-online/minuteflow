@@ -11,6 +11,7 @@ import {
   type TaskSubmissionAttachment,
 } from "@/lib/submissions";
 import RevisionBadge from "@/components/RevisionBadge";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
@@ -1480,6 +1481,7 @@ function SubmissionEntry({
   canCancel: boolean;
   onCancelReversal: (item: FeedItem) => void;
 }) {
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const time = new Date(item.created_at).toLocaleString("en-US", {
     month: "short",
@@ -1592,20 +1594,69 @@ function SubmissionEntry({
         </a>
       )}
 
-      {item.attachments.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {item.attachments.map((file) => (
-            <a
-              key={file.id}
-              href={file.url ?? "#"}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
-            >
-              {file.filename}
-            </a>
-          ))}
-        </div>
+      {item.attachments.length > 0 && (() => {
+        // Screenshots are the point of a submission, so they are shown rather
+        // than listed: sixteen filenames means sixteen page loads to see what
+        // someone did. Images become a scrollable strip that opens full size in
+        // place; anything else stays a link, because a PDF has no thumbnail.
+        const images = item.attachments.filter((f) =>
+          (f.mime_type ?? "").startsWith("image/") && f.url
+        );
+        const others = item.attachments.filter((f) => !images.includes(f));
+        return (
+          <div className="mt-1.5 space-y-1.5">
+            {images.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {images.map((file, i) => (
+                  <button
+                    key={file.id}
+                    type="button"
+                    onClick={() =>
+                      setLightbox({
+                        urls: images.map((f) => f.url as string),
+                        index: i,
+                      })
+                    }
+                    title={file.filename}
+                    className="shrink-0 overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={file.url as string}
+                      alt={file.filename}
+                      loading="lazy"
+                      className="h-[72px] w-[96px] object-cover"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {others.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {others.map((file) => (
+                  <a
+                    key={file.id}
+                    href={file.url ?? "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
+                  >
+                    {file.filename}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {lightbox && (
+        <ScreenshotLightbox
+          urls={lightbox.urls}
+          initialIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </div>
   );
