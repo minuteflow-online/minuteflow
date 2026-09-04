@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { Profile, TimeLog, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
-import { fetchScreenshotOwnersInRange, type ScreenshotOwnerRow } from "@/lib/screenshots";
+import { fetchScreenshotCountsInRange, type ScreenshotCountsByUser } from "@/lib/screenshots";
 import {
   formatDuration,
   getInitials,
@@ -170,12 +170,31 @@ function isPastDue(
   return submitted > due;
 }
 
+// Time log `category` has accumulated inconsistent free-text variants over time
+// (casing, hyphens, pluralization). Fold those into one canonical label so report
+// breakdowns don't split the same category across multiple rows.
+function normalizeCategoryLabel(raw: string | null | undefined): string {
+  const value = (raw || "Task").trim();
+  const key = value.toLowerCase().replace(/[\s_-]+/g, "");
+  const canonical: Record<string, string> = {
+    sortingtasks: "Planning",
+    sorting: "Planning",
+    message: "Communication",
+    meeting: "Collaboration",
+    clockin: "Clock In",
+    clockout: "Clock Out",
+    task: "Task",
+    tasks: "Task",
+  };
+  return canonical[key] || value;
+}
+
 /* ── Page Component ───────────────────────────────────────── */
 
 export default function ReportsPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [screenshots, setScreenshots] = useState<ScreenshotOwnerRow[]>([]);
+  const [screenshotCounts, setScreenshotCounts] = useState<ScreenshotCountsByUser>({ total: 0, byUser: {} });
   const [dateRange, setDateRange] = useState<DateRange>("week");
   const [selectedVA, setSelectedVA] = useState<string>("all");
   const [customStart, setCustomStart] = useState<string>("");
@@ -342,7 +361,14 @@ export default function ReportsPage() {
         setRole(userRole);
       }
 
-      const [logsRes, profilesRes, screenshotRows, submissionsRes] = await Promise.all([
+      // Profiles first (small table) so the screenshot count queries below can be
+      // scoped per user — counting is fast even over a year of data; paging through
+      // every row just to count them is what made wide ranges slow to load.
+      const profilesRes = await supabase.from("profiles").select("*");
+      const allProfiles = (profilesRes.data ?? []) as Profile[];
+      const profileIds = allProfiles.map((p) => p.id);
+
+      const [logsRes, screenshotCountsRes, submissionsRes] = await Promise.all([
         supabase
           .from("time_logs")
           .select("*")
@@ -350,10 +376,7 @@ export default function ReportsPage() {
           .gte("session_date", toLocalDate(qStart, tz))
           .lte("session_date", toLocalDate(qEnd, tz))
           .order("start_time", { ascending: true }),
-        supabase.from("profiles").select("*"),
-        // Paged: a single request stops at 1000 rows, which a week of team
-        // captures clears easily — the screenshot counts came out short.
-        fetchScreenshotOwnersInRange(supabase, qStart, qEnd),
+        fetchScreenshotCountsInRange(supabase, qStart, qEnd, profileIds),
         supabase
           .from("task_submissions")
           .select("id, assigned_task_id, user_id, created_at")
@@ -364,8 +387,8 @@ export default function ReportsPage() {
       ]);
 
       setLogs((logsRes.data ?? []) as TimeLog[]);
-      setProfiles((profilesRes.data ?? []) as Profile[]);
-      setScreenshots(screenshotRows);
+      setProfiles(allProfiles);
+      setScreenshotCounts(screenshotCountsRes);
 
       // Parent tasks carry the account, due date, and revision tally the
       // drill-down needs; fetched by id so the query stays scoped to the
@@ -449,12 +472,12 @@ export default function ReportsPage() {
     return Array.from(clients).sort();
   }, [logs]);
 
-  const filteredScreenshots = useMemo(
+  const filteredScreenshotTotal = useMemo(
     () =>
       selectedVA === "all"
-        ? screenshots
-        : screenshots.filter((s) => s.user_id === selectedVA),
-    [screenshots, selectedVA]
+        ? screenshotCounts.total
+        : screenshotCounts.byUser[selectedVA] || 0,
+    [screenshotCounts, selectedVA]
   );
 
   /* ── Filtered comparison logs ────────────────────────────── */
@@ -485,11 +508,7 @@ export default function ReportsPage() {
       if (l.billable) billableMs += l.duration_ms || 0;
       wizardMs += l.form_fill_ms || 0;
 
-      const rawCat = l.category || "Task";
-      const cat = rawCat === "Sorting Tasks" || rawCat === "Sorting" ? "Planning"
-        : rawCat === "Message" ? "Communication"
-        : rawCat === "Meeting" ? "Collaboration"
-        : rawCat;
+      const cat = normalizeCategoryLabel(l.category);
       categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 
       if (cat.toLowerCase() === "personal") {
@@ -543,11 +562,7 @@ export default function ReportsPage() {
   /* ── Progress Report per VA ──────────────────────────────── */
 
   const progressReports = useMemo((): VAProgress[] => {
-    const normCat = (raw: string) =>
-      raw === "Sorting Tasks" || raw === "Sorting" ? "Planning"
-      : raw === "Message" ? "Communication"
-      : raw === "Meeting" ? "Collaboration"
-      : raw;
+    const normCat = normalizeCategoryLabel;
 
     // allLogs: full date-range logs for this user, NOT filtered by account/client.
     // Used for personal time, break time, and threshold computation — these are
@@ -656,10 +671,10 @@ export default function ReportsPage() {
         breakThresholdMs: curr.breakThresholdMs,
         prevBreakThresholdMs: prev.breakThresholdMs,
         categories,
-        screenshotCount: filteredScreenshots.filter((s) => s.user_id === uid).length,
+        screenshotCount: screenshotCounts.byUser[uid] || 0,
       };
     }).sort((a, b) => b.currentTotalMs - a.currentTotalMs);
-  }, [filteredLogs, compFilteredLogs, logs, compLogs, profiles, filteredScreenshots, orgTimezone]);
+  }, [filteredLogs, compFilteredLogs, logs, compLogs, profiles, screenshotCounts, orgTimezone]);
 
   // Keep these for the daily chart and financial summary
   const totalHoursMs = reportSummary.totalMs;
@@ -2072,25 +2087,20 @@ export default function ReportsPage() {
           {/* Screenshot Count */}
           <div className="rounded-xl border border-sand bg-white px-5 py-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Screenshots</div>
-            {filteredScreenshots.length === 0 ? (
+            {filteredScreenshotTotal === 0 ? (
               <span className="text-[13px] text-bark">No screenshots in this period</span>
             ) : (
               <div className="flex flex-wrap gap-6">
                 <div>
-                  <div className="font-serif text-xl font-bold text-espresso">{filteredScreenshots.length}</div>
+                  <div className="font-serif text-xl font-bold text-espresso">{filteredScreenshotTotal}</div>
                   <div className="text-[10px] text-bark mt-0.5">Total Captured</div>
                 </div>
                 {/* Per-VA breakdown if multiple VAs */}
                 {selectedVA === "all" && (() => {
-                  const byVA: Record<string, { name: string; count: number }> = {};
-                  filteredScreenshots.forEach((ss) => {
-                    if (!byVA[ss.user_id]) {
-                      const p = profiles.find((pr) => pr.id === ss.user_id);
-                      byVA[ss.user_id] = { name: p?.full_name || p?.username || "Unknown", count: 0 };
-                    }
-                    byVA[ss.user_id].count += 1;
-                  });
-                  const entries = Object.values(byVA).sort((a, b) => b.count - a.count);
+                  const entries = profiles
+                    .map((p) => ({ name: p.full_name || p.username || "Unknown", count: screenshotCounts.byUser[p.id] || 0 }))
+                    .filter((e) => e.count > 0)
+                    .sort((a, b) => b.count - a.count);
                   if (entries.length <= 1) return null;
                   return entries.map((e) => (
                     <div key={e.name}>

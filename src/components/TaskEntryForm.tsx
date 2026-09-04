@@ -479,7 +479,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       <div className={bare ? "" : "bg-white border border-sand rounded-xl"} data-task-form>
         {!bare && (
           <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-            <h3 className="text-sm font-bold text-espresso">Log a Task</h3>
+            <h3 className="text-sm font-bold text-espresso">Log an Activity</h3>
             {isAdmin && formStartTimeRef.current && formFillElapsed > 0 && (
               <span className="text-[11px] font-semibold text-walnut bg-walnut/10 px-2 py-0.5 rounded-full tabular-nums">
                 ⏱ {Math.floor(formFillElapsed / 60)}:{(formFillElapsed % 60).toString().padStart(2, "0")} wizard time

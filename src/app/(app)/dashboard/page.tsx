@@ -15,6 +15,7 @@ import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSid
 import DashboardMessagePanel from "@/components/DashboardMessagePanel";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import TaskWidgetsTabs from "@/components/TaskWidgetsTabs";
+import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
@@ -133,13 +134,13 @@ function formatHoursMinutes(ms: number): string {
 
 // A stale open log (Clock In left running overnight, a task nobody switched
 // off) closes at 23:59:59.999 of the day it STARTED, not at `now` — same
-// capping closeOpenNonBreakLogs already does. Without this, closing an
+// capping closeOpenLogs already does. Without this, closing an
 // overnight "Clock In" the next time a real task starts bills the entire
 // dead-of-night gap as worked time: this is what turned one placeholder log
 // into a 15.6-hour billable entry in the August Time Review (Charinade,
 // log 5659). Three other call sites closed stale logs with this same
 // uncapped `now - start_time` math, duplicated inline rather than sharing
-// closeOpenNonBreakLogs — this is the one place all of them now go through.
+// closeOpenLogs — this is the one place all of them now go through.
 function cappedCloseTime(startTime: string | null, now: string): { endTime: string; durationMs: number } {
   const startMs = startTime ? new Date(startTime).getTime() : new Date(now).getTime();
   const sameDay = startTime && new Date(startTime).toDateString() === new Date(now).toDateString();
@@ -181,6 +182,10 @@ export default function DashboardPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [claimRefreshKey, setClaimRefreshKey] = useState(0);
   const [preBreakTask, setPreBreakTask] = useState<ActiveTask | null>(null);
+  // Whether the task closed to go on break was marked Completed — a
+  // completed task has nothing to resume, so ending break should never offer
+  // to "resume" it.
+  const [preBreakTaskCompleted, setPreBreakTaskCompleted] = useState(false);
 
   // One in-flight submission per action type — synchronous refs so a rapid
   // double-click can't create two time_logs rows for the same action.
@@ -905,7 +910,13 @@ export default function DashboardPage() {
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
   }, [activeTask, userId, supabase, session]);
 
-  const closeOpenNonBreakLogs = useCallback(
+  // Sweeps up ANY open log for this user — Break included. One activity runs
+  // at a time, no exceptions; a Break-category log left open (whether started
+  // from the dedicated Break button or by picking "Break" as a category in
+  // the task wizard) must close exactly like any other task would when
+  // something else starts, or it just keeps running "live" forever alongside
+  // the new activity.
+  const closeOpenLogs = useCallback(
     async (now: string, excludeLogId?: number, minAgeMs?: number) => {
       if (!userId) return;
 
@@ -914,7 +925,6 @@ export default function DashboardPage() {
         .select("id, start_time")
         .eq("user_id", userId)
         .is("end_time", null)
-        .neq("category", "Break")
         .neq("category", "Clock Out");
 
       if (excludeLogId !== undefined) {
@@ -988,15 +998,16 @@ export default function DashboardPage() {
     const activeLogId = session?.active_task?.logId
       ? parseInt(session.active_task.logId, 10)
       : undefined;
-    closeOpenNonBreakLogs(now, activeLogId, 2 * 60 * 1000);
-  }, [userId, loading, closeOpenNonBreakLogs, session]);
+    closeOpenLogs(now, activeLogId, 2 * 60 * 1000);
+  }, [userId, loading, closeOpenLogs, session]);
 
   // ─── Close-the-gap safety net: recover from an ended break with no active task ──────────
-  // endBreak() clears active_task and relies on showPostBreakPrompt (pure client state) to get
-  // the VA into a new task. If the VA reloads, disconnects, or otherwise never resolves that
-  // prompt, they're left clocked in with no running log. Runs once per page load — if a prior
-  // session was left in that gap state, auto-resume the last task that was actually running
-  // before the break so time keeps being logged instead of silently vanishing.
+  // endBreak() clears active_task and relies on pure client state (auto-resume, or
+  // showPostBreakNewTaskModal) to get the VA into a new task. If the VA reloads,
+  // disconnects, or otherwise never resolves that, they're left clocked in with no
+  // running log. Runs once per page load — if a prior session was left in that gap
+  // state, auto-resume the last task that was actually running before the break so
+  // time keeps being logged instead of silently vanishing.
   const postBreakGapCheckedRef = useRef(false);
   useEffect(() => {
     if (!userId || !profile || !session) return;
@@ -1006,12 +1017,16 @@ export default function DashboardPage() {
 
     let cancelled = false;
     (async () => {
+      // Break included here — session.active_task being null doesn't mean
+      // nothing is open; it can just mean the session row fell out of sync
+      // with an orphaned Break log. Auto-resuming the last real task on top
+      // of that would create the same kind of concurrent-log duplicate this
+      // whole effect exists to avoid.
       const { data: openLogs } = await supabase
         .from("time_logs")
         .select("id")
         .eq("user_id", userId)
         .is("end_time", null)
-        .neq("category", "Break")
         .neq("category", "Clock Out")
         .limit(1);
       if (cancelled || (openLogs && openLogs.length > 0)) return;
@@ -1119,7 +1134,7 @@ export default function DashboardPage() {
     try {
       const now = new Date().toISOString();
 
-      await closeOpenNonBreakLogs(now);
+      await closeOpenLogs(now);
 
       // Create a "Planning" time_log entry so clock-in registers in activity log
       const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
@@ -1530,8 +1545,11 @@ export default function DashboardPage() {
     await doStartBreak();
   }, [userId, profile, activeTask]);
 
-  // Actually start the break (called after wizard or directly)
-  const doStartBreak = useCallback(async () => {
+  // Actually start the break (called after wizard or directly).
+  // closedTaskStatus is the status just chosen for the task being closed to
+  // go on break ("Completed" / "In Progress" / "On Hold"), when there was
+  // one — it decides what endBreak() does when the break ends.
+  const doStartBreak = useCallback(async (closedTaskStatus?: string) => {
     // isStartingBreakRef blocks a double-click of Break itself.
     // sessionActionPendingRef is the same ref clockIn/clockOut/startTask/
     // endBreak/resumePreBreakTask/resumeOnHoldTask all check — without it,
@@ -1544,29 +1562,47 @@ export default function DashboardPage() {
     try {
       const now = new Date().toISOString();
 
-      // Close any orphaned break logs first
-      await supabase
+      // Close any orphaned break logs first, at their real elapsed length —
+      // not 0, which used to make a break that was already running (e.g. one
+      // started by picking "Break" as a category in the task wizard instead
+      // of this button) look like it took no time when this ran again.
+      const { data: orphanBreaksAtStart } = await supabase
         .from("time_logs")
-        .update({ end_time: now, duration_ms: 0 })
+        .select("id, start_time")
         .eq("user_id", userId)
         .eq("category", "Break")
         .is("end_time", null);
+      for (const orphan of orphanBreaksAtStart ?? []) {
+        await supabase
+          .from("time_logs")
+          .update({
+            end_time: now,
+            duration_ms: Math.max(
+              0,
+              new Date(now).getTime() - new Date(orphan.start_time as string).getTime()
+            ),
+          })
+          .eq("id", orphan.id);
+      }
 
       // Save current task info so we can resume after break
       if (activeTask && !activeTask.isBreak) {
         setPreBreakTask({ ...activeTask });
+        setPreBreakTaskCompleted(closedTaskStatus === "Completed");
         await stopCurrentTask();
       } else {
         setPreBreakTask(null);
+        setPreBreakTaskCompleted(false);
       }
 
-      // Safety net: close ANY open non-break task logs at DB level.
-      // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
-      // whose insert returned null). This catches those orphaned Planning logs.
-      // closeOpenNonBreakLogs caps an overnight-stale one at end-of-day
+      // Safety net: close ANY other open logs at DB level (the orphaned-break
+      // sweep above already closed a stray Break; this catches anything else,
+      // e.g. stopCurrentTask() bailing because activeTask.logId was empty —
+      // a Clock In Planning log whose insert returned null).
+      // closeOpenLogs caps an overnight-stale one at end-of-day
       // instead of billing the whole gap until now — this used to be a
       // separate, uncapped copy of that same close.
-      await closeOpenNonBreakLogs(now);
+      await closeOpenLogs(now);
 
       // Create a break time log
       const { data: logData, error: breakLogError } = await supabase
@@ -1645,10 +1681,84 @@ export default function DashboardPage() {
     }
   }, [userId, profile, supabase, session, activeTask, stopCurrentTask, refreshSession, sessionActionPendingRef, setSessionActionPending]);
 
+  // Resume the pre-break task
+  const resumePreBreakTask = useCallback(async () => {
+    // Had no guard at all before — a double-click, or racing with any other
+    // session action, could insert this task's log twice or alongside
+    // another action's own insert. Shares the same ref every other
+    // session-mutating action in this file checks.
+    if (!preBreakTask || !userId || !profile || sessionActionPendingRef.current) return;
+    setSessionActionPending(true);
+    try {
+    const now = new Date().toISOString();
 
+    const isBillable = isBillableCategory(preBreakTask.category);
 
-  // Post-break prompt state
-  const [showPostBreakPrompt, setShowPostBreakPrompt] = useState(false);
+    const { data: logData, error: resumeLogError } = await supabase
+      .from("time_logs")
+      .insert({
+        user_id: userId,
+        username: profile.username,
+        full_name: profile.full_name,
+        department: profile.department,
+        position: profile.position,
+        task_name: preBreakTask.task_name,
+        category: preBreakTask.category,
+        project: preBreakTask.project || null,
+        account: preBreakTask.account || null,
+        client_name: preBreakTask.client_name || null,
+        start_time: now,
+        billable: isBillable,
+        billing_type: preBreakTask.billing_type || "hourly",
+        task_rate: preBreakTask.task_rate ?? null,
+        session_date: getCorrectSessionDate(session, orgTimezone),
+      })
+      .select()
+      .single();
+
+    if (resumeLogError || !logData) {
+      alert(
+        isDuplicateActiveLogError(resumeLogError)
+          ? "You're already tracking something else somewhere (another tab, device, or the extension?). Refresh this page to see your current status."
+          : "Couldn't resume your task: " +
+              (resumeLogError?.message || "unknown error") +
+              ". Please try again — nothing is being tracked right now."
+      );
+      return;
+    }
+
+    const resumedTask: ActiveTask = {
+      ...preBreakTask,
+      start_time: now,
+      end_time: null,
+      duration_ms: 0,
+      logId: logData?.id?.toString() || "",
+      _startMs: Date.now(),
+      isBreak: false,
+    };
+
+    await supabase.from("sessions").upsert(
+      {
+        user_id: userId,
+        clocked_in: true,
+        clock_in_time: session?.clock_in_time || now,
+        active_task: resumedTask,
+        updated_at: now,
+      },
+      { onConflict: "user_id" }
+    );
+
+    setActiveTask(resumedTask);
+    if (logData) {
+      setTimeLogs((prev) => [logData as TimeLog, ...prev]);
+    }
+
+    setPreBreakTask(null);
+    setPreBreakTaskCompleted(false);
+    } finally {
+      setSessionActionPending(false);
+    }
+  }, [preBreakTask, userId, profile, supabase, session, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
 
   const endBreak = useCallback(async () => {
     if (!userId || sessionActionPendingRef.current) return;
@@ -1733,13 +1843,23 @@ export default function DashboardPage() {
     setActiveTask(null);
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
     await refreshSession();
-
-    // If there was a task before break, show resume/new prompt
-    if (preBreakTask) {
-      setShowPostBreakPrompt(true);
-    }
     setSessionActionPending(false);
-  }, [userId, supabase, session, breakStartTime, preBreakTask, sessionActionPendingRef, refreshSession]);
+
+    // Decide what happens to the task that was running before break, if any.
+    // A task marked Completed has nothing to resume — asking "Resume or
+    // Start New" for it is a non-question, so skip straight to logging the
+    // next thing. Anything still open (In Progress / On Hold) just picks up
+    // again automatically; no "Welcome Back" popup needed for that either.
+    if (preBreakTask) {
+      if (preBreakTaskCompleted) {
+        setPreBreakTask(null);
+        setPreBreakTaskCompleted(false);
+        setShowPostBreakNewTaskModal(true);
+      } else {
+        await resumePreBreakTask();
+      }
+    }
+  }, [userId, supabase, session, breakStartTime, preBreakTask, preBreakTaskCompleted, resumePreBreakTask, sessionActionPendingRef, refreshSession]);
 
   // Register dashboard's complex action handlers with context so the layout's SessionBanner
   // calls these (wizard flows, memos, etc.) instead of the simple context defaults.
@@ -1747,85 +1867,6 @@ export default function DashboardPage() {
     const actions: SessionActions = { clockIn, clockOut, startBreak, endBreak };
     return registerActions(actions);
   }, [registerActions, clockIn, clockOut, startBreak, endBreak]);
-
-  // Resume the pre-break task
-  const resumePreBreakTask = useCallback(async () => {
-    // Had no guard at all before — a double-click, or racing with any other
-    // session action, could insert this task's log twice or alongside
-    // another action's own insert. Shares the same ref every other
-    // session-mutating action in this file checks.
-    if (!preBreakTask || !userId || !profile || sessionActionPendingRef.current) return;
-    setSessionActionPending(true);
-    try {
-    const now = new Date().toISOString();
-
-    const isBillable = isBillableCategory(preBreakTask.category);
-
-    const { data: logData, error: resumeLogError } = await supabase
-      .from("time_logs")
-      .insert({
-        user_id: userId,
-        username: profile.username,
-        full_name: profile.full_name,
-        department: profile.department,
-        position: profile.position,
-        task_name: preBreakTask.task_name,
-        category: preBreakTask.category,
-        project: preBreakTask.project || null,
-        account: preBreakTask.account || null,
-        client_name: preBreakTask.client_name || null,
-        start_time: now,
-        billable: isBillable,
-        billing_type: preBreakTask.billing_type || "hourly",
-        task_rate: preBreakTask.task_rate ?? null,
-        session_date: getCorrectSessionDate(session, orgTimezone),
-      })
-      .select()
-      .single();
-
-    if (resumeLogError || !logData) {
-      alert(
-        isDuplicateActiveLogError(resumeLogError)
-          ? "You're already tracking something else somewhere (another tab, device, or the extension?). Refresh this page to see your current status."
-          : "Couldn't resume your task: " +
-              (resumeLogError?.message || "unknown error") +
-              ". Please try again — nothing is being tracked right now."
-      );
-      return;
-    }
-
-    const resumedTask: ActiveTask = {
-      ...preBreakTask,
-      start_time: now,
-      end_time: null,
-      duration_ms: 0,
-      logId: logData?.id?.toString() || "",
-      _startMs: Date.now(),
-      isBreak: false,
-    };
-
-    await supabase.from("sessions").upsert(
-      {
-        user_id: userId,
-        clocked_in: true,
-        clock_in_time: session?.clock_in_time || now,
-        active_task: resumedTask,
-        updated_at: now,
-      },
-      { onConflict: "user_id" }
-    );
-
-    setActiveTask(resumedTask);
-    if (logData) {
-      setTimeLogs((prev) => [logData as TimeLog, ...prev]);
-    }
-
-    setShowPostBreakPrompt(false);
-    setPreBreakTask(null);
-    } finally {
-      setSessionActionPending(false);
-    }
-  }, [preBreakTask, userId, profile, supabase, session, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
 
   // Resume an on-hold task (Play button from Activity Log)
   const resumeOnHoldTask = useCallback(async (log: TimeLog) => {
@@ -1841,12 +1882,13 @@ export default function DashboardPage() {
       await stopCurrentTask();
     }
 
-    // Safety net: close ANY open non-break task logs at DB level.
-    // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
-    // whose insert returned null). This catches those orphaned Planning logs.
-    // closeOpenNonBreakLogs caps an overnight-stale one at end-of-day instead
-    // of billing the whole gap until now.
-    await closeOpenNonBreakLogs(now);
+    // Safety net: close ANY other open logs at DB level, Break included — one
+    // activity runs at a time, no exceptions. stopCurrentTask() bails if
+    // activeTask.logId is empty (e.g. Clock In Planning log whose insert
+    // returned null); this catches those orphaned logs too. closeOpenLogs
+    // caps an overnight-stale one at end-of-day instead of billing the whole
+    // gap until now.
+    await closeOpenLogs(now);
 
     const isBillable = isBillableCategory(log.category);
 
@@ -1919,7 +1961,7 @@ export default function DashboardPage() {
     } finally {
       setSessionActionPending(false);
     }
-  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, closeOpenNonBreakLogs, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
+  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, closeOpenLogs, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
 
   // ─── Update progress status on a time_log (clickable badge) ───
   const updateLogProgress = useCallback(async (logId: number, progress: string) => {
@@ -1931,56 +1973,10 @@ export default function DashboardPage() {
     );
   }, [supabase]);
 
-  // Post-break memo step (when choosing "Start New Task")
-  const [postBreakMemoStep, setPostBreakMemoStep] = useState(false);
-  const [postBreakClientMemo, setPostBreakClientMemo] = useState("");
-  const [postBreakInternalMemo, setPostBreakInternalMemo] = useState("");
-  const [postBreakStatus, setPostBreakStatus] = useState("");
-  // After memos are done, force the VA to start a new task
+  // After break ends with nothing to resume (the old task was Completed),
+  // force the VA to log the next one — they can't walk away without it.
   const [showPostBreakNewTaskModal, setShowPostBreakNewTaskModal] = useState(false);
-
-  // User chose "Start New Task" — show memo step first
-  const showPostBreakMemos = useCallback(() => {
-    setPostBreakMemoStep(true);
-  }, []);
-
-  // Save memos to the pre-break task, then dismiss to wizard
-  const savePostBreakMemosAndDismiss = useCallback(async () => {
-    if (preBreakTask?.logId) {
-      const logId = parseInt(preBreakTask.logId, 10);
-      const updatePayload: Record<string, unknown> = {};
-      if (postBreakClientMemo.trim()) updatePayload.client_memo = postBreakClientMemo.trim();
-      if (postBreakInternalMemo.trim()) updatePayload.internal_memo = postBreakInternalMemo.trim();
-      if (Object.keys(updatePayload).length > 0) {
-        await supabase.from("time_logs").update(updatePayload).eq("id", logId);
-        setTimeLogs((prev) =>
-          prev.map((log) =>
-            log.id === logId ? { ...log, ...updatePayload } as TimeLog : log
-          )
-        );
-      }
-    }
-    setShowPostBreakPrompt(false);
-    setPostBreakMemoStep(false);
-    setPostBreakClientMemo("");
-    setPostBreakInternalMemo("");
-    setPostBreakStatus("");
-    setPreBreakTask(null);
-    // Force the VA to start a new task — they can't walk away without logging one
-    setShowPostBreakNewTaskModal(true);
-  }, [preBreakTask, postBreakClientMemo, postBreakInternalMemo, supabase]);
-
-  // Skip memos and go straight to forced task entry
-  const skipPostBreakMemos = useCallback(() => {
-    setShowPostBreakPrompt(false);
-    setPostBreakMemoStep(false);
-    setPostBreakClientMemo("");
-    setPostBreakInternalMemo("");
-    setPostBreakStatus("");
-    setPreBreakTask(null);
-    // Force the VA to start a new task — they can't walk away without logging one
-    setShowPostBreakNewTaskModal(true);
-  }, []);
+  const [postBreakNewTaskTab, setPostBreakNewTaskTab] = useState<"log" | "assigned">("log");
 
   // ─── Screenshot utilities (must be before startTask) ──────
 
@@ -2252,7 +2248,7 @@ export default function DashboardPage() {
           if (activeTask?.logId) {
             await stopCurrentTask();
           }
-          await closeOpenNonBreakLogs(now);
+          await closeOpenLogs(now);
 
           const progressValue = formData.task_status
             ? formData.task_status.toLowerCase().replace(" ", "_")
@@ -2332,14 +2328,18 @@ export default function DashboardPage() {
 
         // ─── No negotiations: close ALL open task logs at DB level ───
         // This prevents concurrent running tasks even if React state is out of sync.
-        // Rule: when a new task starts, every previous task ends. No exceptions.
+        // Rule: when a new task starts, every previous task ends. No exceptions —
+        // Break included. A Break-category log can come from the dedicated Break
+        // button OR from picking "Break" as a category right here in the task
+        // wizard; either way it's still "an activity," and it used to be
+        // carved out of this query, which let a wizard-started Break run
+        // forever alongside whatever was started next.
         {
           const { data: openLogs } = await supabase
             .from("time_logs")
             .select("id, start_time")
             .eq("user_id", userId)
             .is("end_time", null)
-            .neq("category", "Break")
             .neq("category", "Clock Out");
 
           if (openLogs && openLogs.length > 0) {
@@ -2464,6 +2464,12 @@ export default function DashboardPage() {
           task_rate: formData.task_rate ?? null,
           assignedTaskId: assignedTaskIdToMark ?? null,
           todoLabel: todoLabelForNewLog ?? null,
+          // Picking "Break" as a category here is a second route onto break,
+          // same as the dedicated Break button — mark it isBreak so the rest
+          // of the break machinery (doStartBreak's !activeTask.isBreak check,
+          // endBreak's duration math, resumePreBreakTask) recognizes it
+          // instead of treating it as an ordinary task.
+          isBreak: formData.category === "Break",
         };
 
         if (!skipClockIn) {
@@ -2505,33 +2511,11 @@ export default function DashboardPage() {
               session_date: taskSessionDate,
               updated_at: now,
             } as Session));
-          } else if (sessionState === "on-break") {
-            // Close any open break logs when starting a new task from break
-            if (session?.active_task?.logId && session.active_task.isBreak) {
-              const breakLogId = parseInt(session.active_task.logId, 10);
-              if (breakLogId) {
-                const breakDurationMs = Date.now() - new Date(session.active_task.start_time || now).getTime();
-                await supabase
-                  .from("time_logs")
-                  .update({ end_time: now, duration_ms: breakDurationMs })
-                  .eq("id", breakLogId);
-                setTimeLogs((prev) =>
-                  prev.map((log) =>
-                    log.id === breakLogId
-                      ? { ...log, end_time: now, duration_ms: breakDurationMs }
-                      : log
-                  )
-                );
-              }
-            }
-            // Also close any other orphaned break logs
-            await supabase
-              .from("time_logs")
-              .update({ end_time: now, duration_ms: 0 })
-              .eq("user_id", userId)
-              .eq("category", "Break")
-              .is("end_time", null);
           }
+          // Any break log (this session's own, or another stray one) was
+          // already closed with its real duration by the "close ALL open
+          // task logs" sweep above — that query isn't gated on sessionState,
+          // so there's nothing break-specific left to do here.
           await refreshSession();
         }
 
@@ -2640,12 +2624,14 @@ export default function DashboardPage() {
 
   const checkLiveSession = useCallback(async (): Promise<TimeLog | null> => {
     if (!userId) return null;
+    // Break included — an orphaned Break log (e.g. one started by picking
+    // "Break" as a category in the wizard) is exactly the kind of stray open
+    // row this check exists to catch, not something to look past.
     const { data } = await supabase
       .from("time_logs")
       .select("*")
       .eq("user_id", userId)
       .is("end_time", null)
-      .neq("category", "Break")
       .order("start_time", { ascending: false })
       .limit(1);
     if (data && data.length > 0) {
@@ -2804,7 +2790,7 @@ export default function DashboardPage() {
     // If break is pending, start break instead of new task
     if (breakPending) {
       setBreakPending(false);
-      await doStartBreak();
+      await doStartBreak(closeOldStatus);
       return;
     }
 
@@ -4179,150 +4165,68 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      {/* ─── Post-Break Prompt: Resume or New Task ─── */}
-      {showPostBreakPrompt && preBreakTask && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md mx-4">
-            {!postBreakMemoStep ? (
-              <>
-                {/* Step 1: Choose resume or new */}
-                <div className="py-4 px-5 border-b border-parchment">
-                  <h3 className="text-sm font-bold text-espresso">Welcome Back!</h3>
-                  <p className="text-xs text-bark mt-1">Your break has ended. What would you like to do?</p>
-                </div>
-                <div className="p-5 space-y-3">
-                  <button
-                    onClick={resumePreBreakTask}
-                    className="w-full flex items-center gap-3 p-3 rounded-lg border border-sage bg-sage-soft text-left cursor-pointer transition-all hover:bg-sage/10 hover:border-sage"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-sage flex items-center justify-center shrink-0">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21" /></svg>
-                    </div>
-                    <div>
-                      <div className="text-[13px] font-semibold text-espresso">Resume Task</div>
-                      <div className="text-[11px] text-bark mt-0.5">
-                        {preBreakTask.task_name}
-                        {preBreakTask.project ? ` · ${preBreakTask.project}` : ""}
-                      </div>
-                    </div>
-                  </button>
-                  <button
-                    onClick={showPostBreakMemos}
-                    className="w-full flex items-center gap-3 p-3 rounded-lg border border-sand text-left cursor-pointer transition-all hover:bg-parchment hover:border-terracotta"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-parchment flex items-center justify-center shrink-0">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-terracotta)" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    </div>
-                    <div>
-                      <div className="text-[13px] font-semibold text-espresso">Start New Task</div>
-                      <div className="text-[11px] text-bark mt-0.5">Add notes for your last task, then log a new one</div>
-                    </div>
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                {/* Step 2: Add memos to the pre-break task */}
-                <div className="py-4 px-5 border-b border-parchment">
-                  <h3 className="text-sm font-bold text-espresso">Close Previous Task</h3>
-                  <p className="text-xs text-bark mt-1">
-                    Add notes for <strong>{preBreakTask.task_name}</strong> before starting something new.
-                  </p>
-                </div>
-                <div className="p-5 space-y-3">
-                  {/* Status */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">
-                      Task Status
-                    </label>
-                    <div className="flex gap-2">
-                      {["completed", "in-progress", "on-hold"].map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => setPostBreakStatus(s)}
-                          className={`flex-1 py-2 rounded-lg text-[11px] font-semibold cursor-pointer transition-all ${
-                            postBreakStatus === s
-                              ? "bg-terracotta text-white"
-                              : "bg-parchment text-bark border border-sand hover:border-terracotta"
-                          }`}
-                        >
-                          {s === "completed" ? "Completed" : s === "in-progress" ? "In Progress" : "On Hold"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Client Memo */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-blue mb-1 tracking-wide">
-                      Client Memo
-                    </label>
-                    <textarea
-                      value={postBreakClientMemo}
-                      onChange={(e) => setPostBreakClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
-                      placeholder="Notes visible to the client..."
-                      rows={2}
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-xs text-espresso outline-none focus:border-slate-blue resize-none"
-                    />
-                    <p className="text-[10px] text-stone mt-1">
-                      {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(postBreakClientMemo))} words remaining
-                    </p>
-                  </div>
-
-                  {/* Internal Memo */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                      Internal Memo
-                    </label>
-                    <textarea
-                      value={postBreakInternalMemo}
-                      onChange={(e) => setPostBreakInternalMemo(e.target.value)}
-                      placeholder="Internal notes (not visible to client)..."
-                      rows={2}
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-xs text-espresso outline-none focus:border-walnut resize-none"
-                    />
-                  </div>
-
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      onClick={skipPostBreakMemos}
-                      className="flex-1 py-2.5 rounded-lg border border-sand text-[12px] font-semibold text-bark cursor-pointer transition-all hover:border-terracotta hover:text-terracotta"
-                    >
-                      Skip
-                    </button>
-                    <button
-                      onClick={savePostBreakMemosAndDismiss}
-                      disabled={!postBreakClientMemo.trim() && !postBreakInternalMemo.trim()}
-                      className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[12px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50"
-                    >
-                      Save & Continue
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ─── Post-Break: Forced New Task Entry ─── */}
+      {/* ─── Post-Break: Forced Next Activity ─── */}
+      {/* Shown only when the task closed to go on break was Completed (nothing
+          to resume) — In Progress / On Hold ones just auto-resume in endBreak,
+          no modal at all. Two ways to log the next thing, same tab pattern as
+          the dashboard's own Log an Activity / Assigned Tasks box. */}
       {showPostBreakNewTaskModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4 py-8 overflow-y-auto">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md my-auto">
             <div className="py-4 px-5 border-b border-parchment">
-              <h3 className="text-sm font-bold text-espresso">Start Your Next Task</h3>
-              <p className="text-xs text-bark mt-1">Log a task to keep your time tracked.</p>
+              <h3 className="text-sm font-bold text-espresso">Welcome Back!</h3>
+              <p className="text-xs text-bark mt-1">Log an activity to keep your time tracked.</p>
+            </div>
+            <div className="flex border-b border-parchment">
+              {(["log", "assigned"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setPostBreakNewTaskTab(tab)}
+                  className={`flex-1 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors cursor-pointer ${
+                    postBreakNewTaskTab === tab
+                      ? "text-terracotta border-b-2 border-terracotta bg-terracotta-soft/40"
+                      : "text-stone hover:text-espresso border-b-2 border-transparent"
+                  }`}
+                >
+                  {tab === "log" ? "Log an Activity" : "Assigned Task"}
+                </button>
+              ))}
             </div>
             <div className="p-4">
-              <TaskEntryForm
-                onStartTask={async (data) => {
-                  setShowPostBreakNewTaskModal(false);
-                  await handleCheckAndStartTask(data);
-                }}
-                hasActiveTask={false}
-                role={role}
-                sessionState={sessionState}
-              />
+              {postBreakNewTaskTab === "log" ? (
+                <TaskEntryForm
+                  onStartTask={async (data) => {
+                    setShowPostBreakNewTaskModal(false);
+                    await handleCheckAndStartTask(data);
+                  }}
+                  hasActiveTask={false}
+                  role={role}
+                  sessionState={sessionState}
+                  bare
+                />
+              ) : (
+                userId && (
+                  <AssignedTasksWidget
+                    key={`post-break-assigned-${claimRefreshKey}`}
+                    userId={userId}
+                    sessionState={sessionState}
+                    hasActiveTask={false}
+                    onPlayAssignedTask={(task) => {
+                      setShowPostBreakNewTaskModal(false);
+                      handlePlayAssignedTask(task);
+                    }}
+                    onPlayTodo={(task, todo) => {
+                      setShowPostBreakNewTaskModal(false);
+                      handlePlayTodo(task, todo);
+                    }}
+                    orgTimezone={orgTimezone}
+                    isAdmin={hasBroadAdminAccess({ role })}
+                    refetchCount={widgetRefetchCount}
+                    bare
+                  />
+                )
+              )}
             </div>
           </div>
         </div>
