@@ -14,10 +14,10 @@ import { getInitials, getAvatarColor } from "@/lib/utils";
 type Project = { id: string; name: string };
 type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null };
 type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null };
-type Notif = { id: number; content: string; read: boolean; created_at: string };
+type Notif = { id: number; content: string; read: boolean; created_at: string; kind?: string | null };
 type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
 type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string };
-type DM = { id: number; body: string; created_at: string; mine: boolean; sender_name: string };
+type DM = { id: number; body: string; created_at: string; mine: boolean; sender_name: string; sender_id?: string | null };
 
 type Tab = "general" | "personal" | "comments";
 
@@ -317,7 +317,15 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
     const supabase = createClient();
     let channel: ReturnType<typeof supabase.channel> | null = null;
     const load = async () => {
-      const { data } = await supabase.from("messages").select("id, content, read, created_at").eq("target_user_id", currentUserId).order("created_at", { ascending: false }).limit(30);
+      // Comments is for remarks on work — submissions, mentions, job orders.
+      // A direct message belongs in Personal and nowhere else.
+      const { data } = await supabase
+        .from("messages")
+        .select("id, content, read, created_at, kind")
+        .eq("target_user_id", currentUserId)
+        .or("kind.is.null,kind.neq.message")
+        .order("created_at", { ascending: false })
+        .limit(30);
       setNotifs((data ?? []) as Notif[]);
     };
     void load();
@@ -658,10 +666,15 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-0.5">
                 {dms.length === 0 && <p className="text-[11px] text-walnut">No messages yet — say hi.</p>}
                 {dms.map((m) => (
-                  <div key={m.id} className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "ml-auto bg-amber-soft text-espresso border border-amber/20" : "bg-parchment text-espresso"}`}>
-                    {activeConv.is_group && !m.mine && <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>}
-                    <p className="whitespace-pre-wrap">{m.body}</p>
-                    <p className={`mt-0.5 text-[9px] ${m.mine ? "text-white/70" : "text-bark"}`}>{ago(m.created_at)} ago</p>
+                  <div key={m.id} className={`flex items-end gap-1.5 ${m.mine ? "flex-row-reverse" : ""}`}>
+                    {!m.mine && (
+                      <Avatar member={memberById.get(m.sender_id ?? "")} name={m.sender_name} size={20} />
+                    )}
+                    <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "bg-amber-soft text-espresso border border-amber/20" : "bg-parchment text-espresso"}`}>
+                      {activeConv.is_group && !m.mine && <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>}
+                      <p className="whitespace-pre-wrap">{m.body}</p>
+                      <p className="mt-0.5 text-[9px] text-bark">{ago(m.created_at)} ago</p>
+                    </div>
                   </div>
                 ))}
                 <div ref={dmEndRef} />
@@ -693,7 +706,17 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 convs.map((c) => (
                   <button key={c.id} type="button" onClick={() => void openConv(c)} className="w-full text-left rounded-lg border border-sand bg-white px-2.5 py-2 hover:bg-cream transition-colors">
                     <span className="flex items-center justify-between gap-2">
-                      <span className="text-[12px] font-semibold text-espresso truncate">{c.is_group ? "👥 " : ""}{c.title}</span>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="flex -space-x-1 shrink-0">
+                          {c.members
+                            .filter((m) => m.id !== currentUserId)
+                            .slice(0, 3)
+                            .map((m) => (
+                              <Avatar key={m.id} member={memberById.get(m.id)} name={m.name} size={18} />
+                            ))}
+                        </span>
+                        <span className="text-[12px] font-semibold text-espresso truncate">{c.is_group ? "👥 " : ""}{c.title}</span>
+                      </span>
                       {c.unread > 0 && <span className="shrink-0 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-terracotta text-white text-[9px]">{c.unread}</span>}
                     </span>
                     {c.last_message && <span className="block text-[11px] text-walnut truncate">{c.last_message.mine ? "You: " : ""}{c.last_message.body}</span>}

@@ -15,6 +15,10 @@ export async function notifyOne(
       target_user_id: opts.targetUserId,
       sender_id: opts.senderId,
       content: opts.content,
+      // What kind of thing this is, so a reader can separate a direct message
+      // from a comment on someone's work. Older rows have none and read as
+      // comments, which is what they were.
+      kind: opts.topic,
       read: false,
     });
   } catch { /* ignore */ }
