@@ -35,6 +35,9 @@ export async function GET(request: Request) {
        project_message_comments(id, body, created_at, author_id, author:profiles!project_message_comments_author_id_fkey(full_name, username))`
     )
     .in("project_id", ids)
+    // A trashed topic is soft-deleted, and this list never checked — so a topic
+    // came straight back on the next refetch and looked undeletable.
+    .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) return Response.json({ error: error.message }, { status: 500 });
