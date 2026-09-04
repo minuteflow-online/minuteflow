@@ -42,7 +42,6 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
   const [composingTopic, setComposingTopic] = useState(false);
-  const [topicProject, setTopicProject] = useState("");
   const [topicTitle, setTopicTitle] = useState("");
   const [topicBody, setTopicBody] = useState("");
   const [busyThread, setBusyThread] = useState<number | null>(null);
@@ -51,6 +50,11 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   // is simply absent for everyone else.
   const [trashed, setTrashed] = useState<Thread[]>([]);
   const [canSeeTrash, setCanSeeTrash] = useState(false);
+  // Typing "@" opens a name list; picking one completes the mention. Keyed by
+  // which box is being typed in, so the reply box and the topic body can each
+  // have their own picker without sharing state.
+  const [mentionFor, setMentionFor] = useState<"reply" | "topic" | "dm" | null>(null);
+  const [mentionQuery, setMentionQuery] = useState("");
 
   // ── Comments feed ──────────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<Notif[]>([]);
@@ -74,7 +78,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const visibleThreads = useMemo(() => {
     const q = search.trim().toLowerCase();
     return threads.filter((t) => {
-      if (projectFilter !== "all" && t.project_id !== projectFilter) return false;
+      if (projectFilter !== "all" && (t.title || "Untitled") !== projectFilter) return false;
       if (!q) return true;
       return (
         (t.title ?? "").toLowerCase().includes(q) ||
@@ -108,14 +112,59 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
     }
   }, []);
 
+  // The dropdown lists the topics themselves — what people named them.
+  const topicTitles = useMemo(
+    () => Array.from(new Set(threads.map((t) => t.title || "Untitled"))).sort(),
+    [threads]
+  );
+
+  // The partial name being typed after an "@", or null when the caret is not
+  // in a mention. Only the run of characters since the last "@" counts, and a
+  // space closes it — "@ann smith" is a finished mention plus a word.
+  const mentionFragment = (text: string) => {
+    const at = text.lastIndexOf("@");
+    if (at === -1) return null;
+    const after = text.slice(at + 1);
+    if (/\s/.test(after)) return null;
+    return after;
+  };
+
+  const onMentionInput = (value: string, which: "reply" | "topic" | "dm") => {
+    const frag = mentionFragment(value);
+    if (frag === null) {
+      setMentionFor(null);
+      setMentionQuery("");
+    } else {
+      setMentionFor(which);
+      setMentionQuery(frag);
+    }
+  };
+
+  const applyMention = (
+    text: string,
+    member: Member,
+    set: (v: string) => void
+  ) => {
+    const at = text.lastIndexOf("@");
+    set(text.slice(0, at) + "@" + nameOf(member) + " ");
+    setMentionFor(null);
+    setMentionQuery("");
+  };
+
+  const mentionMatches = useMemo(() => {
+    const q = mentionQuery.trim().toLowerCase();
+    const list = q ? team.filter((m) => nameOf(m).toLowerCase().includes(q)) : team;
+    return list.slice(0, 6);
+  }, [team, mentionQuery]);
+
   const createTopic = useCallback(async () => {
-    if (!topicProject || !topicTitle.trim() || !topicBody.trim()) return;
+    if (!topicTitle.trim() || !topicBody.trim()) return;
     setSending(true);
     try {
       const r = await fetch("/api/project-messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: topicProject, title: topicTitle.trim(), body: topicBody.trim() }),
+        body: JSON.stringify({ title: topicTitle.trim(), body: topicBody.trim() }),
       });
       if (r.ok) {
         setComposingTopic(false);
@@ -126,7 +175,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
     } finally {
       setSending(false);
     }
-  }, [topicProject, topicTitle, topicBody]);
+  }, [topicTitle, topicBody]);
 
   // Soft delete: the route stamps deleted_at, so the topic leaves every list
   // without the replies underneath it being destroyed. Author or admin only,
@@ -162,10 +211,22 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
         const all = [...((obj.projects ?? []) as Project[]), ...((op.projects ?? []) as Project[])];
         setProjects(all);
         const ids = all.map((p) => p.id).join(",");
-        if (ids) {
-          const d = await fetch(`/api/projects/messages-overview?projectIds=${ids}`, { cache: "no-store" }).then((r) => r.json()).catch(() => ({}));
-          if (!cancelled) setThreads(((d.messages ?? []) as Thread[]));
-        } else setThreads([]);
+        const [fromProjects, general] = await Promise.all([
+          ids
+            ? fetch(`/api/projects/messages-overview?projectIds=${ids}`, { cache: "no-store" })
+                .then((r) => r.json())
+                .catch(() => ({}))
+            : Promise.resolve({}),
+          fetch("/api/project-messages?general=1", { cache: "no-store" })
+            .then((r) => r.json())
+            .catch(() => ({})),
+        ]);
+        if (cancelled) return;
+        const merged = [
+          ...((general.messages ?? []) as Thread[]),
+          ...((fromProjects.messages ?? []) as Thread[]),
+        ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        setThreads(merged);
       } finally { if (!cancelled) setGLoading(false); }
     })();
     return () => { cancelled = true; };
@@ -308,7 +369,29 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 </div>
               ))}
               <div className="flex items-end gap-1.5 pt-1">
-                <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2} placeholder="Reply… (@name to tag)" className={`${input} resize-none flex-1`} />
+                <div className="relative flex-1">
+                  {mentionFor === "reply" && mentionMatches.length > 0 && (
+                    <div className="absolute bottom-full mb-1 left-0 right-0 z-10 rounded-lg border border-sand bg-white shadow-sm overflow-hidden">
+                      {mentionMatches.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => applyMention(reply, m, setReply)}
+                          className="w-full text-left px-2.5 py-1.5 text-[11px] text-espresso hover:bg-cream transition-colors"
+                        >
+                          {nameOf(m)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <textarea
+                    value={reply}
+                    onChange={(e) => { setReply(e.target.value); onMentionInput(e.target.value, "reply"); }}
+                    rows={2}
+                    placeholder="Reply… (@name to tag)"
+                    className={`${input} resize-none w-full`}
+                  />
+                </div>
                 <button type="button" onClick={() => void submitReply()} disabled={!reply.trim()} className="px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
@@ -316,19 +399,35 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
             <div className="space-y-2">
               {composingTopic ? (
                 <div className="rounded-lg border border-sand bg-cream/40 p-2.5 space-y-1.5">
-                  <select value={topicProject} onChange={(e) => setTopicProject(e.target.value)} className={input}>
-                    <option value="">Objective or Operation…</option>
-                    {projects.map((pr) => (
-                      <option key={pr.id} value={pr.id}>{pr.name}</option>
-                    ))}
-                  </select>
-                  <input value={topicTitle} onChange={(e) => setTopicTitle(e.target.value)} placeholder="Topic" className={input} />
-                  <textarea value={topicBody} onChange={(e) => setTopicBody(e.target.value)} rows={3} placeholder="What is this about?" className={`${input} resize-none`} />
+                  <input value={topicTitle} onChange={(e) => setTopicTitle(e.target.value)} placeholder="Topic title" className={input} autoFocus />
+                  <div className="relative">
+                    {mentionFor === "topic" && mentionMatches.length > 0 && (
+                      <div className="absolute bottom-full mb-1 left-0 right-0 z-10 rounded-lg border border-sand bg-white shadow-sm overflow-hidden">
+                        {mentionMatches.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => applyMention(topicBody, m, setTopicBody)}
+                            className="w-full text-left px-2.5 py-1.5 text-[11px] text-espresso hover:bg-cream transition-colors"
+                          >
+                            {nameOf(m)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      value={topicBody}
+                      onChange={(e) => { setTopicBody(e.target.value); onMentionInput(e.target.value, "topic"); }}
+                      rows={3}
+                      placeholder="What is this about? (@name to tag)"
+                      className={`${input} resize-none w-full`}
+                    />
+                  </div>
                   <div className="flex gap-1.5">
                     <button
                       type="button"
                       onClick={() => void createTopic()}
-                      disabled={sending || !topicProject || !topicTitle.trim() || !topicBody.trim()}
+                      disabled={sending || !topicTitle.trim() || !topicBody.trim()}
                       className="px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50"
                     >
                       Post
@@ -341,8 +440,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               ) : (
                 <button
                   type="button"
-                  onClick={() => { setComposingTopic(true); setTopicProject(projects[0]?.id ?? ""); }}
-                  disabled={projects.length === 0}
+                  onClick={() => setComposingTopic(true)}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
                 >
                   + New topic
@@ -358,8 +456,8 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 />
                 <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className={`${input} w-[38%]`}>
                   <option value="all">All topics</option>
-                  {projects.map((pr) => (
-                    <option key={pr.id} value={pr.id}>{pr.name}</option>
+                  {topicTitles.map((t) => (
+                    <option key={t} value={t}>{t}</option>
                   ))}
                   {canSeeTrash && <option value="__trash">Trash ({trashed.length})</option>}
                 </select>
