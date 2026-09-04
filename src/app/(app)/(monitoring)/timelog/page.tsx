@@ -11,7 +11,7 @@ import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import ScreenshotMarkerModal from "@/components/ScreenshotMarkerModal";
 import { ScreenshotTile } from "@/components/ScreenshotTile";
-import { screenshotTileTitle } from "@/lib/screenshots";
+import { screenshotTileTitle, fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshots";
 import CSVUploadModal from "@/components/CSVUploadModal";
 import TimeLogColumnFilter from "@/components/TimeLogColumnFilter";
 import RevisionBadge from "@/components/RevisionBadge";
@@ -403,18 +403,13 @@ export default function TimeLogPage() {
     // Fetch screenshots for all users
     if (fetchedLogs.length > 0) {
       const logIds = fetchedLogs.map((l) => l.id);
-      const { data: ssData } = await supabase
-        .from("task_screenshots")
-        .select("*")
-        .in("log_id", logIds);
+      // A raw unbounded select() here silently hit Supabase's 1000-row cap on a
+      // busy multi-VA day and returned the oldest rows, cutting off screenshots
+      // for anyone's later entries — see fetchScreenshotsForLogs for why this
+      // paginated helper exists instead of querying task_screenshots directly.
+      const ssData = await fetchScreenshotsForLogs(supabase, logIds);
       if (ssData) {
-        const grouped: Record<number, TaskScreenshot[]> = {};
-        (ssData as TaskScreenshot[]).forEach((ss) => {
-          if (ss.log_id) {
-            if (!grouped[ss.log_id]) grouped[ss.log_id] = [];
-            grouped[ss.log_id].push(ss);
-          }
-        });
+        const grouped = groupScreenshotsByLog(ssData);
         setScreenshots(grouped);
       }
     }
