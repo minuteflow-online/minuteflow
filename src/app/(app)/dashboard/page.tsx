@@ -3064,6 +3064,12 @@ export default function DashboardPage() {
     pendingAssignedTaskIdRef.current = task.assigned_tasks.id;
     pendingTodoLabelRef.current = todoLabel(todo.sort_order);
 
+    if (activeTask && activeIsOwnTime()) {
+      // Leaving personal time or a break: nothing to report, just start it.
+      handleCheckAndStartTask(formData);
+      return;
+    }
+
     if (activeTask) {
       const taskAsLog: TimeLog = {
         id: parseInt(activeTask.logId, 10),
@@ -3103,7 +3109,7 @@ export default function DashboardPage() {
     } else {
       handleCheckAndStartTask(formData);
     }
-  }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
+  }, [activeTask, activeIsOwnTime, userId, profile, handleCheckAndStartTask, accountClientMap]);
 
   // Submitting the assigned task the VA is currently clocked into should hand
   // them straight to the next thing — but the clock and screen monitoring for
