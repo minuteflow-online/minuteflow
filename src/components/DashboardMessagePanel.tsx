@@ -362,7 +362,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
       <div className="flex items-center gap-1 px-2 pt-2">
         {([["general", "General"], ["personal", "Personal"], ["comments", "Comments"]] as [Tab, string][]).map(([k, label]) => (
           <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setComposingChat(false); }}
-            className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
+            className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-amber text-white" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
             {label}
             {k === "personal" && unreadTotal > 0 && <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-terracotta text-white text-[8px] align-middle">{unreadTotal}</span>}
             {k === "comments" && hasNewComments && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-terracotta align-middle" />}
@@ -436,7 +436,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                     className={`${input} resize-none w-full`}
                   />
                 </div>
-                <button type="button" onClick={() => void submitReply()} disabled={!reply.trim()} className="px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50 shrink-0">Send</button>
+                <button type="button" onClick={() => void submitReply()} disabled={!reply.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
           ) : (
@@ -472,7 +472,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                       type="button"
                       onClick={() => void createTopic()}
                       disabled={sending || !topicTitle.trim() || !topicBody.trim()}
-                      className="px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50"
+                      className="px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 disabled:opacity-50"
                     >
                       Post
                     </button>
@@ -485,7 +485,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 <button
                   type="button"
                   onClick={() => setComposingTopic(true)}
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 transition-colors disabled:opacity-50"
                 >
                   + New topic
                 </button>
@@ -567,7 +567,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-0.5">
                 {dms.length === 0 && <p className="text-[11px] text-walnut">No messages yet — say hi.</p>}
                 {dms.map((m) => (
-                  <div key={m.id} className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "ml-auto bg-sage text-white" : "bg-parchment text-espresso"}`}>
+                  <div key={m.id} className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "ml-auto bg-amber text-white" : "bg-parchment text-espresso"}`}>
                     {activeConv.is_group && !m.mine && <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>}
                     <p className="whitespace-pre-wrap">{m.body}</p>
                     <p className={`mt-0.5 text-[9px] ${m.mine ? "text-white/70" : "text-bark"}`}>{ago(m.created_at)} ago</p>
@@ -577,7 +577,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               </div>
               <div className="flex items-end gap-1.5">
                 <textarea value={dmText} onChange={(e) => setDmText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDm(); } }} rows={1} placeholder="Message…" className={`${input} resize-none flex-1`} />
-                <button type="button" onClick={() => void sendDm()} disabled={sending || !dmText.trim()} className="px-2.5 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50 shrink-0">Send</button>
+                <button type="button" onClick={() => void sendDm()} disabled={sending || !dmText.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber text-white text-[11px] font-semibold hover:bg-amber/90 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
           ) : composingChat ? (
@@ -593,7 +593,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 ))}
               </div>
               {picked.size > 1 && <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} placeholder="Group name (optional)" className={input} />}
-              <button type="button" onClick={() => void startChat()} disabled={sending || picked.size === 0} className="w-full px-3 py-1.5 rounded-lg bg-sage text-white text-[12px] font-semibold hover:bg-sage/90 disabled:opacity-50">{picked.size > 1 ? "Start group chat" : "Start chat"}</button>
+              <button type="button" onClick={() => void startChat()} disabled={sending || picked.size === 0} className="w-full px-3 py-1.5 rounded-lg bg-amber text-white text-[12px] font-semibold hover:bg-amber/90 disabled:opacity-50">{picked.size > 1 ? "Start group chat" : "Start chat"}</button>
             </div>
           ) : (
             <div className="space-y-2">
