@@ -104,10 +104,10 @@ export default function TaskDetailsView({
   const rows: Array<[string, string | null]> = [
     ["Account", str("account")],
     ["Objective", str("project")],
+    ["Task", str("task_name")],
     ["Category", str("category")],
     ["Recurs", templateId != null ? (recurrence ?? "Recurring") : null],
     ["Status", str("status") ? statusLabel(str("status") as string) : null],
-    ["Client Detail", str("task_detail")],
     ["Notes", str("task_notes")],
     ["Instructions", str("instructions")],
     ["Link", str("link")],
@@ -131,16 +131,21 @@ export default function TaskDetailsView({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-1.5">
-        <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_name") ?? "Untitled task"}</h4>
-        {task.recurring_template_id != null && (
-          <span
-            title="Repeats — generated from a recurring template"
-            className="shrink-0 rounded-full border border-amber/30 bg-amber-soft px-2 py-[1px] text-[10px] font-semibold text-amber"
-          >
-            ↻ Recurring
-          </span>
-        )}
+      {/* Title is the client detail (client memo), not the internal task name —
+          it's what the work actually is. The task name lives in its own row. */}
+      <div className="space-y-0.5">
+        <div className="flex items-center gap-1.5">
+          <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_detail") ?? str("task_name") ?? "Untitled task"}</h4>
+          {task.recurring_template_id != null && (
+            <span
+              title="Repeats — generated from a recurring template"
+              className="shrink-0 rounded-full border border-amber/30 bg-amber-soft px-2 py-[1px] text-[10px] font-semibold text-amber"
+            >
+              ↻ Recurring
+            </span>
+          )}
+        </div>
+        <p className="text-[10px] font-bold uppercase tracking-wide text-walnut">Client Detail</p>
       </div>
 
       <dl className="divide-y divide-sand rounded-lg border border-sand overflow-hidden">
