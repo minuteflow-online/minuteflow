@@ -23,19 +23,12 @@ interface ProjectSidebarProps {
   onQuickAction: (mapping: QuickActionMapping) => void;
   onAutoHoldAction: (mapping: QuickActionMapping) => void;
   isAdmin: boolean;
-  /**
-   * Whether to offer the two message actions at all. They start a tracked
-   * message task, which only makes sense for someone whose time is being
-   * tracked — a Founder never needs them, and an admin only once clocked in.
-   */
-  showMessageActions?: boolean;
 }
 
 export default function ProjectSidebar({
   onQuickAction,
   onAutoHoldAction,
   isAdmin,
-  showMessageActions = true,
 }: ProjectSidebarProps) {
   return (
     <div className="rounded-xl border border-sand bg-white overflow-hidden">
@@ -48,7 +41,6 @@ export default function ProjectSidebar({
 
       <div className="max-h-[500px] overflow-y-auto">
         {/* Quick Message Actions */}
-        {showMessageActions && (
         <div className="px-4 py-3 border-b border-parchment">
           <div className="text-[9px] font-bold text-bark uppercase tracking-wider mb-2">
             Quick Actions
@@ -84,7 +76,6 @@ export default function ProjectSidebar({
             </button>
           </div>
         </div>
-        )}
 
 
       </div>

@@ -27,10 +27,15 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
-  if (!projectId) return Response.json({ error: "projectId is required" }, { status: 400 });
+  const general = searchParams.get("general") === "1";
+  if (!projectId && !general) {
+    return Response.json({ error: "projectId is required" }, { status: 400 });
+  }
 
   const supabase = serviceClient();
-  if (!(await canAccessProject(supabase, profile, user.id, projectId))) {
+  // A general topic hangs off no project, so there is no project membership to
+  // check — the board is the whole team by definition.
+  if (projectId && !(await canAccessProject(supabase, profile, user.id, projectId))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -42,7 +47,7 @@ export async function GET(request: Request) {
        project_message_comments(id, body, author_id, created_at,
          author:profiles!project_message_comments_author_id_fkey(${authorSelect}))`
     )
-    .eq("project_id", projectId)
+    [general ? "is" : "eq"]("project_id", general ? null : projectId)
     .is("deleted_at", null)
     .order("pinned", { ascending: false })
     .order("created_at", { ascending: false });
@@ -78,15 +83,16 @@ export async function POST(request: Request) {
     body?: string;
     category?: string | null;
   };
-  const projectId = body.project_id;
+  // No project_id is a general topic: it belongs to the team board rather than
+  // to an objective or operation, and anyone signed in can start one.
+  const projectId = body.project_id ?? null;
   const title = body.title?.trim();
   const content = body.body?.trim();
-  if (!projectId) return Response.json({ error: "project_id is required" }, { status: 400 });
   if (!title) return Response.json({ error: "title is required" }, { status: 400 });
   if (!content) return Response.json({ error: "body is required" }, { status: 400 });
 
   const supabase = serviceClient();
-  if (!(await canAccessProject(supabase, profile, user.id, projectId))) {
+  if (projectId && !(await canAccessProject(supabase, profile, user.id, projectId))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

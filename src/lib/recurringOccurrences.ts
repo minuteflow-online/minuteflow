@@ -38,6 +38,12 @@ export type OccurrenceTemplate = {
   recurrence_day_of_month?: number | null;
 };
 
+/** Weekday index (0=Sun … 6=Sat) of an org "YYYY-MM-DD" date — matches the
+ *  convention profiles.work_days is stored in. */
+function weekdayOf(dateStr: string): number {
+  return new Date(`${dateStr}T00:00:00Z`).getUTCDay();
+}
+
 export function addDays(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -218,8 +224,33 @@ export async function generateOccurrences(
   const assigneeIds = assigneeIdsOf(template);
   if (assigneeIds.length === 0) return { created: 0, dates: [] };
 
-  const wanted = occurrenceDates(template, from);
+  let wanted = occurrenceDates(template, from);
   if (wanted.length === 0) return { created: 0, dates: [] };
+
+  // A "daily" template means every *working* day, not every calendar day. A
+  // Mon–Fri VA should not collect weekend occurrences — a weekend date is only
+  // deliberate when a dated recurrence (weekly/monthly) lands there, never from
+  // a plain daily. Constrain daily to the assignees' scheduled weekdays.
+  // Weekly/biweekly/monthly are left alone: the chosen day IS the intent.
+  if (template.recurrence_type === "daily") {
+    const { data: profs } = await supabase
+      .from("profiles")
+      .select("work_days")
+      .in("id", assigneeIds);
+    // Union of everyone's working weekdays, so a task shared by several people
+    // is never dropped for someone who does work that day. An assignee with no
+    // schedule set works every day (worked stays all-inclusive → no filtering).
+    const worked = new Set<number>();
+    let everyDay = false;
+    for (const p of (profs ?? []) as Array<{ work_days: number[] | null }>) {
+      if (!p.work_days || p.work_days.length === 0) { everyDay = true; break; }
+      for (const d of p.work_days) worked.add(d);
+    }
+    if (!everyDay && worked.size > 0) {
+      wanted = wanted.filter((date) => worked.has(weekdayOf(date)));
+    }
+    if (wanted.length === 0) return { created: 0, dates: [] };
+  }
 
   // Removed dates count as taken. A soft-deleted occurrence is a decision —
   // "not this week" — so filtering it out here would have the generator
