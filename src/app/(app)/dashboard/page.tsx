@@ -3513,9 +3513,17 @@ export default function DashboardPage() {
           ? "grid-cols-1 md:grid-cols-[1fr_240px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px]";
 
+        // Founder never gets the Quick Pick message actions; an admin gets
+        // them only once clocked in. Both start a tracked message task, which
+        // is meaningless when no clock is running.
+        const showQuickMessageActions =
+          role === "founder" ? false : hasBroadAdminAccess({ role }) ? sessionState !== "idle" : true;
+
         return (
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
-            {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
+            {/* Left: Messages, where conversation lives rather than buried under
+                the task widgets on the right. */}
+            {role !== "va" && userId && <DashboardMessagePanel currentUserId={userId} />}
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
               <TaskWidgetsTabs
@@ -3536,25 +3544,32 @@ export default function DashboardPage() {
                 activeTaskClientMemo={activeTask?.client_memo || ""}
               />
             )}
-            {/* Right column: available/quick-pick, with the Messages inbox under it. */}
+            {/* Right column: Quick Pick, then the tasks up for grabs, then
+                team monitoring underneath. */}
             <div className="space-y-5">
-              {canWorkTasks && sessionState === "idle" && (
-                <AvailableTasksWidget
-                  key={`avail-${claimRefreshKey}`}
-                  onClaimed={() => setClaimRefreshKey((k) => k + 1)}
-                  canSeeFixedPay={isPerTask || canSeeAvailable}
-                  startCollapsed={isVa}
-                />
-              )}
               {/* Quick Pick — hidden for VAs before clock-in */}
               {(role !== "va" || sessionState !== "idle") && (
                 <ProjectSidebar
                   onQuickAction={handleQuickAction}
                   onAutoHoldAction={handleAutoHoldAndStartMessage}
                   isAdmin={hasBroadAdminAccess({ role })}
+                  showMessageActions={showQuickMessageActions}
                 />
               )}
-              {userId && <DashboardMessagePanel currentUserId={userId} />}
+              {/* Tasks up for grabs. Collapsed by default for anyone who is not
+                  actively picking one up. */}
+              {(canWorkTasks || hasBroadAdminAccess({ role })) && (
+                <AvailableTasksWidget
+                  key={`avail-${claimRefreshKey}`}
+                  onClaimed={() => setClaimRefreshKey((k) => k + 1)}
+                  canSeeFixedPay={isPerTask || canSeeAvailable}
+                  startCollapsed={isVa || sessionState !== "idle"}
+                />
+              )}
+              {role !== "va" && (
+                <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />
+              )}
+              {isVa && userId && <DashboardMessagePanel currentUserId={userId} />}
             </div>
           </div>
         );
