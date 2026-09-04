@@ -1648,13 +1648,21 @@ export default function ProductivityCalendarPage() {
   }
 
   // Real time_logs for dateStr that don't line up with anything on THAT day's
-  // plan — most often a task someone kept working across several days without
-  // ever moving its start_date forward, so it's still sitting on whichever
-  // earlier day it was first scheduled and never shows up on today's list at
-  // all. Precisely-attributed logs (assigned_task_id set) are flagged when
-  // that task isn't one of today's scheduled rows; unattributed logs (no
-  // assigned_task_id — actualMinutesByKey's fallback bucket) are flagged when
-  // no scheduled row today shares their name+account either. The day's own
+  // plan. Two different stories, told with two different colors (matching the
+  // rule already established elsewhere — Submissions' late_other_day chip and
+  // this file's own Actual Timeline "moved" blocks):
+  //   - moved (plum): the task DOES have a plan — a start_date or due_date is
+  //     set — just not today. Most often someone kept working it across
+  //     several days without ever moving that date forward, so it's still
+  //     sitting on whichever earlier day it was first scheduled.
+  //   - never planned (blue): no start_date or due_date at all — started
+  //     straight from Log a Task or the task list without ever being put on
+  //     the calendar, so there was never a "today" for it to belong to.
+  // Precisely-attributed logs (assigned_task_id set) are flagged when that
+  // task isn't one of today's scheduled rows; unattributed logs (no
+  // assigned_task_id — actualMinutesByKey's fallback bucket, always "never
+  // planned" since there's no task row to have a date on) are flagged when no
+  // scheduled row today shares their name+account either. The day's own
   // Planned/Actual total already counts this time; this is only about it
   // having nowhere to visually attach on the calendar for today specifically.
   function unscheduledActualForDate(vaId: string | null, dateStr: string) {
@@ -1666,7 +1674,10 @@ export default function ProductivityCalendarPage() {
     );
     const titleCase = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
-    const out: Array<{ key: string; taskId: number | null; name: string; account: string | null; minutes: number }> = [];
+    const out: Array<{
+      key: string; taskId: number | null; name: string; account: string | null;
+      category: string | null; minutes: number; plannedMinutes: number | null; moved: boolean;
+    }> = [];
 
     for (const [taskKey, minutes] of actualMinutesByTaskId) {
       const [idStr, keyDate] = taskKey.split("|");
@@ -1674,7 +1685,16 @@ export default function ProductivityCalendarPage() {
       const taskId = Number(idStr);
       if (scheduledIds.has(taskId)) continue;
       const task = assignedTasksAll.find((t) => t.id === taskId);
-      out.push({ key: `task-${taskId}`, taskId, name: task?.task_name ?? "Unknown task", account: task?.account ?? null, minutes });
+      out.push({
+        key: `task-${taskId}`,
+        taskId,
+        name: task?.task_name ?? "Unknown task",
+        account: task?.account ?? null,
+        category: task?.category ?? null,
+        minutes,
+        plannedMinutes: task?.planned_minutes ?? null,
+        moved: Boolean(task?.start_date || task?.due_date),
+      });
     }
 
     const prefix = `${vaId}|${dateStr}|`;
@@ -1682,10 +1702,34 @@ export default function ProductivityCalendarPage() {
       if (!matchKey.startsWith(prefix)) continue;
       const [nameLower, accountLower] = matchKey.slice(prefix.length).split("|");
       if (scheduledKeys.has(`${nameLower}|${accountLower ?? ""}`)) continue;
-      out.push({ key: matchKey, taskId: null, name: titleCase(nameLower || "Unknown task"), account: accountLower ? titleCase(accountLower) : null, minutes });
+      out.push({
+        key: matchKey,
+        taskId: null,
+        name: titleCase(nameLower || "Unknown task"),
+        account: accountLower ? titleCase(accountLower) : null,
+        category: null,
+        minutes,
+        plannedMinutes: null,
+        moved: false,
+      });
     }
 
     return out.sort((a, b) => b.minutes - a.minutes);
+  }
+
+  // Same shade-to-actual fill durationRowOverlay draws for a scheduled row,
+  // reused here against the task's OWN planned length (not today's — there
+  // is no "today's plan" for these by definition) so a moved/never-planned
+  // block still shows how much of its own planned time this day's chunk used.
+  // No planned_minutes at all (the unattributed, never-planned bucket) means
+  // nothing to compare against, so it renders with no fill — the ring color
+  // alone carries the meaning there.
+  function unscheduledRowOverlay(item: { minutes: number; plannedMinutes: number | null }) {
+    if (!item.plannedMinutes || item.plannedMinutes <= 0) return null;
+    const fillPercent = Math.min(item.minutes / item.plannedMinutes, 1) * 100;
+    const overMinutes = Math.round(item.minutes - item.plannedMinutes);
+    const isOver = overMinutes > 0;
+    return { fillPercent, isOver, overMinutes };
   }
 
   // Actual Timeline: the day's blocks reflowed by what really happened,
@@ -2221,7 +2265,9 @@ export default function ProductivityCalendarPage() {
                       );
                     })
                   )}
-                  {unscheduledActualForDate(dayUserId, dateStr).map((item) => (
+                  {unscheduledActualForDate(dayUserId, dateStr).map((item) => {
+                    const overlay = unscheduledRowOverlay(item);
+                    return (
                     <button
                       key={item.key}
                       type="button"
@@ -2232,16 +2278,24 @@ export default function ProductivityCalendarPage() {
                         if (task) void openScheduleExisting(task, dateStr);
                       }}
                       title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged, not scheduled this day`}
-                      className={`w-full overflow-hidden rounded-md border-2 border-plum bg-plum-soft px-1.5 py-1 text-left shadow-sm ${
-                        item.taskId == null ? "cursor-default" : "cursor-pointer hover:opacity-90"
-                      }`}
+                      className={`relative w-full overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm ${categoryBlockClasses(item.category)} ${
+                        item.moved ? "ring-2 ring-plum ring-inset" : "ring-2 ring-blue-500 ring-inset"
+                      } ${item.taskId == null ? "cursor-default" : "cursor-pointer hover:opacity-90"}`}
                     >
-                      <p className="truncate text-[11px] font-semibold text-plum">{item.name}</p>
-                      <p className="truncate text-[9px] text-plum/80">
-                        {[item.account, formatDuration(item.minutes)].filter(Boolean).join(" | ")} · not on plan
+                      {overlay && (
+                        <div
+                          className="pointer-events-none absolute inset-y-0 left-0 bg-ink/25"
+                          style={{ width: `${overlay.fillPercent}%` }}
+                        />
+                      )}
+                      <p className="relative truncate text-[11px] font-semibold leading-tight">{item.name}</p>
+                      <p className="relative truncate text-[9px] opacity-80">
+                        {[item.account, formatDuration(item.minutes)].filter(Boolean).join(" | ")}
+                        {" · "}{item.moved ? "moved" : "not planned"}
                       </p>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -3381,10 +3435,12 @@ export default function ProductivityCalendarPage() {
                   if (unscheduled.length === 0) return null;
                   return (
                   <div className="space-y-1.5 border-t border-sand p-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-plum">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-espresso">
                       Worked, not on this day&apos;s plan
                     </p>
-                    {unscheduled.map((item) => (
+                    {unscheduled.map((item) => {
+                      const overlay = unscheduledRowOverlay(item);
+                      return (
                       <button
                         key={item.key}
                         type="button"
@@ -3394,22 +3450,31 @@ export default function ProductivityCalendarPage() {
                           const task = assignedTasksAll.find((t) => t.id === item.taskId);
                           if (task) void openScheduleExisting(task, selectedDate);
                         }}
-                        title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged today, not scheduled today`}
-                        className={`flex w-full items-center justify-between gap-3 rounded-md border-2 border-plum bg-plum-soft px-2 py-1.5 text-left shadow-sm transition-opacity ${
-                          item.taskId == null ? "cursor-default" : "hover:opacity-90 cursor-pointer"
+                        title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged today${
+                          item.moved ? ", scheduled a different day" : ", never scheduled"
                         }`}
+                        className={`relative flex w-full items-center justify-between gap-3 overflow-hidden rounded-md border px-2 py-1.5 text-left shadow-sm transition-opacity ${categoryBlockClasses(item.category)} ${
+                          item.moved ? "ring-2 ring-plum ring-inset" : "ring-2 ring-blue-500 ring-inset"
+                        } ${item.taskId == null ? "cursor-default" : "hover:opacity-90 cursor-pointer"}`}
                       >
-                        <span className="min-w-0">
-                          <span className="block truncate text-[13px] font-semibold text-plum">{item.name}</span>
-                          <span className="block truncate text-[10px] text-plum/80">
-                            {item.account ?? "—"} · scheduled on a different day
+                        {overlay && (
+                          <div
+                            className="pointer-events-none absolute inset-y-0 left-0 bg-ink/25"
+                            style={{ width: `${overlay.fillPercent}%` }}
+                          />
+                        )}
+                        <span className="relative min-w-0">
+                          <span className="block truncate text-[13px] font-semibold">{item.name}</span>
+                          <span className="block truncate text-[10px] opacity-80">
+                            {item.account ?? "—"} · {item.moved ? "scheduled a different day" : "never scheduled"}
                           </span>
                         </span>
-                        <span className="shrink-0 text-right text-[12px] font-semibold text-plum">
+                        <span className="relative shrink-0 text-right text-[12px] font-semibold">
                           {formatDuration(item.minutes)}
                         </span>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                   );
                 })()}
