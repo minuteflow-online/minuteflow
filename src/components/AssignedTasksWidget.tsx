@@ -16,6 +16,10 @@ interface AssignedTasksWidgetProps {
   hasActiveTask: boolean;
   onPlayAssignedTask: (task: VAAssignedTask) => void;
   onPlayTodo: (task: VAAssignedTask, todo: TaskTodo) => void;
+  /** Called after a submit whose task matches activeAssignedTaskId — the VA just
+   *  submitted the task they're currently clocked into, so the caller should stop
+   *  that clock and prompt for the next activity instead of leaving it running. */
+  onActiveTaskSubmitted?: () => void;
   orgTimezone?: string;
   /** Increment to force a re-fetch from the server (e.g. after wizard cancel or task start). */
   refetchCount?: number;
@@ -96,6 +100,7 @@ export default function AssignedTasksWidget({
   isAdmin = false,
   onPlayAssignedTask,
   onPlayTodo,
+  onActiveTaskSubmitted,
   orgTimezone = "UTC",
   refetchCount = 0,
   activeAssignedTaskId = null,
@@ -616,6 +621,15 @@ export default function AssignedTasksWidget({
             // The server decides: submitted, or completed/approved when the
             // task's category or review_required says no review is needed.
             void updateStatus(task, status);
+            // updateStatus only writes the assignment row — it never touches
+            // the running time_log, so without this the VA's clock just kept
+            // ticking against a task that was already turned in until they
+            // happened to notice and switch (this was the multi-hour "from
+            // submit to task" gap in Reports). Only fire when the task just
+            // submitted is the one actually being clocked right now.
+            if (activeAssignedTaskId === task.assigned_tasks.id) {
+              onActiveTaskSubmitted?.();
+            }
           }}
         />
       )}

@@ -19,6 +19,8 @@ interface TaskWidgetsTabsProps {
   hasActiveTask: boolean;
   onPlayAssignedTask: (task: VAAssignedTask) => void;
   onPlayTodo: (task: VAAssignedTask, todo: TaskTodo) => void;
+  /** Called when the task submitted was the one the VA is currently clocked into. */
+  onActiveTaskSubmitted?: () => void;
   orgTimezone: string;
   isAdmin: boolean;
   refetchCount: number;
@@ -46,6 +48,7 @@ export default function TaskWidgetsTabs({
   hasActiveTask,
   onPlayAssignedTask,
   onPlayTodo,
+  onActiveTaskSubmitted,
   orgTimezone,
   isAdmin,
   refetchCount,
@@ -97,6 +100,7 @@ export default function TaskWidgetsTabs({
             hasActiveTask={hasActiveTask}
             onPlayAssignedTask={onPlayAssignedTask}
             onPlayTodo={onPlayTodo}
+            onActiveTaskSubmitted={onActiveTaskSubmitted}
             orgTimezone={orgTimezone}
             isAdmin={isAdmin}
             refetchCount={refetchCount}
