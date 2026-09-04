@@ -3528,10 +3528,11 @@ export default function DashboardPage() {
 
         return (
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
-            {/* Left column: Team (non-VAs) + the Messages hub (everyone). */}
+            {/* Left column: Team for non-VAs; the Messages hub for VAs (admins
+                get Messages inside Quick Pick instead of the Projects list). */}
             <div className="space-y-5">
               {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
-              {userId && <DashboardMessagePanel currentUserId={userId} />}
+              {userId && role === "va" && <DashboardMessagePanel currentUserId={userId} />}
             </div>
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
@@ -3568,6 +3569,7 @@ export default function DashboardPage() {
                 onQuickAction={handleQuickAction}
                 onAutoHoldAction={handleAutoHoldAndStartMessage}
                 isAdmin={hasBroadAdminAccess({ role })}
+                messagesSlot={userId && role !== "va" ? <DashboardMessagePanel currentUserId={userId} /> : undefined}
               />
             )}
           </div>
