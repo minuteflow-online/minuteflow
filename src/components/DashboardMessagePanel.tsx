@@ -63,6 +63,9 @@ function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; s
 
 export default function DashboardMessagePanel({ currentUserId }: { currentUserId: string }) {
   const [tab, setTab] = useState<Tab>("general");
+  // Expanded moves this exact panel into an overlay rather than rendering a
+  // second copy, so whatever you were reading or typing survives the switch.
+  const [expanded, setExpanded] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   // ── General (objective + operation threads) ────────────────────────────────
@@ -105,6 +108,15 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [groupTitle, setGroupTitle] = useState("");
   const [sending, setSending] = useState(false);
   const dmEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
 
   const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const memberById = useMemo(() => new Map(allMembers.map((m) => [m.id, m])), [allMembers]);
@@ -364,10 +376,23 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const unreadTotal = convs.reduce((n, c) => n + c.unread, 0);
   const hasNewComments = notifs.some((n) => !n.read);
 
-  return (
-    <div className="rounded-xl border border-amber/30 bg-amber-soft/25 shadow-sm flex flex-col h-[520px] overflow-hidden">
-      <div className="px-3 py-2.5 border-b border-amber/20 bg-amber-soft/50">
+  const panel = (
+    <div
+      className={`rounded-xl border border-amber/30 bg-amber-soft/25 shadow-sm flex flex-col overflow-hidden ${
+        expanded ? "h-[80vh] bg-white" : "h-[520px]"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-amber/20 bg-amber-soft/50">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Messages</h3>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? "Close" : "Expand"}
+          aria-label={expanded ? "Close expanded messages" : "Expand messages"}
+          className="text-[12px] leading-none text-bark hover:text-espresso transition-colors px-1"
+        >
+          {expanded ? "\u2715" : "\u2921"}
+        </button>
       </div>
       <div className="flex items-center gap-1 px-2 pt-2">
         {([["general", "General"], ["personal", "Personal"], ["comments", "Comments"]] as [Tab, string][]).map(([k, label]) => (
@@ -628,6 +653,19 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
             </div>
           )
         )}
+      </div>
+    </div>
+  );
+
+  if (!expanded) return panel;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
+      onClick={() => setExpanded(false)}
+    >
+      <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+        {panel}
       </div>
     </div>
   );
