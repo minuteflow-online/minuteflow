@@ -1909,6 +1909,7 @@ export default function ProductivityCalendarPage() {
                                       openEditBlock(task);
                                     }
                                   }}
+                                  title={`${task.task_name}${task.account ? " — " + task.account : ""}`}
                                   className={`pointer-events-auto absolute rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                                   style={{ top, height, left, width }}
                                 >
@@ -1922,7 +1923,7 @@ export default function ProductivityCalendarPage() {
                                   <p className="relative truncate text-[9px] font-semibold leading-tight">
                                     {label && <span className="opacity-70">[{label}] </span>}
                                     {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                    {task.task_name}
+                                    {task.task_detail || task.task_name}
                                   </p>
                                   {overlay?.isOver && (
                                     <p
@@ -2023,13 +2024,16 @@ export default function ProductivityCalendarPage() {
                           <button
                             type="button"
                             onClick={() => openEditBlock(task)}
-                            title={moved ? timelineMoveSummary(plan, { top, height }) : undefined}
+                            title={[
+                              `${task.task_name}${task.account ? " — " + task.account : ""}`,
+                              moved ? timelineMoveSummary(plan, { top, height }) : null,
+                            ].filter(Boolean).join(" · ")}
                             className={`pointer-events-auto absolute inset-x-0.5 rounded-md px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${moved ? "border-2 border-plum" : "border"} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                             style={{ top, height }}
                           >
                             <p className="truncate text-[9px] font-semibold leading-tight">
                               {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                              {task.task_name}
+                              {task.task_detail || task.task_name}
                             </p>
                             {isOver && (
                               <p className="pointer-events-none absolute inset-x-0 -translate-y-full truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white" style={{ top: height }}>
@@ -2147,8 +2151,7 @@ export default function ProductivityCalendarPage() {
                         )}
                         <p className="relative truncate text-[11px] font-semibold leading-tight">
                           {row.recurring && <RecurringMark className="mr-0.5" />}
-                          {row.name}
-                          {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
+                          {row.detail || row.name}
                         </p>
                         {/* Account and length share a line — the length has to stay
                             visible here because, unlike a Time Block, nothing about
@@ -3186,6 +3189,7 @@ export default function ProductivityCalendarPage() {
                                 openEditBlock(task);
                               }
                             }}
+                            title={`${task.task_name}${task.account ? " — " + task.account : ""}`}
                             className={`pointer-events-auto absolute rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                             style={{ top, height, left, width }}
                           >
@@ -3199,10 +3203,7 @@ export default function ProductivityCalendarPage() {
                             <p className="relative truncate text-[10px] font-semibold leading-tight">
                               {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
                               {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                              {task.task_name}
-                              {task.task_detail && (
-                                <span className="font-normal opacity-80"> | {task.task_detail}</span>
-                              )}
+                              {task.task_detail || task.task_name}
                             </p>
                             {task.account && (
                               <p className="relative truncate text-[9px] opacity-80">{task.account}</p>
@@ -3259,6 +3260,7 @@ export default function ProductivityCalendarPage() {
                           const task = daySchedule.find((t) => t.id === row.id);
                           if (task) void openScheduleExisting(task, selectedDate);
                         }}
+                        title={`${row.name}${row.account ? " — " + row.account : ""} · ${formatDuration(row.minutes)}`}
                         className={`relative flex w-full items-center justify-between gap-3 overflow-hidden rounded-md border px-2 py-1.5 text-left shadow-sm transition-opacity ${categoryBlockClasses(row.category)} ${
                           row.source === "fixed" ? "cursor-default" : "hover:opacity-90 cursor-pointer"
                         } ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
@@ -3275,14 +3277,11 @@ export default function ProductivityCalendarPage() {
                               either view. Colours come from categoryBlockClasses,
                               so the secondary line rides the block's own text
                               colour at reduced opacity rather than fighting it. */}
-                          {/* Same two lines the grid blocks use: task and client
-                              detail together, account underneath. The duration on
-                              the right stays — unlike a grid block, nothing about
-                              this row's position says how long it takes. */}
+                          {/* Client detail is the title so the row reads at a
+                              glance; the full task name is on hover via title. */}
                           <span className="block truncate text-[13px] font-semibold">
                             {row.recurring && <RecurringMark className="mr-0.5" />}
-                            {row.name}
-                            {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
+                            {row.detail || row.name}
                           </span>
                           <span className="block truncate text-[10px] opacity-80">
                             {row.account}
@@ -3356,16 +3355,16 @@ export default function ProductivityCalendarPage() {
                               <button
                                 type="button"
                                 onClick={() => openEditBlock(task)}
-                                title={moved ? timelineMoveSummary(plan, { top, height }) : undefined}
+                                title={[
+                                  `${task.task_name}${task.account ? " — " + task.account : ""}`,
+                                  moved ? timelineMoveSummary(plan, { top, height }) : null,
+                                ].filter(Boolean).join(" · ")}
                                 className={`pointer-events-auto absolute left-16 right-2 rounded-md px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${moved ? "border-2 border-plum" : "border"} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                                 style={{ top, height }}
                               >
                                 <p className="truncate text-[11px] font-semibold">
                                   {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                  {task.task_name}
-                                  {task.task_detail && (
-                                    <span className="font-normal opacity-80"> | {task.task_detail}</span>
-                                  )}
+                                  {task.task_detail || task.task_name}
                                 </p>
                                 {task.account && (
                                   <p className="truncate text-[10px] opacity-80">{task.account}</p>
@@ -3445,6 +3444,7 @@ export default function ProductivityCalendarPage() {
                               openEditBlock(task);
                             }
                           }}
+                          title={`${task.task_name}${task.account ? " — " + task.account : ""}`}
                           className={`pointer-events-auto absolute rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                           style={{ top, height, left, width }}
                         >
@@ -3465,11 +3465,9 @@ export default function ProductivityCalendarPage() {
                           )}
                           <div className="relative flex h-full items-start gap-2">
                             <div className="min-w-0 shrink-0 max-w-[55%]">
-                              {/* Task and client detail share the top line; the
-                                  account sits underneath. The block's position and
-                                  height already say when it runs, which is why the
-                                  times this used to print were the one thing here
-                                  you could read off the grid anyway. */}
+                              {/* Client detail is the title so the card reads at a
+                                  glance; the full task name + account is available
+                                  on hover via the block's title attribute. */}
                               <p className="truncate text-[11px] font-semibold">
                                 {label && (
                                   <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
@@ -3477,10 +3475,7 @@ export default function ProductivityCalendarPage() {
                                   </span>
                                 )}
                                 {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                {task.task_name}
-                                {task.task_detail && (
-                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
-                                )}
+                                {task.task_detail || task.task_name}
                               </p>
                               {task.account && (
                                 <p className="truncate text-[10px] opacity-80">{task.account}</p>
