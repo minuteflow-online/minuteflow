@@ -1401,16 +1401,8 @@ export default function DashboardPage() {
   const clockOut = useCallback(async () => {
     if (!userId) return;
 
-    // Personal time and breaks are not client work: there is no status to set
-    // and no memo to write, so demanding both before clocking out is asking for
-    // paperwork about a coffee. Close it and clock out.
-    const isOwnTime =
-      Boolean(activeTask?.isBreak) ||
-      (activeTask?.category ?? "").toLowerCase() === "personal" ||
-      (activeTask?.category ?? "").toLowerCase() === "break";
-
     // If there's an active task, show the close-task modal instead of clocking out directly
-    if (activeTask && !isOwnTime) {
+    if (activeTask) {
       // Pre-fill memos from the active task so the VA doesn't have to re-type them
       setClockOutClientMemo(activeTask.client_memo || "");
       setClockOutInternalMemo(activeTask.internal_memo || "");
@@ -2866,6 +2858,18 @@ export default function DashboardPage() {
     setCloseOldStep("screenshot");
   }, []);
 
+  /**
+   * Is the thing currently running the person's own time rather than work?
+   *
+   * Personal time and breaks have no status to set and no memo to write, so
+   * switching away from one should not open the close-old-task wizard. Clocking
+   * out still does: that closes the working day, not a coffee.
+   */
+  const activeIsOwnTime = useCallback(() => {
+    const category = (activeTask?.category ?? "").toLowerCase();
+    return Boolean(activeTask?.isBreak) || category === "personal" || category === "break";
+  }, [activeTask]);
+
   // Called from TaskEntryForm when Start Task is clicked
   const handleCheckAndStartTask = useCallback(
     async (formData: TaskFormData) => {
@@ -2984,6 +2988,12 @@ export default function DashboardPage() {
       pendingAssignedTaskIdRef.current = task.assigned_tasks.id;
     }
 
+    if (activeTask && activeIsOwnTime()) {
+      // Leaving personal time or a break: nothing to report, just start the task.
+      handleCheckAndStartTask(formData);
+      return;
+    }
+
     if (activeTask) {
       // Build a TimeLog shape from the current active task so the wizard can
       // display it and save memos/status before starting the assigned task.
@@ -3025,7 +3035,7 @@ export default function DashboardPage() {
     } else {
       handleCheckAndStartTask(formData);
     }
-  }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
+  }, [activeTask, activeIsOwnTime, userId, profile, handleCheckAndStartTask, accountClientMap]);
 
   // ─── To-Do Play ─────────────────────────────────────────────
   // Same close-old-task-wizard-then-start flow as handlePlayAssignedTask —
