@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import RecurringTemplatePanel from "@/components/RecurringTemplatePanel";
+import TaskDetailsView from "@/components/TaskDetailsView";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import ProjectFiles from "@/components/ProjectFiles";
@@ -1403,40 +1404,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     </div>
                   </div>
 
-                  {/* Read-only detail — all fields, blank shows "--", with an
-                      optional Edit Task. */}
+                  {/* The one Details view the whole app uses. This was a
+                      hand-written copy with its own shorter field list — no
+                      Objective link, Start/End dates, duration, to-dos or
+                      recurrence — which is exactly the drift the shared
+                      component exists to prevent. Anything needing a profile
+                      lookup is passed in; the rest it reads itself. */}
                   {isViewing && !isEditing && (
-                    <div className="ml-3 rounded-lg border border-sand overflow-hidden text-[12px]">
-                      {([
-                        ["Task Title", sub.task_name],
-                        ["Status", sub.status?.replace(/_/g, " ")],
-                        ["Category", sub.category],
-                        ["Project", sub.project],
-                        ["Account", sub.account],
-                        ["Pay Type", sub.pay_type?.replace(/_/g, " ")],
-                        ["Staff Involved", names],
-                        ["Assigned By", sub.assigned_by ? (activeProfiles.find((a) => a.id === sub.assigned_by) ? profileLabel(activeProfiles.find((a) => a.id === sub.assigned_by)!) : null) : null],
-                        ["Due Date", sub.due_date ? formatDate(sub.due_date) : null],
-                        ["Client Detail", sub.task_detail],
-                        ["Notes", sub.task_notes],
-                        ["Instructions", sub.instructions],
-                        ["Review Required", sub.review_required ? "Yes" : "No"],
-                        ["Created By", sub.created_by_profile?.full_name || sub.created_by_profile?.username],
-                        ["Created", sub.created_at ? formatDate(sub.created_at) : null],
-                      ] as [string, string | null | undefined][]).map(([label, value]) => (
-                        <div key={label} className="flex border-b border-sand/60 last:border-0">
-                          <div className="w-32 shrink-0 bg-parchment/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">{label}</div>
-                          <div className={`flex-1 px-3 py-2 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
-                        </div>
-                      ))}
-                      <div className="flex justify-end p-2 border-t border-sand/60">
-                        <button
-                          onClick={() => { setViewingSubId(null); openSubtaskEdit(sub); }}
-                          className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors"
-                        >
-                          Edit Task
-                        </button>
-                      </div>
+                    <div className="ml-3 rounded-lg border border-sand bg-white p-3">
+                      <TaskDetailsView
+                        task={sub as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
+                        extraRows={[
+                          ["Staff Involved", names],
+                          ["Assigned By", sub.assigned_by ? (activeProfiles.find((a) => a.id === sub.assigned_by) ? profileLabel(activeProfiles.find((a) => a.id === sub.assigned_by)!) : null) : null],
+                          ["Created By", sub.created_by_profile?.full_name || sub.created_by_profile?.username],
+                          ["Created", sub.created_at ? formatDate(sub.created_at) : null],
+                        ]}
+                        onEdit={() => { setViewingSubId(null); openSubtaskEdit(sub); }}
+                      />
                     </div>
                   )}
 
@@ -1580,27 +1565,19 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     </button>
                   </div>
 
+                  {/* Same shared view as everything else — written as its own
+                      table here first, which is how it ended up missing the
+                      objective link, notes, instructions and to-dos. */}
                   {isViewing && !isEditing && (
-                    <div className="ml-3 rounded-lg border border-sand overflow-hidden text-[12px]">
-                      {([
-                        ["Task Title", task.task_name],
-                        ["Status", task.status?.replace(/_/g, " ")],
-                        ["Category", task.category],
-                        ["Project", task.project],
-                        ["Account", task.account],
-                        ["Pay Type", "output based"],
-                        ["Assigned To", who ? (who.full_name || who.username) : null],
-                        ["Rate", task.rate != null ? `${Number(task.rate).toFixed(2)}` : null],
-                        ["Start Date", task.start_date ? formatDate(task.start_date) : null],
-                        ["End Date", task.end_date ? formatDate(task.end_date) : null],
-                        ["Due Date", task.due_date ? formatDate(task.due_date) : null],
-                        ["Created", task.created_at ? formatDate(task.created_at) : null],
-                      ] as [string, string | null | undefined][]).map(([label, value]) => (
-                        <div key={label} className="flex border-b border-sand/60 last:border-0">
-                          <div className="w-32 shrink-0 bg-parchment/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">{label}</div>
-                          <div className={`flex-1 px-3 py-2 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
-                        </div>
-                      ))}
+                    <div className="ml-3 rounded-lg border border-sand bg-white p-3">
+                      <TaskDetailsView
+                        task={task as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
+                        extraRows={[
+                          ["Assigned To", who ? (who.full_name || who.username) : null],
+                          ["Created", task.created_at ? formatDate(task.created_at) : null],
+                        ]}
+                        onEdit={() => { setViewingOutputId(null); setEditingOutputId(task.id); }}
+                      />
                     </div>
                   )}
 

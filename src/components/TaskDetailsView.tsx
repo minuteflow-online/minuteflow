@@ -29,9 +29,14 @@ const dayLabel = (d: unknown) => (typeof d === "number" ? (DAY_ABBR[d] ?? String
 export default function TaskDetailsView({
   task,
   onEdit,
+  extraRows = [],
 }: {
   task: TaskEditorInitialTask;
   onEdit: () => void;
+  /** Values this view cannot resolve on its own — anything needing a profile
+   *  lookup (who is on it, who assigned it) belongs to the caller. Appended in
+   *  order, and shown with -- when blank like every other row. */
+  extraRows?: Array<[string, string | null | undefined]>;
 }) {
   const str = (k: string) => {
     const v = task[k];
@@ -91,6 +96,8 @@ export default function TaskDetailsView({
     ["Duration", plannedMinutes != null && plannedMinutes > 0 ? formatMinutesInput(plannedMinutes) : null],
     ["Rate", task.rate != null ? `${task.rate}` : null],
     ["Review Required", task.review_required == null ? null : task.review_required ? "Yes" : "No"],
+    ["Pay Type", str("pay_type") ? (str("pay_type") as string).replace(/_/g, " ") : null],
+    ...extraRows.map(([label, value]) => [label, value ?? null] as [string, string | null]),
   ];
 
 
