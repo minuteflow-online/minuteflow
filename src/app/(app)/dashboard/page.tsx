@@ -1003,7 +1003,7 @@ export default function DashboardPage() {
 
   // ─── Close-the-gap safety net: recover from an ended break with no active task ──────────
   // endBreak() clears active_task and relies on pure client state (auto-resume, or
-  // showPostBreakNewTaskModal) to get the VA into a new task. If the VA reloads,
+  // showNextActivityModal) to get the VA into a new task. If the VA reloads,
   // disconnects, or otherwise never resolves that, they're left clocked in with no
   // running log. Runs once per page load — if a prior session was left in that gap
   // state, auto-resume the last task that was actually running before the break so
@@ -1854,7 +1854,8 @@ export default function DashboardPage() {
       if (preBreakTaskCompleted) {
         setPreBreakTask(null);
         setPreBreakTaskCompleted(false);
-        setShowPostBreakNewTaskModal(true);
+        setNextActivityReason("break");
+        setShowNextActivityModal(true);
       } else {
         await resumePreBreakTask();
       }
@@ -1973,10 +1974,14 @@ export default function DashboardPage() {
     );
   }, [supabase]);
 
-  // After break ends with nothing to resume (the old task was Completed),
-  // force the VA to log the next one — they can't walk away without it.
-  const [showPostBreakNewTaskModal, setShowPostBreakNewTaskModal] = useState(false);
-  const [postBreakNewTaskTab, setPostBreakNewTaskTab] = useState<"log" | "assigned">("log");
+  // Forces the VA straight into logging the next activity instead of
+  // dwelling on one that's already wrapped up — after a break ends with
+  // nothing to resume (the old task was Completed), or right after
+  // submitting the task they're currently clocked into (see
+  // handleActiveTaskSubmitted). "reason" only changes the modal's title.
+  const [showNextActivityModal, setShowNextActivityModal] = useState(false);
+  const [nextActivityTab, setNextActivityTab] = useState<"log" | "assigned">("log");
+  const [nextActivityReason, setNextActivityReason] = useState<"break" | "submit">("break");
 
   // ─── Screenshot utilities (must be before startTask) ──────
 
@@ -3082,6 +3087,17 @@ export default function DashboardPage() {
     }
   }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
 
+  // Submitting the assigned task the VA is currently clocked into should end
+  // that clock right there and hand them straight to the next thing — not
+  // leave the timer quietly running against work that's already turned in.
+  // AssignedTasksWidget calls this only when the submitted task matches
+  // activeAssignedTaskId, i.e. it really is the one running right now.
+  const handleActiveTaskSubmitted = useCallback(async () => {
+    await stopCurrentTask();
+    setNextActivityReason("submit");
+    setShowNextActivityModal(true);
+  }, [stopCurrentTask]);
+
   // ─── Notes modal ──────────────────────────────────────────
 
   const [showNotesModal, setShowNotesModal] = useState(false);
@@ -3530,6 +3546,7 @@ export default function DashboardPage() {
                 hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
                 onPlayAssignedTask={handlePlayAssignedTask}
                 onPlayTodo={handlePlayTodo}
+                onActiveTaskSubmitted={handleActiveTaskSubmitted}
                 orgTimezone={orgTimezone}
                 isAdmin={hasBroadAdminAccess({ role })}
                 refetchCount={widgetRefetchCount}
@@ -4165,16 +4182,21 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      {/* ─── Post-Break: Forced Next Activity ─── */}
-      {/* Shown only when the task closed to go on break was Completed (nothing
-          to resume) — In Progress / On Hold ones just auto-resume in endBreak,
-          no modal at all. Two ways to log the next thing, same tab pattern as
-          the dashboard's own Log an Activity / Assigned Tasks box. */}
-      {showPostBreakNewTaskModal && (
+      {/* ─── Forced Next Activity ─── */}
+      {/* Shown right after an activity wraps up with nothing to auto-continue
+          into — a break ending with the old task Completed (In Progress / On
+          Hold ones just auto-resume in endBreak, no modal), or submitting the
+          task currently being worked (handleActiveTaskSubmitted) — so the VA
+          transitions straight to the next thing instead of the clock quietly
+          running against work that's already done. Same tab pattern as the
+          dashboard's own Log an Activity / Assigned Tasks box. */}
+      {showNextActivityModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4 py-8 overflow-y-auto">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md my-auto">
             <div className="py-4 px-5 border-b border-parchment">
-              <h3 className="text-sm font-bold text-espresso">Welcome Back!</h3>
+              <h3 className="text-sm font-bold text-espresso">
+                {nextActivityReason === "submit" ? "Task Submitted!" : "Welcome Back!"}
+              </h3>
               <p className="text-xs text-bark mt-1">Log an activity to keep your time tracked.</p>
             </div>
             <div className="flex border-b border-parchment">
@@ -4182,9 +4204,9 @@ export default function DashboardPage() {
                 <button
                   key={tab}
                   type="button"
-                  onClick={() => setPostBreakNewTaskTab(tab)}
+                  onClick={() => setNextActivityTab(tab)}
                   className={`flex-1 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors cursor-pointer ${
-                    postBreakNewTaskTab === tab
+                    nextActivityTab === tab
                       ? "text-terracotta border-b-2 border-terracotta bg-terracotta-soft/40"
                       : "text-stone hover:text-espresso border-b-2 border-transparent"
                   }`}
@@ -4194,10 +4216,10 @@ export default function DashboardPage() {
               ))}
             </div>
             <div className="p-4">
-              {postBreakNewTaskTab === "log" ? (
+              {nextActivityTab === "log" ? (
                 <TaskEntryForm
                   onStartTask={async (data) => {
-                    setShowPostBreakNewTaskModal(false);
+                    setShowNextActivityModal(false);
                     await handleCheckAndStartTask(data);
                   }}
                   hasActiveTask={false}
@@ -4213,11 +4235,11 @@ export default function DashboardPage() {
                     sessionState={sessionState}
                     hasActiveTask={false}
                     onPlayAssignedTask={(task) => {
-                      setShowPostBreakNewTaskModal(false);
+                      setShowNextActivityModal(false);
                       handlePlayAssignedTask(task);
                     }}
                     onPlayTodo={(task, todo) => {
-                      setShowPostBreakNewTaskModal(false);
+                      setShowNextActivityModal(false);
                       handlePlayTodo(task, todo);
                     }}
                     orgTimezone={orgTimezone}
