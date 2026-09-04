@@ -3512,8 +3512,11 @@ export default function DashboardPage() {
         // The Messages column takes roughly a fifth of the middle column back:
         // task rows are short and left a wide empty gutter, while a message
         // preview was truncating after a few words.
+        // Messages is the left column for everyone, so a VA gets three columns
+        // as well — it was stacked at the bottom of their right-hand rail,
+        // under the task widgets, which is the last place anyone looks.
         const gridClass = isVa
-          ? "grid-cols-1 md:grid-cols-[1fr_240px]"
+          ? "grid-cols-1 md:grid-cols-[1fr_240px] lg:grid-cols-[300px_1fr_240px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[300px_1fr_280px]";
 
         // The Founder does not do tracked task work, so neither Quick Pick nor
@@ -3532,7 +3535,7 @@ export default function DashboardPage() {
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
             {/* Left: Messages, where conversation lives rather than buried under
                 the task widgets on the right. */}
-            {role !== "va" && userId && <DashboardMessagePanel currentUserId={userId} />}
+            {userId && <DashboardMessagePanel currentUserId={userId} />}
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
               <TaskWidgetsTabs
@@ -3577,7 +3580,6 @@ export default function DashboardPage() {
               {role !== "va" && (
                 <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />
               )}
-              {isVa && userId && <DashboardMessagePanel currentUserId={userId} />}
             </div>
           </div>
         );
