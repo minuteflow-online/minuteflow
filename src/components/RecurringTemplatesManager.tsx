@@ -342,7 +342,7 @@ export default function RecurringTemplatesManager({
 
   const deleteTemplate = useCallback(
     async (template: RecurringTaskTemplate) => {
-      if (!confirm(`Delete recurring template \"${template.title}\"? This removes the template but keeps created tasks.`)) return;
+      if (!confirm(`Delete recurring template \"${template.title}\"? Upcoming dates it has not started yet come off the calendar too. Anything already worked on stays.`)) return;
       try {
         const res = await fetch(`/api/recurring-task-templates?id=${template.id}`, { method: "DELETE" });
         if (!res.ok) {
