@@ -33,6 +33,7 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 200 },
   { key: "account", label: "Account", defaultWidth: 140 },
+  { key: "assigned_to", label: "Assigned To", defaultWidth: 140 },
   { key: "assigned_by", label: "Assigned By", defaultWidth: 140 },
   { key: "objective", label: "Project", defaultWidth: 140 },
   { key: "detail", label: "Client Detail", defaultWidth: 180 },
@@ -2286,15 +2287,28 @@ export default function TaskListPage() {
                   </div>
                 </div>
 
-                {taskView === "active" && activeView === "my_tasks" && (
-                  <button
-                    type="button"
-                    onClick={openCreate}
-                    className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                  >
-                    + Create Task
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {/* Same taskNameSearch state the Task Name column header's
+                      own search already filters on — just a second, always-
+                      visible entry point next to Create Task instead of
+                      needing to open that column's popover to find it. */}
+                  <input
+                    type="text"
+                    value={taskNameSearch}
+                    onChange={(e) => setTaskNameSearch(e.target.value)}
+                    placeholder="Search tasks..."
+                    className="w-48 rounded-lg border border-sand bg-white px-2 py-2 text-xs text-espresso outline-none placeholder:text-stone/60"
+                  />
+                  {taskView === "active" && activeView === "my_tasks" && (
+                    <button
+                      type="button"
+                      onClick={openCreate}
+                      className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                    >
+                      + Create Task
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2511,6 +2525,13 @@ export default function TaskListPage() {
                             onFilterChange={setFilterAccounts}
                           />
                         )}
+                        {!hiddenColumns.has("assigned_to") && (
+                          <ColumnHeader
+                            label="Assigned To"
+                            width={columnWidths.assigned_to}
+                            onResize={(w) => setColumnWidth("assigned_to", w)}
+                          />
+                        )}
                         {!hiddenColumns.has("assigned_by") && (
                           <ColumnHeader
                             label="Assigned By"
@@ -2675,6 +2696,12 @@ export default function TaskListPage() {
                                 disabled={taskView !== "active"}
                                 display={detail.account || <span className="text-stone/60">—</span>}
                               />
+                            )}
+
+                            {!hiddenColumns.has("assigned_to") && (
+                              <td className="px-3 py-3 text-[13px] text-walnut truncate">
+                                {task.profiles?.full_name ?? task.profiles?.username ?? <span className="text-stone/30">—</span>}
+                              </td>
                             )}
 
                             {!hiddenColumns.has("assigned_by") && (
