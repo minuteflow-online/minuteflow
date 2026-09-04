@@ -604,8 +604,13 @@ ${existingText}` : addition;
     // so this only fills in the ones after it ends — and on Resume it puts the
     // whole window back.
     await generateOccurrences(serviceClient(), templates[0] as never, todayStr);
-  } catch {
-    // Never fail the save over generation — the cron will catch up.
+  } catch (err) {
+    // Never fail the save over generation — the cron will catch up. But this
+    // used to fail completely silently, with no trace anywhere that it had
+    // happened — which is exactly how a template edit shipped invisible until
+    // someone noticed the calendar didn't match. Logged so a repeat of that is
+    // at least visible in Vercel's function logs instead of a total mystery.
+    console.error(`generateOccurrences failed for template ${id} on PATCH:`, err);
   }
   return Response.json({ template: templates[0] });
 }
