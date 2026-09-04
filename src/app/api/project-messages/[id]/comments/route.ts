@@ -98,9 +98,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const { data, error } = await supabase
     .from("project_message_comments")
-    .update({ body: content })
+    // Stamped so a reader can tell the words changed after the fact.
+    .update({ body: content, edited_at: new Date().toISOString() })
     .eq("id", commentId)
-    .select(`id, message_id, author_id, body, created_at, author:profiles!project_message_comments_author_id_fkey(${authorSelect})`)
+    .select(`id, message_id, author_id, body, created_at, edited_at, author:profiles!project_message_comments_author_id_fkey(${authorSelect})`)
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 400 });

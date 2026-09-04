@@ -12,8 +12,8 @@ import { createClient } from "@/lib/supabase/client";
 import { getInitials, getAvatarColor } from "@/lib/utils";
 
 type Project = { id: string; name: string };
-type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null };
-type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null };
+type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null; edited_at?: string | null };
+type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null };
 type Notif = { id: number; content: string; read: boolean; created_at: string; kind?: string | null };
 type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
 type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string };
@@ -92,6 +92,11 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   // Archived topics are filed away, not deleted: still readable by everyone,
   // just out of the main list.
   const [archived, setArchived] = useState<Thread[]>([]);
+  // Editing one of your own replies in place. Only the words change; who said
+  // it and when it was said stay put, with an "edited" mark so nobody is
+  // quietly rewritten.
+  const [editingComment, setEditingComment] = useState<number | null>(null);
+  const [editCommentText, setEditCommentText] = useState("");
   // Typing "@" opens a name list; picking one completes the mention. Keyed by
   // which box is being typed in, so the reply box and the topic body can each
   // have their own picker without sharing state.
@@ -187,6 +192,27 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
       .then((d) => setArchived((d.messages ?? []) as Thread[]))
       .catch(() => {});
   }, [reloadKey]);
+
+  const saveCommentEdit = useCallback(
+    async (threadId: number, commentId: number) => {
+      const text = editCommentText.trim();
+      if (!text) return;
+      const r = await fetch(
+        `/api/project-messages/${threadId}/comments?commentId=${commentId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: text }),
+        }
+      );
+      if (r.ok) {
+        setEditingComment(null);
+        setEditCommentText("");
+        setReloadKey((k) => k + 1);
+      }
+    },
+    [editCommentText]
+  );
 
   const setThreadArchived = useCallback(async (t: Thread, next: boolean) => {
     setBusyThread(t.id);
@@ -533,14 +559,65 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               <div className="rounded-lg border border-sand bg-cream/40 p-2.5">
                 <p className="text-[12px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
                 {activeThread.body && <p className="mt-1 text-[11px] text-espresso whitespace-pre-wrap">{activeThread.body}</p>}
-                <p className="mt-1 text-[10px] text-bark">{projectName.get(activeThread.project_id) ?? "Project"} · {ago(activeThread.created_at)} ago</p>
+                <p className="mt-1 text-[10px] text-bark">
+                  {projectName.get(activeThread.project_id) ?? "Project"} · {ago(activeThread.created_at)} ago
+                  {activeThread.edited_at && <span className="italic text-stone"> · edited</span>}
+                </p>
               </div>
               {activeThread.comments.map((c) => (
                 <div key={c.id} className="flex gap-1.5">
                   <Avatar member={c.author_id ? memberById.get(c.author_id) : undefined} name={c.author} size={20} />
                   <div className="flex-1 min-w-0 rounded-lg border border-sand bg-white px-2.5 py-1.5">
-                    <p className="text-[11px] text-espresso whitespace-pre-wrap">{c.body}</p>
-                    <p className="mt-0.5 text-[10px] text-bark">{c.author ? `${c.author} · ` : ""}{ago(c.created_at)} ago</p>
+                    {editingComment === c.id ? (
+                      <div className="space-y-1.5">
+                        <textarea
+                          value={editCommentText}
+                          onChange={(e) => setEditCommentText(e.target.value)}
+                          rows={3}
+                          autoFocus
+                          className={`${input} resize-none w-full`}
+                        />
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => void saveCommentEdit(activeThread.id, c.id)}
+                            disabled={!editCommentText.trim()}
+                            className="px-2.5 py-1 rounded-lg bg-amber-soft text-amber text-[10px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingComment(null)}
+                            className="px-2.5 py-1 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-[11px] text-espresso whitespace-pre-wrap">{c.body}</p>
+                        <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-bark">
+                          <span>
+                            {c.author ? `${c.author} · ` : ""}{ago(c.created_at)} ago
+                            {c.edited_at && <span className="italic text-stone"> · edited</span>}
+                          </span>
+                          {c.author_id === currentUserId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingComment(c.id);
+                                setEditCommentText(c.body);
+                              }}
+                              className="font-semibold text-slate-blue hover:underline"
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}

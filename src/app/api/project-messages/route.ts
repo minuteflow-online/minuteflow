@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   const { data, error } = await supabase
     .from("project_messages")
     .select(
-      `id, project_id, author_id, title, body, category, pinned, created_at, updated_at,
+      `id, project_id, author_id, title, body, category, pinned, created_at, updated_at, edited_at,
        author:profiles!project_messages_author_id_fkey(${authorSelect}),
        project_message_comments(id, body, author_id, created_at,
          author:profiles!project_message_comments_author_id_fkey(${authorSelect}))`
@@ -173,6 +173,11 @@ export async function PATCH(request: Request) {
     return Response.json({ message: data });
   }
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  // Only a change to the words counts as an edit — pinning or recategorising
+  // does not make the post say something different.
+  if (body.title !== undefined || body.body !== undefined) {
+    updates.edited_at = new Date().toISOString();
+  }
   if (body.title !== undefined) updates.title = body.title.trim();
   if (body.body !== undefined) updates.body = body.body.trim();
   if (body.category !== undefined) updates.category = body.category?.trim() || null;

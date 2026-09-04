@@ -31,8 +31,8 @@ export async function GET(request: Request) {
   const { data, error } = await supabase
     .from("project_messages")
     .select(
-      `id, project_id, title, body, category, created_at, author_id,
-       project_message_comments(id, body, created_at, author_id, author:profiles!project_message_comments_author_id_fkey(full_name, username))`
+      `id, project_id, title, body, category, created_at, author_id, edited_at,
+       project_message_comments(id, body, created_at, edited_at, author_id, author:profiles!project_message_comments_author_id_fkey(full_name, username))`
     )
     .in("project_id", ids)
     // A trashed topic is soft-deleted, and this list never checked — so a topic
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     .limit(30);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  type RawComment = { id: number; body: string; created_at: string; author_id: string | null; author?: { full_name?: string; username?: string } | null };
+  type RawComment = { id: number; body: string; created_at: string; edited_at?: string | null; author_id: string | null; author?: { full_name?: string; username?: string } | null };
   const messages = (data ?? []).map((m) => {
     const raw = (Array.isArray(m.project_message_comments) ? m.project_message_comments : []) as RawComment[];
     const comments = raw
@@ -54,6 +54,7 @@ export async function GET(request: Request) {
         body: c.body,
         created_at: c.created_at,
         author_id: c.author_id,
+        edited_at: c.edited_at ?? null,
         author: c.author?.full_name || c.author?.username || "Someone",
       }));
     return {
