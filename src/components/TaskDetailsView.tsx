@@ -29,9 +29,17 @@ const dayLabel = (d: unknown) => (typeof d === "number" ? (DAY_ABBR[d] ?? String
 export default function TaskDetailsView({
   task,
   onEdit,
+  extraRows = [],
+  people = [],
 }: {
   task: TaskEditorInitialTask;
   onEdit: () => void;
+  /** Anything this view still cannot work out for itself. Appended in order,
+   *  and shown with -- when blank like every other row. */
+  extraRows?: Array<[string, string | null | undefined]>;
+  /** Profiles for turning the ids on a task into names. Without it the people
+   *  rows fall back to whatever the task already carries. */
+  people?: Array<{ id: string; full_name?: string | null; username?: string | null }>;
 }) {
   const str = (k: string) => {
     const v = task[k];
@@ -74,13 +82,32 @@ export default function TaskDetailsView({
     return () => { cancelled = true; };
   }, [templateId]);
 
+  const nameOf = (id: string | null) => {
+    if (!id) return null;
+    const p = people.find((person) => person.id === id);
+    return p ? (p.full_name || p.username || null) : null;
+  };
+
+  const assignees = (task.assigned_task_assignees ?? []) as Array<{
+    va_id?: string;
+    profiles?: { full_name?: string | null; username?: string | null } | null;
+  }>;
+  const staffInvolved =
+    assignees
+      .map((a) => a.profiles?.full_name || a.profiles?.username || nameOf(a.va_id ?? null))
+      .filter(Boolean)
+      .join(", ") || nameOf((task.assigned_to as string | null) ?? null);
+
+  const createdByProfile = task.created_by_profile as { full_name?: string | null; username?: string | null } | null | undefined;
+  const createdBy = createdByProfile?.full_name || createdByProfile?.username || nameOf(str("created_by"));
+
   const rows: Array<[string, string | null]> = [
     ["Account", str("account")],
     ["Objective", str("project")],
+    ["Task", str("task_name")],
     ["Category", str("category")],
     ["Recurs", templateId != null ? (recurrence ?? "Recurring") : null],
     ["Status", str("status") ? statusLabel(str("status") as string) : null],
-    ["Client Detail", str("task_detail")],
     ["Notes", str("task_notes")],
     ["Instructions", str("instructions")],
     ["Link", str("link")],
@@ -91,21 +118,34 @@ export default function TaskDetailsView({
     ["Duration", plannedMinutes != null && plannedMinutes > 0 ? formatMinutesInput(plannedMinutes) : null],
     ["Rate", task.rate != null ? `${task.rate}` : null],
     ["Review Required", task.review_required == null ? null : task.review_required ? "Yes" : "No"],
+    ["Pay Type", str("pay_type") ? (str("pay_type") as string).replace(/_/g, " ") : null],
+    // Who it involves. Worked out here rather than left to each caller, since
+    // every caller that had to remember these forgot at least one of them.
+    ["Staff Involved", staffInvolved],
+    ["Assigned By", nameOf(str("assigned_by"))],
+    ["Created By", createdBy],
+    ["Created", str("created_at") ? String(str("created_at")).slice(0, 10) : null],
+    ...extraRows.map(([label, value]) => [label, value ?? null] as [string, string | null]),
   ];
 
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-1.5">
-        <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_name") ?? "Untitled task"}</h4>
-        {task.recurring_template_id != null && (
-          <span
-            title="Repeats — generated from a recurring template"
-            className="shrink-0 rounded-full border border-amber/30 bg-amber-soft px-2 py-[1px] text-[10px] font-semibold text-amber"
-          >
-            ↻ Recurring
-          </span>
-        )}
+      {/* Title is the client detail (client memo), not the internal task name —
+          it's what the work actually is. The task name lives in its own row. */}
+      <div className="space-y-0.5">
+        <div className="flex items-center gap-1.5">
+          <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_detail") ?? str("task_name") ?? "—"}</h4>
+          {task.recurring_template_id != null && (
+            <span
+              title="Repeats — generated from a recurring template"
+              className="shrink-0 rounded-full border border-amber/30 bg-amber-soft px-2 py-[1px] text-[10px] font-semibold text-amber"
+            >
+              ↻ Recurring
+            </span>
+          )}
+        </div>
+        <p className="text-[10px] font-bold uppercase tracking-wide text-walnut">Client Detail</p>
       </div>
 
       <dl className="divide-y divide-sand rounded-lg border border-sand overflow-hidden">

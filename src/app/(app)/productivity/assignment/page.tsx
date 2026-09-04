@@ -2971,6 +2971,7 @@ export default function TaskListPage() {
                   {panelTab === "details" ? (
                     <TaskDetailsView
                       task={selectedTask.assigned_tasks as unknown as TaskEditorInitialTask}
+                      people={assignedByProfiles}
                       onEdit={() => setPanelTab("edit")}
                     />
                   ) : (

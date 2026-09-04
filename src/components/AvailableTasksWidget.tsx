@@ -97,10 +97,10 @@ export default function AvailableTasksWidget({
   const [loading, setLoading] = useState(true);
   const [claimingId, setClaimingId] = useState<number | null>(null);
 
-  // Card heading: the client detail if there is one, otherwise fall back to
-  // the task name so a card is never untitled.
+  // Card heading: the client detail (client memo, now required) if there is
+  // one, otherwise fall back to the task name so a card is never blank.
   const cardTitle = (detail: string | null | undefined, taskName: string | null | undefined) =>
-    (detail ?? "").trim() || (taskName ?? "Untitled task");
+    (detail ?? "").trim() || (taskName ?? "").trim() || "—";
 
   // Under the heading: what the work is filed as, then where it came from.
   const clean = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);

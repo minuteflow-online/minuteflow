@@ -614,6 +614,30 @@ export async function DELETE(request: Request) {
   }
 
   const supabase = serviceClient();
+  const now = new Date().toISOString();
+  const today = now.slice(0, 10);
+
+  // Deleting a schedule takes its future dates off the calendar with it. They
+  // used to be kept and merely unlinked, so the work stayed scheduled and went
+  // on counting against someone's hours with nothing left to explain where it
+  // came from — and no way to find it again, since the link that identified it
+  // had just been erased.
+  //
+  // Anything started or already worked on stays. Deleting a schedule is a
+  // decision about future work, not a way to erase what people have done.
+  const { error: removeError } = await supabase
+    .from("assigned_tasks")
+    .update({ deleted_at: now, updated_at: now })
+    .eq("recurring_template_id", id)
+    .is("deleted_at", null)
+    .gte("due_date", today)
+    .in("status", ["pending", "on_queue", "unassigned"]);
+
+  if (removeError) {
+    return Response.json({ error: removeError.message }, { status: 400 });
+  }
+
+  // Whatever survives keeps its history but loses the dangling reference.
   const { error: nullifyError } = await supabase
     .from("assigned_tasks")
     .update({ recurring_template_id: null })

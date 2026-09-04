@@ -3766,7 +3766,7 @@ export default function ProductivityCalendarPage() {
               )}
 
               {editingBlockId && editingTaskFull && modalTab === "details" ? (
-                <TaskDetailsView task={editingTaskFull} onEdit={() => setModalTab("edit")} />
+                <TaskDetailsView task={editingTaskFull} people={teamMembers} onEdit={() => setModalTab("edit")} />
               ) : (
               <>
               {!editingBlockId && (() => {

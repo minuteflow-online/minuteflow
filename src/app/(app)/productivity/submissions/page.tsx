@@ -11,6 +11,7 @@ import {
   type TaskSubmissionAttachment,
 } from "@/lib/submissions";
 import RevisionBadge from "@/components/RevisionBadge";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
 import TaskDetailModal from "@/components/TaskDetailModal";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
@@ -185,6 +186,95 @@ function formatDuration(ms: number): string {
 /** Local YYYY-MM-DD for a timestamp, in the org's timezone. */
 function localDay(iso: string, timezone: string) {
   return new Date(iso).toLocaleDateString("en-CA", { timeZone: timezone });
+}
+
+/**
+ * A From/To date-range chip, same button/popover chrome as MultiSelectFilter
+ * so it reads as one filter bar rather than two different widgets bolted
+ * together. Either end can be left blank — an open-ended range still narrows.
+ */
+function DateRangeChip({
+  label,
+  from,
+  to,
+  onChange,
+}: {
+  label: string;
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  const active = Boolean(from || to);
+  const buttonLabel = !active
+    ? label
+    : from && to
+      ? `${from} – ${to}`
+      : from
+        ? `From ${from}`
+        : `To ${to}`;
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] outline-none transition-colors ${
+          active
+            ? "border-terracotta/40 bg-terracotta-soft text-terracotta font-semibold"
+            : "border-sand bg-white text-espresso"
+        }`}
+      >
+        <span className="max-w-[160px] truncate">{active ? buttonLabel : label}</span>
+        <svg width="8" height="8" viewBox="0 0 12 12" className="shrink-0 opacity-60">
+          <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-8 z-30 w-56 space-y-2 rounded-lg border border-sand bg-white p-2 shadow-lg">
+          <div>
+            <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-walnut">From</label>
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => onChange(e.target.value, to)}
+              className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+            />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-walnut">To</label>
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => onChange(from, e.target.value)}
+              className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+            />
+          </div>
+          {active && (
+            <button
+              type="button"
+              onClick={() => onChange("", "")}
+              className="w-full rounded-lg text-[10px] font-semibold text-terracotta hover:underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -399,6 +489,13 @@ export default function SubmissionsPage() {
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
   const [accountFilter, setAccountFilter] = useState<Set<string>>(new Set());
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
+  // Two separate date ranges — a task's due date and when it was actually
+  // submitted are different questions ("what was owed this week" vs "what
+  // came in this week"), so one combined filter would conflate them.
+  const [taskDateFrom, setTaskDateFrom] = useState("");
+  const [taskDateTo, setTaskDateTo] = useState("");
+  const [submissionDateFrom, setSubmissionDateFrom] = useState("");
+  const [submissionDateTo, setSubmissionDateTo] = useState("");
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -811,8 +908,32 @@ This cannot be undone.`
       rows = rows.filter((r) => r.task?.account && names.has(r.task.account));
     }
 
+    // Task's own due date — a task with none set can't match a range, since
+    // there's nothing to compare.
+    if (taskDateFrom || taskDateTo) {
+      rows = rows.filter((r) => {
+        const d = r.task?.due_date;
+        if (!d) return false;
+        if (taskDateFrom && d < taskDateFrom) return false;
+        if (taskDateTo && d > taskDateTo) return false;
+        return true;
+      });
+    }
+
+    // When the work was actually turned in, in org time — same conversion
+    // Timeline/Calendar already group by (localDay), so this range lines up
+    // with what those two views show for the same day.
+    if (submissionDateFrom || submissionDateTo) {
+      rows = rows.filter((r) => {
+        const d = localDay(r.created_at, orgTimezone);
+        if (submissionDateFrom && d < submissionDateFrom) return false;
+        if (submissionDateTo && d > submissionDateTo) return false;
+        return true;
+      });
+    }
+
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -1080,6 +1201,9 @@ This cannot be undone.`
           onChange={setClientFilter}
           options={clients.map((c) => ({ value: c.id, label: c.name }))}
         />
+
+        <DateRangeChip label="Task date" from={taskDateFrom} to={taskDateTo} onChange={(f, t) => { setTaskDateFrom(f); setTaskDateTo(t); }} />
+        <DateRangeChip label="Submission date" from={submissionDateFrom} to={submissionDateTo} onChange={(f, t) => { setSubmissionDateFrom(f); setSubmissionDateTo(t); }} />
 
         <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
 
@@ -1480,6 +1604,7 @@ function SubmissionEntry({
   canCancel: boolean;
   onCancelReversal: (item: FeedItem) => void;
 }) {
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const time = new Date(item.created_at).toLocaleString("en-US", {
     month: "short",
@@ -1575,8 +1700,10 @@ function SubmissionEntry({
         )}
       </div>
 
+      {/* Capped with its own scroll: a write-up can run to twenty lines, and at
+          full height one entry pushes every other submission off the screen. */}
       {item.submission_comment && (
-        <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-snug text-espresso">
+        <p className="mt-1.5 max-h-44 overflow-y-auto whitespace-pre-wrap pr-1 text-[12px] leading-snug text-espresso">
           {item.submission_comment}
         </p>
       )}
@@ -1592,20 +1719,69 @@ function SubmissionEntry({
         </a>
       )}
 
-      {item.attachments.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {item.attachments.map((file) => (
-            <a
-              key={file.id}
-              href={file.url ?? "#"}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
-            >
-              {file.filename}
-            </a>
-          ))}
-        </div>
+      {item.attachments.length > 0 && (() => {
+        // Screenshots are the point of a submission, so they are shown rather
+        // than listed: sixteen filenames means sixteen page loads to see what
+        // someone did. Images become a scrollable strip that opens full size in
+        // place; anything else stays a link, because a PDF has no thumbnail.
+        const images = item.attachments.filter((f) =>
+          (f.mime_type ?? "").startsWith("image/") && f.url
+        );
+        const others = item.attachments.filter((f) => !images.includes(f));
+        return (
+          <div className="mt-1.5 space-y-1.5">
+            {images.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {images.map((file, i) => (
+                  <button
+                    key={file.id}
+                    type="button"
+                    onClick={() =>
+                      setLightbox({
+                        urls: images.map((f) => f.url as string),
+                        index: i,
+                      })
+                    }
+                    title={file.filename}
+                    className="shrink-0 overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={file.url as string}
+                      alt={file.filename}
+                      loading="lazy"
+                      className="h-[72px] w-[96px] object-cover"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {others.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {others.map((file) => (
+                  <a
+                    key={file.id}
+                    href={file.url ?? "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
+                  >
+                    {file.filename}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {lightbox && (
+        <ScreenshotLightbox
+          urls={lightbox.urls}
+          initialIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </div>
   );

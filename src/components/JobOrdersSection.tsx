@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { hasBroadAdminAccess, isFounder } from "@/lib/financialAccess";
+import TaskEditor, { type TaskEditorInitialTask } from "@/components/TaskEditor";
 
 type Member = { id: string; full_name?: string | null; username?: string | null };
 type ProjectOpt = { id: string; name: string; kind?: string | null };
@@ -94,6 +95,9 @@ export default function JobOrdersSection({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Accepting opens the real TaskEditor, pre-filled from the order, instead
+  // of the two prompt() dialogs this used to be — see AcceptJobOrderPanel.
+  const [acceptingOrder, setAcceptingOrder] = useState<JobOrder | null>(null);
 
   const memberById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m])), [teamMembers]);
 
@@ -157,7 +161,17 @@ export default function JobOrdersSection({
             <span className="text-bark text-[9px] w-2 shrink-0">{isExp ? "▼" : "▶"}</span>
             <span className="min-w-0">
               <span className="block text-[13px] font-semibold text-espresso leading-tight truncate">{o.title}</span>
+              {/* Respond by leads the line — it's the one thing that expires,
+                  so it shouldn't take expanding the row to see. Shown
+                  (with a "—" fallback, same convention the expanded detail
+                  table already uses) for the whole time there's still a
+                  response to give, set or not — an order with no deadline
+                  should say so rather than silently having no line at all. */}
               <span className="block text-[11px] text-stone/80 truncate">
+                {o.status === "offered" && (
+                  <span className="font-semibold text-terracotta">Respond by {fmtDate(o.respond_by)}</span>
+                )}
+                {o.status === "offered" && (o.account || o.type || o.deadline || o.rate != null) ? " · " : ""}
                 {[o.account, o.type === "adhoc" ? "Adhoc" : o.type].filter(Boolean).join(" · ")}
                 {o.deadline ? ` · Due ${fmtDate(o.deadline)}` : ""}
                 {o.rate != null ? ` · $${o.rate}` : ""}
@@ -168,12 +182,7 @@ export default function JobOrdersSection({
           <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${STATUS_CLS[o.status]}`}>{o.status}</span>
           {canRespond && (
             <span className="flex items-center gap-1 shrink-0">
-              <button disabled={busyId === o.id} onClick={() => {
-                const taskTitle = prompt("Name this task (you're creating it):", o.title);
-                if (taskTitle == null || !taskTitle.trim()) return;
-                const project = o.type !== "adhoc" ? (prompt("Project (optional):") ?? "") : "";
-                void act(o.id, { action: "accept", task_title: taskTitle.trim(), project });
-              }}
+              <button disabled={busyId === o.id} onClick={() => setAcceptingOrder(o)}
                 className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors disabled:opacity-50">Accept</button>
               <button disabled={busyId === o.id} onClick={() => {
                 const reason = prompt("Reason for declining (required):");
@@ -252,6 +261,7 @@ export default function JobOrdersSection({
   if (!admin && (loading || orders.length === 0)) return null;
 
   return (
+    <>
     <div className="rounded-xl border-2 border-amber/40 bg-amber-soft/25 p-3.5 mb-4 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <button type="button" onClick={() => setOpen((v) => !v)} className="flex items-center gap-2">
@@ -309,6 +319,17 @@ export default function JobOrdersSection({
         </div>
       )}
     </div>
+    {acceptingOrder && (
+      <AcceptJobOrderPanel
+        order={acceptingOrder}
+        currentUserId={currentUserId}
+        isAdmin={admin}
+        teamMembers={teamMembers}
+        onClose={() => setAcceptingOrder(null)}
+        onAccepted={() => { setAcceptingOrder(null); setReload((k) => k + 1); }}
+      />
+    )}
+    </>
   );
 }
 
@@ -535,6 +556,130 @@ function CreateForm({
           className="px-4 py-1.5 rounded-lg bg-sage text-white text-[12px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50">
           {saving ? "Saving…" : editing ? "Save changes" : "Offer job order"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Accept panel ─────────────────────────────────────────────────────────
+// Replaces the old two-prompt() Accept flow: the offeree lands in the real
+// TaskEditor, pre-filled from the order (account, dates, details as
+// instructions, links, rate for output work, the check-in schedule folded
+// into notes), and finishes/adjusts it there like any other task. Saving
+// creates the real assigned_tasks/fixed_pay_tasks row — for output work a
+// follow-up /grab call claims it, since a non-admin's TaskEditor save
+// leaves an output-based task unclaimed — then the order is linked to that
+// task and flipped to accepted.
+function AcceptJobOrderPanel({
+  order, currentUserId, isAdmin, teamMembers, onClose, onAccepted,
+}: {
+  order: JobOrder;
+  currentUserId: string;
+  isAdmin: boolean;
+  teamMembers: Member[];
+  onClose: () => void;
+  onAccepted: () => void;
+}) {
+  const mode: "time_based" | "output_based" = order.work_type === "output" ? "output_based" : "time_based";
+  const [error, setError] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
+
+  const initialTask: TaskEditorInitialTask = useMemo(() => {
+    const checkIns = Array.isArray(order.check_ins) ? order.check_ins : [];
+    const scheduleNote = checkIns.length
+      ? "Check-ins — " + checkIns.map((c) => `${c.label}: ${c.date || "TBD"}`).join(" · ")
+      : null;
+    const notes = [order.time_frame ? `Time frame: ${order.time_frame}` : null, scheduleNote].filter(Boolean).join("\n");
+    return {
+      task_name: order.title,
+      task_detail: order.title,
+      task_notes: notes || null,
+      instructions: order.details || null,
+      link: order.links && order.links.length ? order.links.join(", ") : null,
+      account: order.account,
+      project: order.project,
+      category: "Task",
+      due_date: order.deadline,
+      start_date: order.start_date,
+      review_required: order.review_required,
+      rate: order.work_type === "output" && order.rate != null ? order.rate : undefined,
+      assigned_to: currentUserId,
+      assigned_task_assignees: [{ va_id: currentUserId }],
+    };
+  }, [order, currentUserId]);
+
+  // Locked only when the order already points at an existing objective/
+  // operation — "create later" leaves the project field open so the VA can
+  // link (or not) whatever fits, same as the plain create form does today.
+  const lockedProjectId = order.type !== "adhoc" && !order.create_later ? (order.linked_project_id ?? undefined) : undefined;
+
+  const handleSaved = async (task: { id: number; [key: string]: unknown }) => {
+    setLinking(true);
+    setError(null);
+    try {
+      // A non-admin's TaskEditor save doesn't set assigned_to/claimed_by for
+      // output-based work (see TaskEditor.tsx's create body) — the same gap
+      // the ordinary "grab an open task" flow exists to close.
+      if (mode === "output_based" && !isAdmin) {
+        const grabRes = await fetch(`/api/fixed-pay-tasks/${task.id}/grab`, { method: "POST" });
+        if (!grabRes.ok) {
+          const d = await grabRes.json().catch(() => ({}));
+          throw new Error(d.error || "The task was created but couldn't be claimed.");
+        }
+      }
+      const acceptRes = await fetch(`/api/job-orders/${order.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "accept", task_id: task.id }),
+      });
+      if (!acceptRes.ok) {
+        const d = await acceptRes.json().catch(() => ({}));
+        throw new Error(d.error || "The task was created but the order couldn't be marked accepted.");
+      }
+      onAccepted();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  return (
+    <div className="fixed right-0 top-0 h-full z-40 w-[520px] max-w-full flex flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
+      <div className="shrink-0 flex items-center justify-between border-b border-sand px-5 py-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-espresso"
+            aria-label="Close"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-semibold text-walnut">Accept: {order.title}</span>
+            <span className="block text-[11px] text-stone/70">Review and finish the task, then Save to accept</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-5">
+        {error && (
+          <p className="rounded-lg border border-terracotta/30 bg-terracotta-soft px-3 py-2 text-[12px] font-semibold text-terracotta">{error}</p>
+        )}
+        <TaskEditor
+          mode={mode}
+          initialTask={initialTask}
+          currentUserId={currentUserId}
+          isAdminOrManager={isAdmin}
+          teamMembers={teamMembers.map((m) => ({ id: m.id, full_name: m.full_name ?? "", username: m.username ?? "" }))}
+          lockedProjectId={lockedProjectId}
+          onCancel={onClose}
+          onSaved={(task) => void handleSaved(task)}
+        />
+        {linking && <p className="text-[11px] text-stone">Linking the order to your new task…</p>}
       </div>
     </div>
   );

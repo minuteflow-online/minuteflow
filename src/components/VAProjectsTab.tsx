@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import RecurringTemplatePanel from "@/components/RecurringTemplatePanel";
+import TaskDetailsView from "@/components/TaskDetailsView";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import ProjectFiles from "@/components/ProjectFiles";
@@ -276,6 +277,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // List View filters: a single team member, or just my own subtasks.
   const [listMemberFilter, setListMemberFilter] = useState<string>("");
   const [listMyOnly, setListMyOnly] = useState(false);
+  // Batch-select subtasks in List View for one trash action.
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
   const [editSubError, setEditSubError] = useState<string | null>(null);
@@ -529,6 +533,34 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     },
     []
   );
+
+  // Trash every selected subtask in one action (same soft-delete as the row).
+  // Failed ones stay selected so the count reflects what's left to retry.
+  const handleBatchDelete = useCallback(async () => {
+    const ids = Array.from(selectedForDelete);
+    if (ids.length === 0) return;
+    if (!confirm(`Move ${ids.length} subtask${ids.length > 1 ? "s" : ""} to trash? You can restore them from the trash filter.`)) return;
+    setBatchDeleting(true);
+    const failed = new Set<number>();
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const res = await fetch(`/api/assigned-tasks/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+          });
+          if (!res.ok) failed.add(id);
+        } catch {
+          failed.add(id);
+        }
+      })
+    );
+    setSubtasks((prev) => prev.filter((t) => !ids.includes(t.id) || failed.has(t.id)));
+    setSelectedForDelete(failed);
+    if (failed.size > 0) setEditSubError(`${failed.size} subtask${failed.size > 1 ? "s" : ""} couldn't be moved to trash.`);
+    setBatchDeleting(false);
+  }, [selectedForDelete]);
 
   const fetchVaAccess = useCallback(async (projectId: string) => {
     try {
@@ -1336,6 +1368,54 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           {filteredListSubtasks.length === 0 && (
             <p className="text-[12px] text-stone/70 px-1">No subtasks match this filter.</p>
           )}
+          {(() => {
+            const deletableOnPage = slice
+              .filter((s) => isAdmin || (s.assigned_task_assignees ?? []).some((a) => a.va_id === currentUserId))
+              .map((s) => s.id);
+            if (deletableOnPage.length === 0) return null;
+            const allSelected = deletableOnPage.every((id) => selectedForDelete.has(id));
+            const selectedCount = selectedForDelete.size;
+            return (
+              <div className="flex flex-wrap items-center gap-2 px-1 pb-1.5">
+                <label className="flex items-center gap-1.5 text-[11px] text-walnut cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={(e) =>
+                      setSelectedForDelete((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) deletableOnPage.forEach((id) => next.add(id));
+                        else deletableOnPage.forEach((id) => next.delete(id));
+                        return next;
+                      })
+                    }
+                    className="accent-sage"
+                  />
+                  Select page
+                </label>
+                {selectedCount > 0 && (
+                  <>
+                    <span className="text-[11px] text-stone">{selectedCount} selected</span>
+                    <button
+                      type="button"
+                      onClick={handleBatchDelete}
+                      disabled={batchDeleting}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-terracotta-soft text-terracotta border border-terracotta/30 hover:bg-terracotta hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      {batchDeleting ? "Moving…" : `Move ${selectedCount} to trash`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedForDelete(new Set())}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold text-stone hover:text-espresso transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           <div className="space-y-1.5">
             {slice.map((sub) => {
               // Shared with SubtaskBoardView.tsx (src/lib/subtaskDisplay.ts) —
@@ -1350,6 +1430,23 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               return (
                 <div key={sub.id} className="space-y-1">
                   <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
+                    {canEdit && (
+                      <input
+                        type="checkbox"
+                        checked={selectedForDelete.has(sub.id)}
+                        onChange={(e) =>
+                          setSelectedForDelete((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(sub.id);
+                            else next.delete(sub.id);
+                            return next;
+                          })
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                        className="accent-sage shrink-0"
+                        aria-label="Select subtask"
+                      />
+                    )}
                     <StatusBadge status={sub.status} />
                     <button
                       type="button"
@@ -1403,40 +1500,19 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     </div>
                   </div>
 
-                  {/* Read-only detail — all fields, blank shows "--", with an
-                      optional Edit Task. */}
+                  {/* The one Details view the whole app uses. This was a
+                      hand-written copy with its own shorter field list — no
+                      Objective link, Start/End dates, duration, to-dos or
+                      recurrence — which is exactly the drift the shared
+                      component exists to prevent. Anything needing a profile
+                      lookup is passed in; the rest it reads itself. */}
                   {isViewing && !isEditing && (
-                    <div className="ml-3 rounded-lg border border-sand overflow-hidden text-[12px]">
-                      {([
-                        ["Task Title", sub.task_name],
-                        ["Status", sub.status?.replace(/_/g, " ")],
-                        ["Category", sub.category],
-                        ["Project", sub.project],
-                        ["Account", sub.account],
-                        ["Pay Type", sub.pay_type?.replace(/_/g, " ")],
-                        ["Staff Involved", names],
-                        ["Assigned By", sub.assigned_by ? (activeProfiles.find((a) => a.id === sub.assigned_by) ? profileLabel(activeProfiles.find((a) => a.id === sub.assigned_by)!) : null) : null],
-                        ["Due Date", sub.due_date ? formatDate(sub.due_date) : null],
-                        ["Client Detail", sub.task_detail],
-                        ["Notes", sub.task_notes],
-                        ["Instructions", sub.instructions],
-                        ["Review Required", sub.review_required ? "Yes" : "No"],
-                        ["Created By", sub.created_by_profile?.full_name || sub.created_by_profile?.username],
-                        ["Created", sub.created_at ? formatDate(sub.created_at) : null],
-                      ] as [string, string | null | undefined][]).map(([label, value]) => (
-                        <div key={label} className="flex border-b border-sand/60 last:border-0">
-                          <div className="w-32 shrink-0 bg-parchment/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">{label}</div>
-                          <div className={`flex-1 px-3 py-2 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
-                        </div>
-                      ))}
-                      <div className="flex justify-end p-2 border-t border-sand/60">
-                        <button
-                          onClick={() => { setViewingSubId(null); openSubtaskEdit(sub); }}
-                          className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors"
-                        >
-                          Edit Task
-                        </button>
-                      </div>
+                    <div className="ml-3 rounded-lg border border-sand bg-white p-3">
+                      <TaskDetailsView
+                        task={sub as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
+                        people={activeProfiles}
+                        onEdit={() => { setViewingSubId(null); openSubtaskEdit(sub); }}
+                      />
                     </div>
                   )}
 
@@ -1580,27 +1656,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     </button>
                   </div>
 
+                  {/* Same shared view as everything else — written as its own
+                      table here first, which is how it ended up missing the
+                      objective link, notes, instructions and to-dos. */}
                   {isViewing && !isEditing && (
-                    <div className="ml-3 rounded-lg border border-sand overflow-hidden text-[12px]">
-                      {([
-                        ["Task Title", task.task_name],
-                        ["Status", task.status?.replace(/_/g, " ")],
-                        ["Category", task.category],
-                        ["Project", task.project],
-                        ["Account", task.account],
-                        ["Pay Type", "output based"],
-                        ["Assigned To", who ? (who.full_name || who.username) : null],
-                        ["Rate", task.rate != null ? `${Number(task.rate).toFixed(2)}` : null],
-                        ["Start Date", task.start_date ? formatDate(task.start_date) : null],
-                        ["End Date", task.end_date ? formatDate(task.end_date) : null],
-                        ["Due Date", task.due_date ? formatDate(task.due_date) : null],
-                        ["Created", task.created_at ? formatDate(task.created_at) : null],
-                      ] as [string, string | null | undefined][]).map(([label, value]) => (
-                        <div key={label} className="flex border-b border-sand/60 last:border-0">
-                          <div className="w-32 shrink-0 bg-parchment/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">{label}</div>
-                          <div className={`flex-1 px-3 py-2 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
-                        </div>
-                      ))}
+                    <div className="ml-3 rounded-lg border border-sand bg-white p-3">
+                      <TaskDetailsView
+                        task={task as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
+                        people={activeProfiles}
+                        onEdit={() => { setViewingOutputId(null); setEditingOutputId(task.id); }}
+                      />
                     </div>
                   )}
 
