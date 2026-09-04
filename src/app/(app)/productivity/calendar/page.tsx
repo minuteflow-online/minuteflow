@@ -1647,6 +1647,47 @@ export default function ProductivityCalendarPage() {
     return { fillPercent, isOver, overMinutes };
   }
 
+  // Real time_logs for dateStr that don't line up with anything on THAT day's
+  // plan — most often a task someone kept working across several days without
+  // ever moving its start_date forward, so it's still sitting on whichever
+  // earlier day it was first scheduled and never shows up on today's list at
+  // all. Precisely-attributed logs (assigned_task_id set) are flagged when
+  // that task isn't one of today's scheduled rows; unattributed logs (no
+  // assigned_task_id — actualMinutesByKey's fallback bucket) are flagged when
+  // no scheduled row today shares their name+account either. The day's own
+  // Planned/Actual total already counts this time; this is only about it
+  // having nowhere to visually attach on the calendar for today specifically.
+  function unscheduledActualForDate(vaId: string | null, dateStr: string) {
+    if (!vaId) return [];
+    const { rows } = durationsForDate(dateStr);
+    const scheduledIds = new Set(rows.map((r) => r.id));
+    const scheduledKeys = new Set(
+      rows.map((r) => `${(r.name ?? "").trim().toLowerCase()}|${(r.account ?? "").trim().toLowerCase()}`)
+    );
+    const titleCase = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
+
+    const out: Array<{ key: string; taskId: number | null; name: string; account: string | null; minutes: number }> = [];
+
+    for (const [taskKey, minutes] of actualMinutesByTaskId) {
+      const [idStr, keyDate] = taskKey.split("|");
+      if (keyDate !== dateStr) continue;
+      const taskId = Number(idStr);
+      if (scheduledIds.has(taskId)) continue;
+      const task = assignedTasksAll.find((t) => t.id === taskId);
+      out.push({ key: `task-${taskId}`, taskId, name: task?.task_name ?? "Unknown task", account: task?.account ?? null, minutes });
+    }
+
+    const prefix = `${vaId}|${dateStr}|`;
+    for (const [matchKey, minutes] of actualMinutesByKey) {
+      if (!matchKey.startsWith(prefix)) continue;
+      const [nameLower, accountLower] = matchKey.slice(prefix.length).split("|");
+      if (scheduledKeys.has(`${nameLower}|${accountLower ?? ""}`)) continue;
+      out.push({ key: matchKey, taskId: null, name: titleCase(nameLower || "Unknown task"), account: accountLower ? titleCase(accountLower) : null, minutes });
+    }
+
+    return out.sort((a, b) => b.minutes - a.minutes);
+  }
+
   // Actual Timeline: the day's blocks reflowed by what really happened,
   // instead of where they were planned. Walks the day in scheduled order
   // carrying a running delay ("cursor") forward — a block that ran long pushes
@@ -2180,6 +2221,27 @@ export default function ProductivityCalendarPage() {
                       );
                     })
                   )}
+                  {unscheduledActualForDate(dayUserId, dateStr).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      disabled={item.taskId == null}
+                      onClick={() => {
+                        if (item.taskId == null) return;
+                        const task = assignedTasksAll.find((t) => t.id === item.taskId);
+                        if (task) void openScheduleExisting(task, dateStr);
+                      }}
+                      title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged, not scheduled this day`}
+                      className={`w-full overflow-hidden rounded-md border-2 border-blue-500 bg-blue-50 px-1.5 py-1 text-left shadow-sm ${
+                        item.taskId == null ? "cursor-default" : "cursor-pointer hover:opacity-90"
+                      }`}
+                    >
+                      <p className="truncate text-[11px] font-semibold text-blue-700">{item.name}</p>
+                      <p className="truncate text-[9px] text-blue-600/80">
+                        {[item.account, formatDuration(item.minutes)].filter(Boolean).join(" | ")} · not on plan
+                      </p>
+                    </button>
+                  ))}
                 </div>
               </div>
             );
@@ -3308,6 +3370,49 @@ export default function ProductivityCalendarPage() {
                     })}
                   </div>
                 )}
+                {/* Real work today with nowhere on TODAY's plan to attach to —
+                    most often a task kept going across several days without
+                    its start_date ever moving forward, so it's still sitting
+                    on whichever earlier day it was first scheduled. Already
+                    counted in the Planned/Actual total above; this just makes
+                    it visible instead of silently missing from the list. */}
+                {(() => {
+                  const unscheduled = unscheduledActualForDate(dayUserId, selectedDate);
+                  if (unscheduled.length === 0) return null;
+                  return (
+                  <div className="space-y-1.5 border-t border-sand p-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600">
+                      Worked, not on this day&apos;s plan
+                    </p>
+                    {unscheduled.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        disabled={item.taskId == null}
+                        onClick={() => {
+                          if (item.taskId == null) return;
+                          const task = assignedTasksAll.find((t) => t.id === item.taskId);
+                          if (task) void openScheduleExisting(task, selectedDate);
+                        }}
+                        title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged today, not scheduled today`}
+                        className={`flex w-full items-center justify-between gap-3 rounded-md border-2 border-blue-500 bg-blue-50 px-2 py-1.5 text-left shadow-sm transition-opacity ${
+                          item.taskId == null ? "cursor-default" : "hover:opacity-90 cursor-pointer"
+                        }`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px] font-semibold text-blue-700">{item.name}</span>
+                          <span className="block truncate text-[10px] text-blue-600/80">
+                            {item.account ?? "—"} · scheduled on a different day
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-right text-[12px] font-semibold text-blue-700">
+                          {formatDuration(item.minutes)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  );
+                })()}
               </div>
             ) : dayTab === "actual" ? (
               <div className="rounded-lg border border-sand overflow-hidden">
