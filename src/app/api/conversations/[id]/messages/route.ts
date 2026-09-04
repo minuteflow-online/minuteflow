@@ -98,7 +98,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     await notifyOne(admin, {
       targetUserId: m.user_id as string,
       senderId: user.id,
-      content: `${senderName}${where}: ${snippet}`,
+      content: `${senderName} sent you a message${where}`,
       telegram: `💬 <b>${esc(senderName)}</b>${where ? ` <i>${esc(where.trim())}</i>` : ""}\n\n${esc(snippet)}`,
       topic: "message",
     });
