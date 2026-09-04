@@ -199,10 +199,18 @@ export default function ProductivityCalendarPage() {
   const [compareSchedules, setCompareSchedules] = useState<Record<string, RawTask[]>>({});
   const [showComparePicker, setShowComparePicker] = useState(false);
   // Actual worked minutes, keyed by matchKey(vaId, dateStr, taskName, account) —
-  // time_logs carries no task reference, so this is the same person+name+account
-  // matching useRevisionByLogId uses. Powers the "shaded to actual time" overlay
-  // on each scheduled block.
+  // the fallback for logs with no assigned_task_id (below): person+name+account
+  // is the same matching useRevisionByLogId uses when it has nothing better.
+  // Powers the "shaded to actual time" overlay on each scheduled block.
   const [actualMinutesByKey, setActualMinutesByKey] = useState<Map<string, number>>(new Map());
+  // Same overlay, but keyed by the specific task a log was actually stamped
+  // against (assigned_tasks/[id]'s status-change route sets time_logs.
+  // assigned_task_id when a task is started) — precise, unlike the name+account
+  // fallback above, which can't tell two same-named tasks apart and used to
+  // show one task's full logged time on every other task sharing its name.
+  // Not every log carries this yet (only "Start" transitions stamp it), so
+  // this is checked first and actualMinutesByKey covers what's left.
+  const [actualMinutesByTaskId, setActualMinutesByTaskId] = useState<Map<string, number>>(new Map());
   // Same real worked time, summed per person+day regardless of which task it
   // was logged against — powers the Planned/Actual readouts (day, week, month
   // totals), which compare "what's scheduled" against "everything actually
@@ -1461,6 +1469,7 @@ export default function ProductivityCalendarPage() {
     (async () => {
       if (actualTimeVaIds.length === 0 || weekDates.length === 0) {
         setActualMinutesByKey(new Map());
+        setActualMinutesByTaskId(new Map());
         setActualMinutesByVaDate(new Map());
         return;
       }
@@ -1472,28 +1481,38 @@ export default function ProductivityCalendarPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from("time_logs")
-        .select("user_id, task_name, account, session_date, duration_ms")
+        .select("user_id, task_name, account, session_date, duration_ms, assigned_task_id")
         .in("user_id", actualTimeVaIds)
         .gte("session_date", rangeStart)
         .lte("session_date", rangeEnd)
         .is("deleted_at", null);
       if (cancelled) return;
       const byKey = new Map<string, number>();
+      const byTaskId = new Map<string, number>();
       const byVaDate = new Map<string, number>();
       for (const log of (data ?? []) as {
         user_id: string; task_name: string | null; account: string | null;
-        session_date: string | null; duration_ms: number | null;
+        session_date: string | null; duration_ms: number | null; assigned_task_id: number | null;
       }[]) {
         if (!log.session_date) continue;
         const ms = log.duration_ms && log.duration_ms > 0 ? log.duration_ms : 0;
         if (ms === 0) continue;
         const minutes = ms / 60000;
-        const key = actualMatchKey(log.user_id, log.session_date, log.task_name, log.account);
-        byKey.set(key, (byKey.get(key) ?? 0) + minutes);
         const vaDateKey = `${log.user_id}|${log.session_date}`;
         byVaDate.set(vaDateKey, (byVaDate.get(vaDateKey) ?? 0) + minutes);
+        // A stamped log is claimed entirely by its own task — left out of the
+        // name+account pool below, or its minutes would show up twice: once
+        // precisely here, once again smeared across every same-named task.
+        if (log.assigned_task_id != null) {
+          const taskKey = `${log.assigned_task_id}|${log.session_date}`;
+          byTaskId.set(taskKey, (byTaskId.get(taskKey) ?? 0) + minutes);
+          continue;
+        }
+        const key = actualMatchKey(log.user_id, log.session_date, log.task_name, log.account);
+        byKey.set(key, (byKey.get(key) ?? 0) + minutes);
       }
       setActualMinutesByKey(byKey);
+      setActualMinutesByTaskId(byTaskId);
       setActualMinutesByVaDate(byVaDate);
     })();
     return () => { cancelled = true; };
@@ -1584,9 +1603,11 @@ export default function ProductivityCalendarPage() {
   const actualMinutesFor = useCallback(
     (vaId: string | null, dateStr: string, task: RawTask) => {
       if (!vaId) return 0;
+      const precise = actualMinutesByTaskId.get(`${task.id}|${dateStr}`);
+      if (precise != null) return precise;
       return actualMinutesByKey.get(actualMatchKey(vaId, dateStr, task.task_name, task.account)) ?? 0;
     },
-    [actualMinutesByKey]
+    [actualMinutesByTaskId, actualMinutesByKey]
   );
 
   // The shade-to-actual overlay + over-time treatment shared by all three
@@ -1614,10 +1635,11 @@ export default function ProductivityCalendarPage() {
   function durationRowOverlay(
     vaId: string | null,
     dateStr: string,
-    row: { name: string | null; account: string | null; minutes: number; source: "assigned" | "fixed" }
+    row: { id: number; name: string | null; account: string | null; minutes: number; source: "assigned" | "fixed" }
   ) {
     if (!vaId || row.source === "fixed" || row.minutes <= 0) return null;
-    const actual = actualMinutesByKey.get(actualMatchKey(vaId, dateStr, row.name, row.account)) ?? 0;
+    const precise = actualMinutesByTaskId.get(`${row.id}|${dateStr}`);
+    const actual = precise ?? actualMinutesByKey.get(actualMatchKey(vaId, dateStr, row.name, row.account)) ?? 0;
     if (actual <= 0) return null;
     const fillPercent = Math.min(actual / row.minutes, 1) * 100;
     const overMinutes = Math.round(actual - row.minutes);
