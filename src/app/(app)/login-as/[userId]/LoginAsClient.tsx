@@ -244,7 +244,7 @@ export default function LoginAsClient({
 
           {/* Quick Pick Sidebar — loads live org data, buttons are no-ops */}
           <ProjectSidebar
-            onSelectProject={() => {}}
+            
             onQuickAction={() => {}}
             onAutoHoldAction={() => {}}
             isAdmin={false}

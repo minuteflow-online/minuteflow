@@ -3141,19 +3141,6 @@ export default function DashboardPage() {
   const [sidebarClientMemo, setSidebarClientMemo] = useState("");
   const [sidebarInternalMemo, setSidebarInternalMemo] = useState("");
 
-  const handleProjectSelect = useCallback(
-    (account: string, project: string) => {
-      // Pre-fill the task form with account and project
-      // This triggers a custom event the TaskEntryForm listens for
-      window.dispatchEvent(
-        new CustomEvent("minuteflow-prefill", {
-          detail: { account, project },
-        })
-      );
-    },
-    []
-  );
-
   const handleQuickAction = useCallback(
     (mapping: QuickActionMapping) => {
       window.dispatchEvent(
@@ -3562,7 +3549,6 @@ export default function DashboardPage() {
               {/* Quick Pick — hidden for VAs before clock-in */}
               {(role !== "va" || sessionState !== "idle") && (
                 <ProjectSidebar
-                  onSelectProject={handleProjectSelect}
                   onQuickAction={handleQuickAction}
                   onAutoHoldAction={handleAutoHoldAndStartMessage}
                   isAdmin={hasBroadAdminAccess({ role })}
