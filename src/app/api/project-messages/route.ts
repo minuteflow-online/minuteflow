@@ -28,6 +28,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
   const general = searchParams.get("general") === "1";
+  const archived = searchParams.get("archived") === "1";
   if (!projectId && !general) {
     return Response.json({ error: "projectId is required" }, { status: 400 });
   }
@@ -49,6 +50,7 @@ export async function GET(request: Request) {
     )
     [general ? "is" : "eq"]("project_id", general ? null : projectId)
     .is("deleted_at", null)
+    .filter("archived_at", archived ? "not.is" : "is", null)
     .order("pinned", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -154,7 +156,22 @@ export async function PATCH(request: Request) {
     body?: string;
     category?: string | null;
     pinned?: boolean;
+    archived?: boolean;
   };
+
+  // Archiving files a topic out of the way. Unlike trashing it stays readable
+  // to everyone, in the Archived view, and anyone who could archive it can put
+  // it back.
+  if (body.archived !== undefined) {
+    const { data, error } = await supabase
+      .from("project_messages")
+      .update({ archived_at: body.archived ? new Date().toISOString() : null })
+      .eq("id", id)
+      .select("id, archived_at")
+      .single();
+    if (error) return Response.json({ error: error.message }, { status: 400 });
+    return Response.json({ message: data });
+  }
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (body.title !== undefined) updates.title = body.title.trim();
   if (body.body !== undefined) updates.body = body.body.trim();

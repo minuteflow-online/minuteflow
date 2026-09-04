@@ -89,6 +89,9 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   // is simply absent for everyone else.
   const [trashed, setTrashed] = useState<Thread[]>([]);
   const [canSeeTrash, setCanSeeTrash] = useState(false);
+  // Archived topics are filed away, not deleted: still readable by everyone,
+  // just out of the main list.
+  const [archived, setArchived] = useState<Thread[]>([]);
   // Typing "@" opens a name list; picking one completes the mention. Keyed by
   // which box is being typed in, so the reply box and the topic body can each
   // have their own picker without sharing state.
@@ -177,6 +180,30 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
       })
       .catch(() => {});
   }, [reloadKey]);
+
+  useEffect(() => {
+    fetch("/api/project-messages?general=1&archived=1", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setArchived((d.messages ?? []) as Thread[]))
+      .catch(() => {});
+  }, [reloadKey]);
+
+  const setThreadArchived = useCallback(async (t: Thread, next: boolean) => {
+    setBusyThread(t.id);
+    try {
+      const r = await fetch(`/api/project-messages?id=${t.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: next }),
+      });
+      if (r.ok) {
+        setActiveThread(null);
+        setReloadKey((k) => k + 1);
+      }
+    } finally {
+      setBusyThread(null);
+    }
+  }, []);
 
   const restoreThread = useCallback(async (t: Thread) => {
     setBusyThread(t.id);
@@ -483,14 +510,25 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <button type="button" onClick={() => setActiveThread(null)} className="text-[10px] font-semibold text-slate-blue hover:underline">← Back</button>
-                <button
-                  type="button"
-                  onClick={() => void trashThread(activeThread)}
-                  disabled={busyThread === activeThread.id}
-                  className="text-[10px] font-semibold text-bark hover:text-terracotta transition-colors disabled:opacity-50"
-                >
-                  Trash
-                </button>
+                <span className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void setThreadArchived(activeThread, true)}
+                    disabled={busyThread === activeThread.id}
+                    title="File this out of the list. It stays readable in Archived."
+                    className="text-[10px] font-semibold text-bark hover:text-espresso transition-colors disabled:opacity-50"
+                  >
+                    Archive
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void trashThread(activeThread)}
+                    disabled={busyThread === activeThread.id}
+                    className="text-[10px] font-semibold text-bark hover:text-terracotta transition-colors disabled:opacity-50"
+                  >
+                    Trash
+                  </button>
+                </span>
               </div>
               <div className="rounded-lg border border-sand bg-cream/40 p-2.5">
                 <p className="text-[12px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
@@ -600,11 +638,34 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                   {topicTitles.map((t) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
+                  {archived.length > 0 && <option value="__archived">Archived ({archived.length})</option>}
                   {canSeeTrash && <option value="__trash">Trash ({trashed.length})</option>}
                 </select>
               </div>
 
-              {projectFilter === "__trash" ? (
+              {projectFilter === "__archived" ? (
+                archived.length === 0 ? (
+                  <p className="text-[12px] text-walnut px-1">Nothing archived.</p>
+                ) : (
+                  archived.map((t) => (
+                    <div key={t.id} className="rounded-lg border border-sand bg-parchment/30 px-2.5 py-2">
+                      <p className="text-[12px] font-semibold text-espresso truncate">{t.title || "Untitled"}</p>
+                      {t.body && <p className="text-[11px] text-walnut line-clamp-2 whitespace-pre-wrap">{t.body}</p>}
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-bark truncate">archived</span>
+                        <button
+                          type="button"
+                          onClick={() => void setThreadArchived(t, false)}
+                          disabled={busyThread === t.id}
+                          className="shrink-0 px-2 py-0.5 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20 disabled:opacity-50"
+                        >
+                          Unarchive
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )
+              ) : projectFilter === "__trash" ? (
                 trashed.length === 0 ? (
                   <p className="text-[12px] text-walnut px-1">Nothing in the trash.</p>
                 ) : (

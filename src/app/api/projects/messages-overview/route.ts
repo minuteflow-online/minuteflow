@@ -38,6 +38,7 @@ export async function GET(request: Request) {
     // A trashed topic is soft-deleted, and this list never checked — so a topic
     // came straight back on the next refetch and looked undeletable.
     .is("deleted_at", null)
+    .is("archived_at", null)
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) return Response.json({ error: error.message }, { status: 500 });
