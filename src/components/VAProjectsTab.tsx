@@ -277,6 +277,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // List View filters: a single team member, or just my own subtasks.
   const [listMemberFilter, setListMemberFilter] = useState<string>("");
   const [listMyOnly, setListMyOnly] = useState(false);
+  // Batch-select subtasks in List View for one trash action.
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
   const [editSubError, setEditSubError] = useState<string | null>(null);
@@ -530,6 +533,34 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     },
     []
   );
+
+  // Trash every selected subtask in one action (same soft-delete as the row).
+  // Failed ones stay selected so the count reflects what's left to retry.
+  const handleBatchDelete = useCallback(async () => {
+    const ids = Array.from(selectedForDelete);
+    if (ids.length === 0) return;
+    if (!confirm(`Move ${ids.length} subtask${ids.length > 1 ? "s" : ""} to trash? You can restore them from the trash filter.`)) return;
+    setBatchDeleting(true);
+    const failed = new Set<number>();
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const res = await fetch(`/api/assigned-tasks/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+          });
+          if (!res.ok) failed.add(id);
+        } catch {
+          failed.add(id);
+        }
+      })
+    );
+    setSubtasks((prev) => prev.filter((t) => !ids.includes(t.id) || failed.has(t.id)));
+    setSelectedForDelete(failed);
+    if (failed.size > 0) setEditSubError(`${failed.size} subtask${failed.size > 1 ? "s" : ""} couldn't be moved to trash.`);
+    setBatchDeleting(false);
+  }, [selectedForDelete]);
 
   const fetchVaAccess = useCallback(async (projectId: string) => {
     try {
@@ -1337,6 +1368,54 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           {filteredListSubtasks.length === 0 && (
             <p className="text-[12px] text-stone/70 px-1">No subtasks match this filter.</p>
           )}
+          {(() => {
+            const deletableOnPage = slice
+              .filter((s) => isAdmin || (s.assigned_task_assignees ?? []).some((a) => a.va_id === currentUserId))
+              .map((s) => s.id);
+            if (deletableOnPage.length === 0) return null;
+            const allSelected = deletableOnPage.every((id) => selectedForDelete.has(id));
+            const selectedCount = selectedForDelete.size;
+            return (
+              <div className="flex flex-wrap items-center gap-2 px-1 pb-1.5">
+                <label className="flex items-center gap-1.5 text-[11px] text-walnut cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={(e) =>
+                      setSelectedForDelete((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) deletableOnPage.forEach((id) => next.add(id));
+                        else deletableOnPage.forEach((id) => next.delete(id));
+                        return next;
+                      })
+                    }
+                    className="accent-sage"
+                  />
+                  Select page
+                </label>
+                {selectedCount > 0 && (
+                  <>
+                    <span className="text-[11px] text-stone">{selectedCount} selected</span>
+                    <button
+                      type="button"
+                      onClick={handleBatchDelete}
+                      disabled={batchDeleting}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-terracotta-soft text-terracotta border border-terracotta/30 hover:bg-terracotta hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      {batchDeleting ? "Moving…" : `Move ${selectedCount} to trash`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedForDelete(new Set())}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold text-stone hover:text-espresso transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           <div className="space-y-1.5">
             {slice.map((sub) => {
               // Shared with SubtaskBoardView.tsx (src/lib/subtaskDisplay.ts) —
@@ -1351,6 +1430,23 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               return (
                 <div key={sub.id} className="space-y-1">
                   <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
+                    {canEdit && (
+                      <input
+                        type="checkbox"
+                        checked={selectedForDelete.has(sub.id)}
+                        onChange={(e) =>
+                          setSelectedForDelete((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(sub.id);
+                            else next.delete(sub.id);
+                            return next;
+                          })
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                        className="accent-sage shrink-0"
+                        aria-label="Select subtask"
+                      />
+                    )}
                     <StatusBadge status={sub.status} />
                     <button
                       type="button"
