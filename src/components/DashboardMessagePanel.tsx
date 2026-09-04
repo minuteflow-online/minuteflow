@@ -66,6 +66,10 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   // Expanded moves this exact panel into an overlay rather than rendering a
   // second copy, so whatever you were reading or typing survives the switch.
   const [expanded, setExpanded] = useState(false);
+  // General has no read state of its own, so "new" means posted since you last
+  // had the tab open. Kept per person in localStorage — this is an attention
+  // cue, not a record, so it does not need to survive a new browser.
+  const [lastSeenGeneral, setLastSeenGeneral] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   // ── General (objective + operation threads) ────────────────────────────────
@@ -108,6 +112,26 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [groupTitle, setGroupTitle] = useState("");
   const [sending, setSending] = useState(false);
   const dmEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      setLastSeenGeneral(localStorage.getItem(`mf-msg-seen:${currentUserId}`));
+    } catch {
+      // Private window or blocked storage — everything just reads as seen.
+    }
+  }, [currentUserId]);
+
+  // Opening General marks it read, so the cue clears the moment you look.
+  useEffect(() => {
+    if (tab !== "general") return;
+    const now = new Date().toISOString();
+    setLastSeenGeneral(now);
+    try {
+      localStorage.setItem(`mf-msg-seen:${currentUserId}`, now);
+    } catch {
+      // Nothing to do — the badge simply will not persist.
+    }
+  }, [tab, currentUserId, threads]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -376,6 +400,22 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const unreadTotal = convs.reduce((n, c) => n + c.unread, 0);
   const hasNewComments = notifs.some((n) => !n.read);
 
+  // A topic or a reply posted since you last opened General, by someone else.
+  const newGeneralCount = useMemo(() => {
+    if (!lastSeenGeneral) return 0;
+    let n = 0;
+    for (const t of threads) {
+      if (t.author_id !== currentUserId && t.created_at > lastSeenGeneral) n += 1;
+      for (const c of t.comments ?? []) {
+        if (c.author_id !== currentUserId && c.created_at > lastSeenGeneral) n += 1;
+      }
+    }
+    return n;
+  }, [threads, lastSeenGeneral, currentUserId]);
+
+  // Anything at all worth looking at, for the header cue.
+  const hasAnythingNew = unreadTotal > 0 || hasNewComments || newGeneralCount > 0;
+
   const panel = (
     <div
       className={`rounded-xl border border-amber/30 bg-amber-soft/25 shadow-sm flex flex-col overflow-hidden ${
@@ -383,7 +423,17 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
       }`}
     >
       <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-amber/20 bg-amber-soft/50">
-        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Messages</h3>
+        <h3 className="flex items-center gap-1.5 text-xs font-bold text-espresso uppercase tracking-wide">
+          Messages
+          {hasAnythingNew && (
+            <span className="relative flex h-2 w-2" title="New messages">
+              {/* Ping ring plus a solid centre: the pulse draws the eye, the
+                  dot stays legible once it fades. */}
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-terracotta opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-terracotta" />
+            </span>
+          )}
+        </h3>
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -399,8 +449,9 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
           <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setComposingChat(false); }}
             className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
             {label}
-            {k === "personal" && unreadTotal > 0 && <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-terracotta text-white text-[8px] align-middle">{unreadTotal}</span>}
-            {k === "comments" && hasNewComments && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-terracotta align-middle" />}
+            {k === "general" && newGeneralCount > 0 && <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-terracotta text-white text-[8px] align-middle animate-pulse">{newGeneralCount}</span>}
+            {k === "personal" && unreadTotal > 0 && <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-terracotta text-white text-[8px] align-middle animate-pulse">{unreadTotal}</span>}
+            {k === "comments" && hasNewComments && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-terracotta align-middle animate-pulse" />}
           </button>
         ))}
       </div>
