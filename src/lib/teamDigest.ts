@@ -250,9 +250,28 @@ export async function buildWeeklyRecap(): Promise<string | null> {
  * Returns null when no meeting is on, so the same three clock times can run
  * every day and simply say nothing six days a week.
  */
+/** "6:00 AM" from a stored "06:00:00". A bare 24-hour clock reads as a
+ *  timestamp, not an appointment, and half the team is twelve hours away. */
+export function meetingClock(dueTime: string): string {
+  const [hourText, minuteText] = String(dueTime).split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText ?? 0);
+  if (!Number.isFinite(hour)) return String(dueTime).slice(0, 5);
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${suffix} ET`;
+}
+
+export interface MeetingReminder {
+  /** The group post, mentions and all. */
+  groupMessage: string;
+  /** The same meeting said to one person, with no @everyone. */
+  personalMessage: string;
+}
+
 export async function buildMeetingReminder(
   when: "today" | "tomorrow"
-): Promise<string | null> {
+): Promise<MeetingReminder | null> {
   const supabase = service();
   const date = when === "today" ? orgDate(0) : orgDate(1);
 
@@ -272,7 +291,7 @@ export async function buildMeetingReminder(
   const lines: string[] = [];
   for (const m of live) {
     const name = esc(String(m.task_name ?? "Team meeting"));
-    const at = m.due_time ? ` at ${esc(String(m.due_time).slice(0, 5))}` : "";
+    const at = m.due_time ? ` at ${esc(meetingClock(String(m.due_time)))}` : "";
     lines.push(
       when === "today"
         ? `🔔 <b>${name} today${at}</b>`
@@ -280,11 +299,15 @@ export async function buildMeetingReminder(
     );
   }
 
-  // The one scheduled team post that everybody has to act on, so it pings the
-  // room. The birthdays, recaps and digests deliberately do not — a chat that
-  // notifies for everything is a chat people mute, and then they miss this.
-  lines.push("", "@everyone", "", "See you there.");
-  return lines.join("\n");
+  return {
+    // The one scheduled team post that everybody has to act on, so it pings the
+    // room. The birthdays, recaps and digests deliberately do not — a chat that
+    // notifies for everything is a chat people mute, and then they miss this.
+    groupMessage: [...lines, "", "@everyone", "", "See you there."].join("\n"),
+    // No @everyone in a message to one person: it would ping the whole team
+    // from inside a private chat, or read as a broadcast pasted at them.
+    personalMessage: [...lines, "", "See you there."].join("\n"),
+  };
 }
 
 /** 0 = Sunday, matching profiles.work_days. */
