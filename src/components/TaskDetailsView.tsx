@@ -135,7 +135,7 @@ export default function TaskDetailsView({
           it's what the work actually is. The task name lives in its own row. */}
       <div className="space-y-0.5">
         <div className="flex items-center gap-1.5">
-          <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_detail") ?? str("task_name") ?? "Untitled task"}</h4>
+          <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_detail") ?? str("task_name") ?? "—"}</h4>
           {task.recurring_template_id != null && (
             <span
               title="Repeats — generated from a recurring template"
