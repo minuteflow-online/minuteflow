@@ -669,6 +669,7 @@ export default function RecurringTemplatesManager({
                     clock times are re-anchored onto a date first for the same
                     reason the editor does it (see RecurringTemplatePanel). */}
                 <TaskDetailsView
+                  people={activeProfiles}
                   task={{
                     ...(viewing as unknown as Record<string, unknown>),
                     task_name: viewing.title ?? viewing.task_name ?? "",

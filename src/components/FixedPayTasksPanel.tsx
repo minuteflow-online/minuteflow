@@ -1237,6 +1237,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                   </div>
 
                   <TaskDetailsView
+                    people={teamMembers}
                     task={selectedTask as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
                     onEdit={() => openEditPanel(selectedTask)}
                   />

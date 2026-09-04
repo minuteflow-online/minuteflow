@@ -1414,12 +1414,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     <div className="ml-3 rounded-lg border border-sand bg-white p-3">
                       <TaskDetailsView
                         task={sub as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
-                        extraRows={[
-                          ["Staff Involved", names],
-                          ["Assigned By", sub.assigned_by ? (activeProfiles.find((a) => a.id === sub.assigned_by) ? profileLabel(activeProfiles.find((a) => a.id === sub.assigned_by)!) : null) : null],
-                          ["Created By", sub.created_by_profile?.full_name || sub.created_by_profile?.username],
-                          ["Created", sub.created_at ? formatDate(sub.created_at) : null],
-                        ]}
+                        people={activeProfiles}
                         onEdit={() => { setViewingSubId(null); openSubtaskEdit(sub); }}
                       />
                     </div>
@@ -1572,10 +1567,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     <div className="ml-3 rounded-lg border border-sand bg-white p-3">
                       <TaskDetailsView
                         task={task as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
-                        extraRows={[
-                          ["Assigned To", who ? (who.full_name || who.username) : null],
-                          ["Created", task.created_at ? formatDate(task.created_at) : null],
-                        ]}
+                        people={activeProfiles}
                         onEdit={() => { setViewingOutputId(null); setEditingOutputId(task.id); }}
                       />
                     </div>

@@ -30,13 +30,16 @@ export default function TaskDetailsView({
   task,
   onEdit,
   extraRows = [],
+  people = [],
 }: {
   task: TaskEditorInitialTask;
   onEdit: () => void;
-  /** Values this view cannot resolve on its own — anything needing a profile
-   *  lookup (who is on it, who assigned it) belongs to the caller. Appended in
-   *  order, and shown with -- when blank like every other row. */
+  /** Anything this view still cannot work out for itself. Appended in order,
+   *  and shown with -- when blank like every other row. */
   extraRows?: Array<[string, string | null | undefined]>;
+  /** Profiles for turning the ids on a task into names. Without it the people
+   *  rows fall back to whatever the task already carries. */
+  people?: Array<{ id: string; full_name?: string | null; username?: string | null }>;
 }) {
   const str = (k: string) => {
     const v = task[k];
@@ -79,6 +82,25 @@ export default function TaskDetailsView({
     return () => { cancelled = true; };
   }, [templateId]);
 
+  const nameOf = (id: string | null) => {
+    if (!id) return null;
+    const p = people.find((person) => person.id === id);
+    return p ? (p.full_name || p.username || null) : null;
+  };
+
+  const assignees = (task.assigned_task_assignees ?? []) as Array<{
+    va_id?: string;
+    profiles?: { full_name?: string | null; username?: string | null } | null;
+  }>;
+  const staffInvolved =
+    assignees
+      .map((a) => a.profiles?.full_name || a.profiles?.username || nameOf(a.va_id ?? null))
+      .filter(Boolean)
+      .join(", ") || nameOf((task.assigned_to as string | null) ?? null);
+
+  const createdByProfile = task.created_by_profile as { full_name?: string | null; username?: string | null } | null | undefined;
+  const createdBy = createdByProfile?.full_name || createdByProfile?.username || nameOf(str("created_by"));
+
   const rows: Array<[string, string | null]> = [
     ["Account", str("account")],
     ["Objective", str("project")],
@@ -97,6 +119,12 @@ export default function TaskDetailsView({
     ["Rate", task.rate != null ? `${task.rate}` : null],
     ["Review Required", task.review_required == null ? null : task.review_required ? "Yes" : "No"],
     ["Pay Type", str("pay_type") ? (str("pay_type") as string).replace(/_/g, " ") : null],
+    // Who it involves. Worked out here rather than left to each caller, since
+    // every caller that had to remember these forgot at least one of them.
+    ["Staff Involved", staffInvolved],
+    ["Assigned By", nameOf(str("assigned_by"))],
+    ["Created By", createdBy],
+    ["Created", str("created_at") ? String(str("created_at")).slice(0, 10) : null],
     ...extraRows.map(([label, value]) => [label, value ?? null] as [string, string | null]),
   ];
 
