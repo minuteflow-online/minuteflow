@@ -24,9 +24,6 @@ interface ProjectSidebarProps {
   onQuickAction: (mapping: QuickActionMapping) => void;
   onAutoHoldAction: (mapping: QuickActionMapping) => void;
   isAdmin: boolean;
-  /** When set (admins), the Messages panel replaces the Projects list here —
-      admins don't quick-pick projects, so that space carries messages instead. */
-  messagesSlot?: React.ReactNode;
 }
 
 export default function ProjectSidebar({
@@ -34,7 +31,6 @@ export default function ProjectSidebar({
   onQuickAction,
   onAutoHoldAction,
   isAdmin,
-  messagesSlot,
 }: ProjectSidebarProps) {
   const [tags, setTags] = useState<ProjectTag[]>([]);
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
@@ -143,10 +139,7 @@ export default function ProjectSidebar({
           </div>
         </div>
 
-        {/* Admins get the Messages panel here instead of the Projects list. */}
-        {messagesSlot ? (
-          <div className="px-4 py-3">{messagesSlot}</div>
-        ) : (
+        {/* Projects by Account */}
         <div className="px-4 py-3">
           <div className="text-[9px] font-bold text-bark uppercase tracking-wider mb-2">
             Projects
@@ -204,7 +197,6 @@ export default function ProjectSidebar({
             </div>
           )}
         </div>
-        )}
 
       </div>
     </div>

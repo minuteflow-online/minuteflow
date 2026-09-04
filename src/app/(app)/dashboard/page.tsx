@@ -3523,17 +3523,12 @@ export default function DashboardPage() {
         // whatever room is left between Team and Quick Pick's fixed widths,
         // instead of leaving dead space on the right at a fixed narrow width.
         const gridClass = isVa
-          ? "grid-cols-1 md:grid-cols-[1fr_240px] lg:grid-cols-[260px_1fr_240px]"
+          ? "grid-cols-1 md:grid-cols-[1fr_240px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px]";
 
         return (
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
-            {/* Left column: Team for non-VAs; the Messages hub for VAs (admins
-                get Messages inside Quick Pick instead of the Projects list). */}
-            <div className="space-y-5">
-              {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
-              {userId && role === "va" && <DashboardMessagePanel currentUserId={userId} />}
-            </div>
+            {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
               <TaskWidgetsTabs
@@ -3554,24 +3549,27 @@ export default function DashboardPage() {
                 activeTaskClientMemo={activeTask?.client_memo || ""}
               />
             )}
-            {canWorkTasks && sessionState === "idle" && (
-              <AvailableTasksWidget
-                key={`avail-${claimRefreshKey}`}
-                onClaimed={() => setClaimRefreshKey((k) => k + 1)}
-                canSeeFixedPay={isPerTask || canSeeAvailable}
-                startCollapsed={isVa}
-              />
-            )}
-            {/* Quick Pick — hidden for VAs before clock-in */}
-            {(role !== "va" || sessionState !== "idle") && (
-              <ProjectSidebar
-                onSelectProject={handleProjectSelect}
-                onQuickAction={handleQuickAction}
-                onAutoHoldAction={handleAutoHoldAndStartMessage}
-                isAdmin={hasBroadAdminAccess({ role })}
-                messagesSlot={userId && role !== "va" ? <DashboardMessagePanel currentUserId={userId} /> : undefined}
-              />
-            )}
+            {/* Right column: available/quick-pick, with the Messages inbox under it. */}
+            <div className="space-y-5">
+              {canWorkTasks && sessionState === "idle" && (
+                <AvailableTasksWidget
+                  key={`avail-${claimRefreshKey}`}
+                  onClaimed={() => setClaimRefreshKey((k) => k + 1)}
+                  canSeeFixedPay={isPerTask || canSeeAvailable}
+                  startCollapsed={isVa}
+                />
+              )}
+              {/* Quick Pick — hidden for VAs before clock-in */}
+              {(role !== "va" || sessionState !== "idle") && (
+                <ProjectSidebar
+                  onSelectProject={handleProjectSelect}
+                  onQuickAction={handleQuickAction}
+                  onAutoHoldAction={handleAutoHoldAndStartMessage}
+                  isAdmin={hasBroadAdminAccess({ role })}
+                />
+              )}
+              {userId && <DashboardMessagePanel currentUserId={userId} />}
+            </div>
           </div>
         );
       })()}
