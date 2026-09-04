@@ -12,6 +12,7 @@ import TeamSidebar from "@/components/TeamSidebar";
 import ActivityLog from "@/components/ActivityLog";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
+import DashboardMessagePanel from "@/components/DashboardMessagePanel";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import TaskWidgetsTabs from "@/components/TaskWidgetsTabs";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
@@ -3522,12 +3523,16 @@ export default function DashboardPage() {
         // whatever room is left between Team and Quick Pick's fixed widths,
         // instead of leaving dead space on the right at a fixed narrow width.
         const gridClass = isVa
-          ? "grid-cols-1 md:grid-cols-[1fr_240px]"
+          ? "grid-cols-1 md:grid-cols-[1fr_240px] lg:grid-cols-[260px_1fr_240px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px]";
 
         return (
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
-            {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
+            {/* Left column: Team (non-VAs) + the Messages hub (everyone). */}
+            <div className="space-y-5">
+              {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
+              {userId && <DashboardMessagePanel currentUserId={userId} />}
+            </div>
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
               <TaskWidgetsTabs
