@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fallsOn, occurrenceDates, type OccurrenceTemplate } from "@/lib/recurringOccurrences";
+import { fallsOn, occurrenceDates, taskRowFor, outputRowFor, type OccurrenceTemplate } from "@/lib/recurringOccurrences";
 
 // A "Weekly" template used to be able to land on only one weekday — whichever
 // one its start_date happened to fall on. A task that runs Mon/Wed/Fri (or
@@ -93,5 +93,42 @@ describe("occurrenceDates — weekly with recurrence_days", () => {
       "2026-09-07", "2026-09-09", "2026-09-11",
       "2026-09-14", "2026-09-16", "2026-09-18",
     ]);
+  });
+});
+
+// The Work Span's End Date used to get stamped onto every single occurrence's
+// own end_date (taskRowFor/outputRowFor), so a template with an End Date set
+// produced occurrences that each rendered as a Calendar span from their own
+// date all the way to that one fixed date — every occurrence overlapping
+// every other one, and the count (and the hours shown) climbing every day
+// another occurrence was added. Confirmed live: a Weekly Mon/Wed/Fri template
+// with End Date 2026-10-07 showed 5 overlapping blocks on 2026-09-16, one for
+// every MWF date generated up to and including it, all spanning to Oct 7.
+//
+// End Date is now a series ceiling, same role as Repeat Until, and no longer
+// touches any individual occurrence's own end_date.
+describe("end_date as a series ceiling", () => {
+  it("stops generating occurrences after end_date, same as repeat_until", () => {
+    const mwf: OccurrenceTemplate = { ...base, recurrence_days: [MON, WED, FRI], end_date: "2026-09-10" };
+    expect(fallsOn(mwf, "2026-09-09")).toBe(true); // Wed, on or before end_date
+    expect(fallsOn(mwf, "2026-09-11")).toBe(false); // Fri, past end_date
+  });
+
+  it("produces exactly the dates up to end_date, matching the repeat_until shape", () => {
+    const mwf: OccurrenceTemplate = { ...base, recurrence_days: [MON, WED, FRI], end_date: "2026-09-16" };
+    expect(occurrenceDates(mwf, "2026-09-07")).toEqual(["2026-09-07", "2026-09-09", "2026-09-11", "2026-09-14", "2026-09-16"]);
+  });
+
+  it("does not stamp the template's end_date onto a generated occurrence's own end_date", () => {
+    const withEndDate = { ...base, recurrence_days: [MON, WED, FRI], end_date: "2026-10-07", start_time: "08:30" };
+    const row = taskRowFor(withEndDate, "2026-09-07");
+    expect(row.end_date).toBeNull();
+    expect(row.start_date).toBe("2026-09-07"); // unaffected — only end_date changes
+  });
+
+  it("does the same for Output Based occurrences", () => {
+    const withEndDate = { ...base, end_date: "2026-10-07" };
+    const row = outputRowFor(withEndDate, "2026-09-07", "va-1");
+    expect(row.end_date).toBeNull();
   });
 });
