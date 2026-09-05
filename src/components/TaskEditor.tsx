@@ -23,7 +23,8 @@ import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import type { Project } from "@/types/database";
-import { vaBudgetType } from "@/lib/budget";
+import { vaBudgetType, WEEKDAY_SHORT } from "@/lib/budget";
+import WorkDaysPicker from "@/components/WorkDaysPicker";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -391,6 +392,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // Blank means indefinite. Seeded from the linked template so editing a task
   // that already repeats shows the limit it actually has.
   const [templateRepeatUntil, setTemplateRepeatUntil] = useState("");
+  // Weekday indices (0=Sun..6=Sat, same convention as WorkDaysPicker), only
+  // meaningful when Repeat is Weekly — lets one template land on Mon/Wed/Fri
+  // instead of needing a separate template per weekday (which the templates
+  // API's duplicate guard would reject as a repeat of the same task).
+  const [templateRecurrenceDays, setTemplateRecurrenceDays] = useState<number[]>([]);
   const [pendingUnlinkTemplate, setPendingUnlinkTemplate] = useState(false);
   const [edits, setEdits] = useState<Array<{ id: number; editor: string; edited_at: string; fields: string[] }>>([]);
   const [editsOpen, setEditsOpen] = useState(false);
@@ -406,6 +412,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       .then((r) => r.json())
       .then((d) => {
         if (d.template?.recurrence_type) setTemplateRecurrenceType(d.template.recurrence_type);
+        if (Array.isArray(d.template?.recurrence_days)) {
+          setTemplateRecurrenceDays(
+            (d.template.recurrence_days as string[])
+              .map((name) => WEEKDAY_SHORT.findIndex((w) => w.toLowerCase() === String(name).trim().slice(0, 3).toLowerCase()))
+              .filter((i) => i >= 0)
+          );
+        }
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1072,6 +1085,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           pay_type: mode === "output_based" ? "fixed" : null,
             rate: mode === "output_based" ? Number(rate) : null,
             recurrence_type: templateRecurrenceType,
+            recurrence_days: templateRecurrenceType === "weekly" ? templateRecurrenceDays.map((i) => WEEKDAY_SHORT[i]) : [],
             repeat_until: templateRepeatUntil || null,
             is_active: true,
           };
@@ -1331,7 +1345,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     // in, so typing a duration and saving immediately wrote the previous value
     // (usually null) — the field looked filled in and still saved empty.
     parsedPlannedMinutes,
-    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, templateRepeatUntil, existingTemplateId, showToast,
+    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, templateRecurrenceDays, templateRepeatUntil, existingTemplateId, showToast,
   ]);
 
 
@@ -2516,6 +2530,17 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
+                {templateRecurrenceType === "weekly" && (
+                  <div className="mt-2">
+                    <label className="mb-1 block text-[10px] font-semibold text-walnut">Days (optional)</label>
+                    <WorkDaysPicker value={templateRecurrenceDays} onChange={readOnly ? undefined : setTemplateRecurrenceDays} />
+                    <p className="mt-1 text-[10px] text-stone">
+                      {templateRecurrenceDays.length > 0
+                        ? "Lands on these days every week."
+                        : "Leave empty to repeat weekly on the Start Date's own weekday."}
+                    </p>
+                  </div>
+                )}
                 <div className="mt-2">
                   <label className="mb-1 block text-[10px] font-semibold text-walnut">Repeat until (optional)</label>
                   <input

@@ -36,12 +36,28 @@ export type OccurrenceTemplate = {
   repeat_until?: string | null;
   recurrence_type: RecurrenceType | string;
   recurrence_day_of_month?: number | null;
+  /** Which weekdays a "weekly" template lands on, as short day names
+   *  ("Sun".."Sat" — see WEEKDAY_SHORT in src/lib/budget.ts). Null/empty means
+   *  the legacy behavior: the single weekday start_date itself falls on. */
+  recurrence_days?: string[] | null;
 };
 
 /** Weekday index (0=Sun … 6=Sat) of an org "YYYY-MM-DD" date — matches the
  *  convention profiles.work_days is stored in. */
 function weekdayOf(dateStr: string): number {
   return new Date(`${dateStr}T00:00:00Z`).getUTCDay();
+}
+
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** A stored recurrence_days entry, tolerantly read back. Chosen weekdays are
+ *  written as short names ("Mon") going forward, but the column predates that
+ *  convention and a handful of untouched rows from before it was deprecated
+ *  may still hold a bare numeric index — accept either. */
+function dayNameToIndex(value: string): number {
+  const n = Number(value);
+  if (Number.isInteger(n) && n >= 0 && n <= 6) return n;
+  return WEEKDAY_NAMES.findIndex((w) => w.toLowerCase() === value.trim().slice(0, 3).toLowerCase());
 }
 
 export function addDays(dateStr: string, days: number): string {
@@ -80,8 +96,17 @@ export function fallsOn(template: OccurrenceTemplate, date: string): boolean {
   switch (template.recurrence_type) {
     case "daily":
       return true;
-    case "weekly":
+    case "weekly": {
+      // Specific weekdays (e.g. Mon/Wed/Fri) override the plain "every 7 days
+      // from start_date" rule — one template, several days a week, rather
+      // than one template per weekday (which the active-template duplicate
+      // guard in the templates API would reject as a repeat of itself).
+      const chosenDays = (template.recurrence_days ?? []).map(dayNameToIndex).filter((d) => d >= 0);
+      if (chosenDays.length > 0) {
+        return chosenDays.includes(weekdayOf(date));
+      }
       return days % 7 === 0;
+    }
     case "biweekly":
       return days % 14 === 0;
     case "monthly":

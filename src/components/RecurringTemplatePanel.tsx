@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import TaskEditor, { type TeamMemberOption } from "@/components/TaskEditor";
 import { orgWallClockToUtc, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
+import { WEEKDAY_SHORT } from "@/lib/budget";
+import WorkDaysPicker from "@/components/WorkDaysPicker";
 import type { RecurringTaskTemplate } from "@/types/database";
 
 const RECURRENCE_VALUES = [
@@ -54,6 +56,16 @@ export default function RecurringTemplatePanel({
   );
   const [isActive, setIsActive] = useState(() => template?.is_active ?? true);
   const [repeatUntil, setRepeatUntil] = useState(() => template?.repeat_until?.slice(0, 10) ?? "");
+  // Weekday indices (0=Sun..6=Sat, WorkDaysPicker's own convention), only
+  // meaningful when recurrenceType is "weekly" — see recurrence_days on
+  // RecurringTaskTemplate. Lets one template land on several days a week
+  // instead of needing a separate template per weekday, which the templates
+  // API's duplicate guard (same Task Name/Detail/Account/assignee) rejects.
+  const [recurrenceDays, setRecurrenceDays] = useState<number[]>(() =>
+    (template?.recurrence_days ?? [])
+      .map((name) => WEEKDAY_SHORT.findIndex((w) => w.toLowerCase() === String(name).trim().slice(0, 3).toLowerCase()))
+      .filter((i) => i >= 0)
+  );
   // Mode picker only for a brand-new template — an existing one's mode is
   // fixed by which table its occurrences already live in (assigned_tasks vs.
   // fixed_pay_tasks), same as TaskEditor's own create-only toggle elsewhere
@@ -149,6 +161,7 @@ export default function RecurringTemplatePanel({
               teamMembers={teamMembers}
               templateExtra={{
                 recurrence_type: recurrenceType,
+                recurrence_days: recurrenceType === "weekly" ? recurrenceDays.map((i) => WEEKDAY_SHORT[i]) : [],
                 is_active: isActive,
                 repeat_until: repeatUntil || null,
               }}
@@ -175,6 +188,17 @@ export default function RecurringTemplatePanel({
                       {RECURRENCE_OPTIONS.find((option) => option.value === recurrenceType)?.helper}
                     </p>
                   </div>
+                  {recurrenceType === "weekly" && (
+                    <div>
+                      <label className="mb-1 block text-[10px] font-semibold text-walnut">Days (optional)</label>
+                      <WorkDaysPicker value={recurrenceDays} onChange={setRecurrenceDays} />
+                      <p className="mt-1 text-[11px] text-stone">
+                        {recurrenceDays.length > 0
+                          ? "Lands on these days every week."
+                          : "Leave empty to repeat weekly on the Start Date's own weekday."}
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <label className="mb-1 block text-[10px] font-semibold text-walnut">Repeat until (optional)</label>
                     <input

@@ -343,7 +343,10 @@ export async function POST(request: Request) {
     pay_type: stringOrNull(body.pay_type),
     rate: numberOrNull(body.rate),
     recurrence_type,
-    recurrence_days: null,
+    // Specific weekdays only mean anything for "weekly" — daily/monthly/etc.
+    // already say when they land, and holding onto a stale day list from a
+    // prior weekly selection would misdescribe a template that no longer is.
+    recurrence_days: recurrence_type === "weekly" ? recurrence_days : null,
     recurrence_day_of_month: resolvedDayOfMonth,
     is_active: booleanOrDefault(body.is_active, true),
     paused_until: stringOrNull(body.paused_until),
@@ -454,8 +457,20 @@ ${existingText}` : addition;
   if (body.pay_type !== undefined) updates.pay_type = stringOrNull(body.pay_type);
   if (body.rate !== undefined) updates.rate = numberOrNull(body.rate);
   if (body.recurrence_type) updates.recurrence_type = parseRecurrenceType(body.recurrence_type);
-  // Always clear recurrence_days — schedule is now driven by start_date + recurrence_type
-  updates.recurrence_days = null;
+  // Specific weekdays (Mon/Wed/Fri, say) ride along with a "weekly" repeat.
+  // Switching the repeat away from weekly always drops them — they'd be
+  // meaningless on a daily/monthly template and stale the next time it goes
+  // back to weekly. Staying on/going to weekly picks up whatever days this
+  // save sent (undefined body.recurrence_days on a weekly template that
+  // already didn't send one means "no change", not "clear it").
+  {
+    const patchRecurrenceType = (updates.recurrence_type as RecurrenceType | undefined) ?? undefined;
+    if (patchRecurrenceType && patchRecurrenceType !== "weekly") {
+      updates.recurrence_days = null;
+    } else if (body.recurrence_days !== undefined) {
+      updates.recurrence_days = parseBodyDays(body);
+    }
+  }
   // Derive day-of-month from start_date for month-based recurrences
   {
     const patchRecurrenceType = updates.recurrence_type as RecurrenceType | undefined ?? undefined;
