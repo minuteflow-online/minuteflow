@@ -653,8 +653,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // earlier version of this rule.
   const reviewLocked =
     Boolean(initialTask?.review_required_locked) && Boolean(initialTask?.review_required);
+  // isEditing alone isn't the right test here: a brand-new task can still
+  // arrive with a real answer already decided elsewhere — e.g. accepting a
+  // Job Order, whose review_required was set when the order was created.
+  // Checking `!= null` (not just isEditing) means an explicit true/false in
+  // initialTask is honored either way, while a genuinely blank create (no
+  // initialTask, or one that never mentions it) still starts unanswered.
   const [reviewRequired, setReviewRequired] = useState<"" | "yes" | "no">(
-    isEditing ? (initialTask?.review_required ? "yes" : "no") : ""
+    initialTask?.review_required != null
+      ? (initialTask.review_required ? "yes" : "no")
+      : isEditing ? "no" : ""
   );
   // Only the Admin/Manager/CEO/Founder tier may undo a locked Yes. The server
   // enforces the same rule — this just avoids offering a control that would be
