@@ -23,7 +23,7 @@ import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import type { Project } from "@/types/database";
-import { vaBudgetType, WEEKDAY_SHORT } from "@/lib/budget";
+import { vaBudgetType } from "@/lib/budget";
 import WorkDaysPicker from "@/components/WorkDaysPicker";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -413,10 +413,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       .then((d) => {
         if (d.template?.recurrence_type) setTemplateRecurrenceType(d.template.recurrence_type);
         if (Array.isArray(d.template?.recurrence_days)) {
+          // integer[] in Postgres (0=Sun..6=Sat), same convention WorkDaysPicker uses.
           setTemplateRecurrenceDays(
-            (d.template.recurrence_days as string[])
-              .map((name) => WEEKDAY_SHORT.findIndex((w) => w.toLowerCase() === String(name).trim().slice(0, 3).toLowerCase()))
-              .filter((i) => i >= 0)
+            (d.template.recurrence_days as number[]).filter((i) => Number.isInteger(i) && i >= 0 && i <= 6)
           );
         }
       })
@@ -1085,7 +1084,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           pay_type: mode === "output_based" ? "fixed" : null,
             rate: mode === "output_based" ? Number(rate) : null,
             recurrence_type: templateRecurrenceType,
-            recurrence_days: templateRecurrenceType === "weekly" ? templateRecurrenceDays.map((i) => WEEKDAY_SHORT[i]) : [],
+            recurrence_days: templateRecurrenceType === "weekly" ? templateRecurrenceDays : [],
             repeat_until: templateRepeatUntil || null,
             is_active: true,
           };

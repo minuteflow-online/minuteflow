@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import TaskEditor, { type TeamMemberOption } from "@/components/TaskEditor";
 import { orgWallClockToUtc, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
-import { WEEKDAY_SHORT } from "@/lib/budget";
 import WorkDaysPicker from "@/components/WorkDaysPicker";
 import type { RecurringTaskTemplate } from "@/types/database";
 
@@ -62,9 +61,8 @@ export default function RecurringTemplatePanel({
   // instead of needing a separate template per weekday, which the templates
   // API's duplicate guard (same Task Name/Detail/Account/assignee) rejects.
   const [recurrenceDays, setRecurrenceDays] = useState<number[]>(() =>
-    (template?.recurrence_days ?? [])
-      .map((name) => WEEKDAY_SHORT.findIndex((w) => w.toLowerCase() === String(name).trim().slice(0, 3).toLowerCase()))
-      .filter((i) => i >= 0)
+    // integer[] in Postgres (0=Sun..6=Sat), same convention WorkDaysPicker uses.
+    (template?.recurrence_days ?? []).filter((i) => Number.isInteger(i) && i >= 0 && i <= 6)
   );
   // Mode picker only for a brand-new template — an existing one's mode is
   // fixed by which table its occurrences already live in (assigned_tasks vs.
@@ -161,7 +159,7 @@ export default function RecurringTemplatePanel({
               teamMembers={teamMembers}
               templateExtra={{
                 recurrence_type: recurrenceType,
-                recurrence_days: recurrenceType === "weekly" ? recurrenceDays.map((i) => WEEKDAY_SHORT[i]) : [],
+                recurrence_days: recurrenceType === "weekly" ? recurrenceDays : [],
                 is_active: isActive,
                 repeat_until: repeatUntil || null,
               }}

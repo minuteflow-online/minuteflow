@@ -27,7 +27,8 @@ type TemplateRow = {
   category: string | null;
   pay_type: string | null;
   recurrence_type: RecurrenceType;
-  recurrence_days: string[] | null;
+  // integer[] in Postgres, 0=Sun..6=Sat — see recurringOccurrences.ts.
+  recurrence_days: number[] | null;
   recurrence_day_of_month: number | null;
   link?: string | null;
   start_time?: string | null;

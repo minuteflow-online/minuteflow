@@ -27,7 +27,9 @@ type TemplateRow = {
   category: string | null;
   pay_type: string | null;
   recurrence_type: RecurrenceType;
-  recurrence_days: string[] | null;
+  // integer[] in Postgres (0=Sun..6=Sat) — day *names* fail to insert
+  // ("invalid input syntax for type integer"), confirmed live.
+  recurrence_days: number[] | null;
   recurrence_day_of_month: number | null;
   is_active: boolean;
   created_by?: string | null;
@@ -47,16 +49,22 @@ function serviceClient() {
   );
 }
 
-function normalizeDays(value: unknown): string[] | null {
+// recurrence_days is integer[] in Postgres (0=Sun..6=Sat) — a day name like
+// "Mon" fails at insert with "invalid input syntax for type integer" rather
+// than at this parse step, so this has to actually produce integers.
+function normalizeDays(value: unknown): number[] | null {
+  const toInts = (raw: unknown[]) =>
+    raw
+      .map((d) => Number(d))
+      .filter((n): n is number => Number.isInteger(n) && n >= 0 && n <= 6);
+  let days: number[] = [];
   if (Array.isArray(value)) {
-    const days = value.map((day) => String(day).trim()).filter(Boolean);
-    return days.length > 0 ? days : null;
+    days = toInts(value);
+  } else if (typeof value === "string") {
+    days = toInts(value.split(","));
   }
-  if (typeof value === "string") {
-    const days = value.split(",").map((day) => day.trim()).filter(Boolean);
-    return days.length > 0 ? days : null;
-  }
-  return null;
+  const unique = [...new Set(days)];
+  return unique.length > 0 ? unique : null;
 }
 
 function normalizeIds(value: unknown): string[] | null {
@@ -152,7 +160,7 @@ async function decorateTemplates(rows: TemplateRow[], supabase = serviceClient()
   });
 }
 
-function parseBodyDays(body: Record<string, unknown>): string[] | null {
+function parseBodyDays(body: Record<string, unknown>): number[] | null {
   return normalizeDays(body.recurrence_days ?? body.custom_days);
 }
 
