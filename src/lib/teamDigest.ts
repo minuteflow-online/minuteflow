@@ -122,6 +122,42 @@ async function offOn(date: string) {
 export type DigestKind = "today" | "tomorrow";
 
 /**
+ * What a birthday post actually says.
+ *
+ * "Hope it is a good one" is what you say to an acquaintance: passive, and
+ * plainly no effort. These say the thing worth saying instead — that the
+ * person is valued here, by this team, by name. Toni's line: at CoVAP we
+ * celebrate you. Nothing in this pool wishes; every line states.
+ *
+ * A pool rather than one sentence, because the same words every time stop
+ * meaning anything by the third person to receive them.
+ */
+const BIRTHDAY_LINES = [
+  "At CoVAP we celebrate you! 🎉",
+  "Today we celebrate you — thank you for being one of us. 🎉",
+  "CoVAP is better for having you in it, and today we say so. 🎉",
+  "You matter here. At CoVAP we celebrate you today. 🎉",
+  "Today CoVAP celebrates you — not the work, you. 🎉",
+  "This team is stronger because you are in it. We celebrate you. 🎉",
+  "At CoVAP we are grateful you are part of this, today most of all. 🎉",
+  "We are celebrating you today, and everything you bring to this team. 🎉",
+];
+
+/** Anniversaries get their own pool. Staying for years is a different thing
+ *  from having a birthday, and deserves different words. */
+const ANNIVERSARY_LINES = [
+  "Thank you for every one of them. CoVAP is what it is because you stayed.",
+  "Thank you for the years you have given this team.",
+  "CoVAP has grown with you in it, and we are glad you are still here.",
+  "Years of showing up. That is not a small thing — thank you.",
+  "Thank you for choosing to stay. It matters more than you know.",
+];
+
+function pickLine(pool: string[]): string {
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/**
  * Birthdays and work anniversaries, on their own.
  *
  * These used to be the first lines of the daily digest, above "Due tomorrow".
@@ -153,7 +189,7 @@ export async function buildCelebrations(kind: DigestKind): Promise<{
     lines.push(
       `🎂 <b>Happy birthday, ${mention(who, p.telegram_chat_id as number | null)}!</b>`,
       "",
-      "Hope it is a good one. 🎉"
+      pickLine(BIRTHDAY_LINES)
     );
   }
 
@@ -161,9 +197,9 @@ export async function buildCelebrations(kind: DigestKind): Promise<{
     if (lines.length > 0) lines.push("");
     const who = (p.full_name as string) || (p.username as string) || "Someone";
     lines.push(
-      `🎉 <b>${mention(who, p.telegram_chat_id as number | null)}</b> — ${p.years} year${p.years === 1 ? "" : "s"} with MinuteFlow today.`,
+      `🎉 <b>${mention(who, p.telegram_chat_id as number | null)}</b> — ${p.years} year${p.years === 1 ? "" : "s"} with CoVAP today.`,
       "",
-      "Thank you for the time you have given this."
+      pickLine(ANNIVERSARY_LINES)
     );
   }
 
@@ -205,7 +241,7 @@ export async function buildBirthdayHeadsUp(): Promise<string | null> {
   for (const p of anniversaries) {
     const who = (p.full_name as string) || (p.username as string) || "Someone";
     lines.push(
-      `<b>${esc(who)}</b> reaches ${p.years} year${p.years === 1 ? "" : "s"} with MinuteFlow on ${longDate(date)}.`
+      `<b>${esc(who)}</b> reaches ${p.years} year${p.years === 1 ? "" : "s"} with CoVAP on ${longDate(date)}.`
     );
   }
 
