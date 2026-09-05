@@ -863,6 +863,28 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     }
   };
 
+  // Board View drag: the one allowed move is Approved → Completed. Optimistic so
+  // the card jumps columns at once; a failed PATCH refetches to undo it. The
+  // dashboard bump re-pulls the checklist/other views so the change shows there.
+  const handleMoveSubtaskStatus = useCallback(async (subtaskId: number, toStatus: string) => {
+    setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status: toStatus } : t)));
+    try {
+      const res = await fetch(`/api/assigned-tasks/${subtaskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: toStatus }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${res.status}`);
+      }
+      setDashboardRefresh((k) => k + 1);
+    } catch (e) {
+      setEditSubError(e instanceof Error ? e.message : "Couldn't update status.");
+      void fetchSubtasks(selectedProject?.id ?? null);
+    }
+  }, [fetchSubtasks, selectedProject?.id]);
+
   const handleDuplicateSubEdit = async () => {
     if (!editingSubId) return;
     setSavingSub(true);
@@ -1242,6 +1264,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             formatDate={formatDate}
             StatusBadge={StatusBadge}
             activeProfiles={activeProfiles}
+            onMoveStatus={handleMoveSubtaskStatus}
           />
         )}
 

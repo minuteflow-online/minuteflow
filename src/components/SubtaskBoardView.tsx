@@ -21,7 +21,15 @@ interface SubtaskBoardViewProps {
   formatDate: (iso: string | null | undefined) => string;
   StatusBadge: React.ComponentType<{ status: string }>;
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
+  /** Persist a card moved by drag. The board only ever allows the one lifecycle-
+   *  safe move (Approved → Completed), so this is the single transition it fires. */
+  onMoveStatus?: (subtaskId: number, toStatus: string) => void;
 }
+
+// The one drag the board permits. Every other status still moves through the
+// normal dashboard flow — dragging can't skip review or reopen finished work.
+const DRAG_FROM_STATUS = "approved";
+const DRAG_TO_COLUMN = "completed";
 
 // Cards per column before pagination kicks in. Columns like Pending can hold
 // 100+ tasks, so each column pages independently rather than scrolling forever.
@@ -34,11 +42,15 @@ export default function SubtaskBoardView({
   formatDate,
   StatusBadge,
   activeProfiles,
+  onMoveStatus,
 }: SubtaskBoardViewProps) {
-  // Per-column page index. Cards are NOT draggable: status moves through the
-  // dashboard flow (put on queue → submit → review), never by dragging a card
-  // across columns, which would violate the task lifecycle rules.
+  // Per-column page index. The ONLY drag allowed is Approved → Completed (a card
+  // approved by a reviewer is dragged to Completed, which persists everywhere);
+  // every other status still moves through the dashboard flow, never by drag.
   const [pageByCol, setPageByCol] = useState<Record<string, number>>({});
+  const [dragging, setDragging] = useState<{ id: number; status: string } | null>(null);
+  const [overCol, setOverCol] = useState<string | null>(null);
+  const canComplete = Boolean(onMoveStatus) && dragging?.status === DRAG_FROM_STATUS;
 
   // One pass over `subtasks` builds both the column grouping and the
   // reference list.
@@ -108,10 +120,25 @@ export default function SubtaskBoardView({
             const pageSubtasks = colSubtasks.slice(start, start + PAGE_SIZE);
             const setPage = (next: number) =>
               setPageByCol((prev) => ({ ...prev, [col.key]: Math.max(0, Math.min(next, pageCount - 1)) }));
+            const isDropTarget = canComplete && col.key === DRAG_TO_COLUMN;
             return (
               <div
                 key={col.key}
-                className="w-64 shrink-0 rounded-xl border border-sand bg-parchment p-2.5 space-y-2"
+                onDragOver={isDropTarget ? (e) => { e.preventDefault(); setOverCol(col.key); } : undefined}
+                onDragLeave={isDropTarget ? () => setOverCol((c) => (c === col.key ? null : c)) : undefined}
+                onDrop={isDropTarget ? (e) => {
+                  e.preventDefault();
+                  if (dragging) onMoveStatus?.(dragging.id, col.dropStatus);
+                  setDragging(null);
+                  setOverCol(null);
+                } : undefined}
+                className={`w-64 shrink-0 rounded-xl border p-2.5 space-y-2 transition-colors ${
+                  isDropTarget && overCol === col.key
+                    ? "border-sage bg-sage-soft ring-2 ring-sage"
+                    : isDropTarget
+                      ? "border-sage/50 bg-parchment"
+                      : "border-sand bg-parchment"
+                }`}
               >
                 <div className="flex items-center justify-between px-0.5">
                   <p className="text-[11px] font-semibold text-walnut tracking-wide uppercase">{col.label}</p>
@@ -121,11 +148,17 @@ export default function SubtaskBoardView({
                 </div>
 
                 <div className="space-y-1.5 min-h-[40px]">
-                  {pageSubtasks.map((sub) => (
+                  {pageSubtasks.map((sub) => {
+                    const isDraggable = Boolean(onMoveStatus) && sub.status === DRAG_FROM_STATUS;
+                    return (
                     <div
                       key={sub.id}
+                      draggable={isDraggable}
+                      onDragStart={isDraggable ? (e) => { e.dataTransfer.effectAllowed = "move"; setDragging({ id: sub.id, status: sub.status }); } : undefined}
+                      onDragEnd={isDraggable ? () => { setDragging(null); setOverCol(null); } : undefined}
                       onClick={() => onOpenEdit(sub)}
-                      className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors cursor-pointer"
+                      title={isDraggable ? "Drag to Completed to finish this task" : undefined}
+                      className={`flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors ${isDraggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-[13px] font-semibold text-espresso leading-tight">
@@ -145,7 +178,8 @@ export default function SubtaskBoardView({
                         {sub.due_date && <span>Due: {formatDate(sub.due_date)}</span>}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {total > PAGE_SIZE && (
