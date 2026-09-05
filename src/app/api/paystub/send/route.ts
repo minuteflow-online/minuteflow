@@ -299,7 +299,9 @@ export async function POST(request: Request) {
     const fixedPayTaskIds = fixedPayTaskItems.map((t) => t.id);
     await adminClient
       .from("fixed_pay_tasks")
-      .update({ status: "paid" })
+      // paid_manually=false: this is payroll, so the badge stays purple even if
+      // the task had been marked paid by hand earlier.
+      .update({ status: "paid", paid_manually: false })
       .in("id", fixedPayTaskIds);
   }
 

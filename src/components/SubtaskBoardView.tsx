@@ -19,7 +19,7 @@ interface SubtaskBoardViewProps {
   editingSubId: number | null;
   onOpenEdit: (sub: SubtaskRow) => void;
   formatDate: (iso: string | null | undefined) => string;
-  StatusBadge: React.ComponentType<{ status: string }>;
+  StatusBadge: React.ComponentType<{ status: string; paidManually?: boolean }>;
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
   /** Persist a card moved by drag. The board only ever allows the one lifecycle-
    *  safe move (Approved → Completed), so this is the single transition it fires. */
@@ -102,7 +102,7 @@ export default function SubtaskBoardView({
               <span className="text-[12px] font-semibold text-espresso leading-tight truncate">
                 {sub.task_name}
               </span>
-              <StatusBadge status={sub.status} />
+              <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
             </button>
           ))}
         </div>
@@ -164,7 +164,7 @@ export default function SubtaskBoardView({
                         <span className="text-[13px] font-semibold text-espresso leading-tight">
                           {sub.task_name}
                         </span>
-                        <StatusBadge status={sub.status} />
+                        <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
                       </div>
                       {(() => {
                         const names = assigneeNames(sub.assigned_task_assignees, activeProfiles);

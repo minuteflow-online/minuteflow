@@ -24,6 +24,7 @@ export interface OutputSubtaskRow {
   id: number;
   task_name: string;
   status: string;
+  paid_manually?: boolean | null;
   rate: number | null;
   account?: string | null;
   project?: string | null;
@@ -43,6 +44,7 @@ export interface SubtaskRow {
   start_date?: string | null;
   created_at: string | null;
   status: string;
+  paid_manually?: boolean | null;
   pay_type?: string | null;
   category?: string | null;
   project?: string | null;
@@ -128,8 +130,15 @@ const STATUS_CLASSES: Record<string, string> = {
   cancelled: "bg-red-50 text-red-500 border-red-200",
 };
 
-function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_CLASSES[status] ?? "bg-stone/10 text-stone border-stone/20";
+// Paid set by hand (not by payroll) shows orange instead of the payroll purple,
+// so a manually-marked payment is visibly distinct from one payroll generated.
+const PAID_MANUAL_CLASS = "bg-orange-50 text-orange-600 border-orange-200";
+
+function StatusBadge({ status, paidManually = false }: { status: string; paidManually?: boolean }) {
+  const cls =
+    status === "paid" && paidManually
+      ? PAID_MANUAL_CLASS
+      : STATUS_CLASSES[status] ?? "bg-stone/10 text-stone border-stone/20";
   return (
     <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${cls}`}>
       {status.replace(/_/g, " ")}
@@ -1486,7 +1495,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         aria-label="Select subtask"
                       />
                     )}
-                    <StatusBadge status={sub.status} />
+                    <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
                     <button
                       type="button"
                       onClick={() => setViewingSubId(isViewing ? null : sub.id)}
@@ -1691,7 +1700,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               return (
                 <div key={task.id} className="space-y-1">
                   <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
-                    <StatusBadge status={task.status} />
+                    <StatusBadge status={task.status} paidManually={task.paid_manually ?? false} />
                     <span className="flex-1 text-[13px] font-semibold text-espresso leading-tight truncate">
                       {task.task_name}
                     </span>
@@ -2719,7 +2728,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {visibleViewOperationSubtasks.map((st) => (
                     <div key={st.id} className="flex items-start justify-between gap-2 rounded-lg border border-sand bg-cream px-3 py-2">
                       <span className="text-[12px] text-espresso leading-tight">{st.task_name}</span>
-                      <StatusBadge status={st.status} />
+                      <StatusBadge status={st.status} paidManually={st.paid_manually ?? false} />
                     </div>
                   ))}
                 </div>

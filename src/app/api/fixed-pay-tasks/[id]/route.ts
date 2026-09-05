@@ -178,6 +178,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const updates: Record<string, unknown> = {};
     if (isStatusOnly) {
       updates.status = String(body.status ?? "");
+      // Status changed by hand here — "paid" set this way is a manual mark
+      // (badge → orange); payroll sets paid on its own path with
+      // paid_manually=false (→ purple).
+      updates.paid_manually = updates.status === "paid";
     } else {
       if ("task_name" in body) {
         const taskName = String(body.task_name ?? "").trim();

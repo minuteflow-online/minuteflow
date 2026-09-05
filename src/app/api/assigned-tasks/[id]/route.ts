@@ -961,9 +961,13 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       }
     }
 
+    // Any status change through this route is a person changing it by hand, so
+    // "paid" set here is a manual mark (badge → orange). Payroll marks paid on
+    // its own path with paid_manually=false (→ purple). Clearing it on every
+    // other status keeps a task that leaves and re-enters paid honest.
     const { error: taskStatusError } = await adminSupabase
       .from("assigned_tasks")
-      .update({ status, updated_at: now })
+      .update({ status, paid_manually: status === "paid", updated_at: now })
       .eq("id", id);
 
     if (taskStatusError) {
