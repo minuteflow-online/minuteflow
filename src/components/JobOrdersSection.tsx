@@ -397,8 +397,16 @@ function CreateForm({
   const inputCls = "w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white disabled:bg-parchment/60 disabled:text-stone";
   const labelCls = "block text-[10px] font-semibold text-walnut uppercase tracking-wide mb-1";
 
+  // Required only for the Founder — that's the only role that can ever set
+  // this field (see the Account select below), so a non-founder admin still
+  // creates the order without it and leaves it for the Founder to fill in,
+  // same as Rate already works. Required for the Founder specifically so an
+  // order never goes out account-less the way "TEst" did, leaving nothing
+  // for the Accept panel to prefill.
+  const accountRequired = founder && !account;
+
   const submit = async () => {
-    if (!title.trim() || !offeredTo) return;
+    if (!title.trim() || !offeredTo || accountRequired) return;
     setSaving(true);
     const payload = {
       title: title.trim(),
@@ -499,7 +507,7 @@ function CreateForm({
           The <b>project</b> and <b>task title</b> are set by the VA when they accept and create the task.
         </div>
         <div>
-          <label className={labelCls}>Account {founder ? "" : "(Founder assigns)"}</label>
+          <label className={labelCls}>Account {founder ? "(required)" : "(Founder assigns)"}</label>
           <select className={inputCls} value={account} onChange={(e) => setAccount(e.target.value)} disabled={!founder}>
             <option value="">{founder ? "Select account…" : (account || "—")}</option>
             {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -578,7 +586,7 @@ function CreateForm({
           className="px-3 py-1.5 rounded-lg bg-stone/15 text-stone text-[12px] font-semibold hover:bg-stone/25 transition-colors">
           Cancel
         </button>
-        <button type="button" onClick={() => void submit()} disabled={saving || !title.trim() || !offeredTo}
+        <button type="button" onClick={() => void submit()} disabled={saving || !title.trim() || !offeredTo || accountRequired}
           className="px-4 py-1.5 rounded-lg bg-sage text-white text-[12px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50">
           {saving ? "Saving…" : editing ? "Save changes" : "Offer job order"}
         </button>
