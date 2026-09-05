@@ -7,7 +7,7 @@ import VAProjectsTab from "@/components/VAProjectsTab";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import type { RecurringTaskTemplate, UserRole } from "@/types/database";
 
-type TeamMember = { id: string; full_name: string; username: string; role?: string; position?: string };
+type TeamMember = { id: string; full_name: string; username: string; role?: string; position?: string; avatar_url?: string | null };
 type FormObjective = { id: number; account: string | null; project_name: string };
 type FormTask = { id: number; task_name: string };
 

@@ -13,7 +13,7 @@ import { collapseRecurringSeries } from "@/lib/taskSchedule";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
 
 interface VAProjectsTabProps {
-  activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
+  activeProfiles: (Pick<Profile, "id" | "full_name" | "username"> & { avatar_url?: string | null })[];
   currentUserId: string;
   isAdmin?: boolean;
   kind: ProjectKind;
@@ -91,6 +91,60 @@ function vaStatusOptionsFor(status: string): string[] | null {
 
 function profileLabel(p: Pick<Profile, "id" | "full_name" | "username">): string {
   return p.full_name || p.username || p.id;
+}
+
+type MiniProfile = Pick<Profile, "id" | "full_name" | "username"> & { avatar_url?: string | null };
+
+// Same profile-pic treatment the subtask rows use: the photo when there is one,
+// otherwise initials on a coloured disc.
+function Avatar({ profile, size = 22 }: { profile?: MiniProfile | null; size?: number }) {
+  const name = profile ? profileLabel(profile) : "?";
+  const initials =
+    name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+  const dim = { width: size, height: size };
+  if (profile?.avatar_url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={profile.avatar_url} alt={name} title={name} style={dim} className="rounded-full object-cover border-2 border-white shadow-sm" />;
+  }
+  return (
+    <span style={dim} title={name} className="inline-flex items-center justify-center rounded-full bg-slate-blue text-white text-[9px] font-bold border-2 border-white shadow-sm">
+      {initials}
+    </span>
+  );
+}
+
+// The distinct people assigned across a set of subtasks, for the avatar cluster
+// on a progress bar. Order is stable (first-seen) so the row doesn't reshuffle.
+function involvedProfiles(rows: SubtaskRow[], people: MiniProfile[]): MiniProfile[] {
+  const seen = new Set<string>();
+  const out: MiniProfile[] = [];
+  for (const st of rows) {
+    for (const a of st.assigned_task_assignees ?? []) {
+      if (a.va_id && !seen.has(a.va_id)) {
+        seen.add(a.va_id);
+        const p = people.find((pr) => pr.id === a.va_id);
+        if (p) out.push(p);
+      }
+    }
+  }
+  return out;
+}
+
+// A row of overlapping avatars (caps the count, then "+N").
+function AvatarCluster({ profiles, max = 6 }: { profiles: MiniProfile[]; max?: number }) {
+  if (profiles.length === 0) return null;
+  const shown = profiles.slice(0, max);
+  const extra = profiles.length - shown.length;
+  return (
+    <span className="flex items-center -space-x-1.5">
+      {shown.map((p) => <Avatar key={p.id} profile={p} />)}
+      {extra > 0 && (
+        <span className="inline-flex h-[22px] items-center justify-center rounded-full bg-stone/20 px-1.5 text-[9px] font-bold text-walnut border-2 border-white shadow-sm">
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function formatDate(iso: string | null | undefined): string {
@@ -2208,29 +2262,42 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           {/* Selected project detail */}
           {selectedProject && !showCreate && (
             <div className="space-y-4">
-              {/* Where They Are card */}
-              {vaProgress.length > 0 && (
+              {/* Where They Are card — always shown for a selected objective so
+                  every one has an Overall Progress bar, even at 0 of 0. */}
+              {(() => {
+                const pct = projectProgress.total > 0
+                  ? Math.round((projectProgress.completed / projectProgress.total) * 100)
+                  : 0;
+                const people = involvedProfiles(visibleSubtasks, activeProfiles);
+                return (
                 <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
                   {/* Whole-project total — always visible, not part of the
                       collapsible section below. This is the number someone
                       wants at a glance; the per-VA breakdown is the detail
                       they open up only when they want it. */}
-                  {projectProgress.total > 0 && (
-                    <div className="space-y-1.5 pb-3 border-b border-sand">
+                    <div className={`space-y-1.5 ${vaProgress.length > 0 ? "pb-3 border-b border-sand" : ""}`}>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[13px] font-bold text-espresso">Overall Progress</span>
                         <span className="text-[11px] font-semibold text-walnut shrink-0">
-                          {projectProgress.completed} of {projectProgress.total} completed · {Math.round((projectProgress.completed / projectProgress.total) * 100)}%
+                          {projectProgress.completed} of {projectProgress.total} completed · {pct}%
                         </span>
                       </div>
                       <div className="h-2.5 w-full overflow-hidden rounded-full bg-parchment">
                         <div
                           className="h-full rounded-full bg-sage transition-all"
-                          style={{ width: `${Math.round((projectProgress.completed / projectProgress.total) * 100)}%` }}
+                          style={{ width: `${pct}%` }}
                         />
                       </div>
+                      {/* Who's on this objective — the same profile pics the
+                          subtasks show, clustered under the bar. */}
+                      {people.length > 0 && (
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <AvatarCluster profiles={people} />
+                          <span className="text-[10px] text-stone">{people.length === 1 ? "1 person" : `${people.length} people`}</span>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  {vaProgress.length > 0 && (<>
 
                   {/* Per-VA breakdown — collapsed by default to save space,
                       same chevron-toggle pattern as Assignment's Unassigned
@@ -2268,8 +2335,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       })}
                     </div>
                   )}
+                  </>)}
                 </div>
-              )}
+                );
+              })()}
 
               {/* Breadcrumb — back to the overview and up the parent chain. */}
               {(() => {

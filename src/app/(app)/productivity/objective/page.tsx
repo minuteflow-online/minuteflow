@@ -6,7 +6,7 @@ import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import VAProjectsTab from "@/components/VAProjectsTab";
 import type { UserRole } from "@/types/database";
 
-type TeamMember = { id: string; full_name: string; username: string };
+type TeamMember = { id: string; full_name: string; username: string; avatar_url?: string | null };
 
 export default function ProductivityObjectivePage() {
   const [userId, setUserId] = useState<string | null>(null);
