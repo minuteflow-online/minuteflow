@@ -294,7 +294,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [scopedTab, setScopedTab] = useState<"board" | "details" | "subtasks" | "todos" | "overview" | "docs">("board");
   // Landing overview (nothing selected) is also tab-based — one big box instead
   // of the 4-card grid, so each section gets room.
-  const [landingTab, setLandingTab] = useState<"board" | "overview" | "docs" | "subtasks" | "todos">("board");
+  const [landingTab, setLandingTab] = useState<"board" | "overview" | "docs" | "subtasks" | "todos" | "progress">("board");
   // Add-subtask mode — time-based (hourly) or output-based (fixed pay).
   const [addSubtaskMode, setAddSubtaskMode] = useState<"time_based" | "output_based">("time_based");
   // Per-VA "Where They Are" breakdown, collapsed by default — Overall Progress
@@ -714,11 +714,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     }
   }, [descendantsOf, projects]);
 
-  // Landing page's own Subtasks tab (nothing selected) — fetched lazily, only
-  // once that tab is actually open, since it's an org-wide pull across every
+  // Landing page's own Subtasks and Progress tabs (nothing selected) — fetched
+  // lazily, only once one is open, since it's an org-wide pull across every
   // objective/operation of this kind rather than one branch.
   useEffect(() => {
-    if (selectedProject || landingTab !== "subtasks") return;
+    if (selectedProject || (landingTab !== "subtasks" && landingTab !== "progress")) return;
     void fetchSubtasks(null);
     void fetchOutputSubtasks(null);
   }, [selectedProject, landingTab, fetchSubtasks, fetchOutputSubtasks]);
@@ -1108,6 +1108,22 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
     return { total: tasks.length, completed };
   }, [visibleSubtasks]);
+
+  // For the landing "Progress" tab: each objective/operation's whole-subtree
+  // completion + who's on it. Built off the org-wide subtask pull (fetched when
+  // that tab opens), so it covers the parent plus every branch below it.
+  const landingProgress = useMemo(() => {
+    const m = new Map<string, { total: number; completed: number; people: MiniProfile[] }>();
+    for (const p of projects) {
+      const ids = new Set([p.id, ...descendantsOf(p.id)]);
+      const rows = visibleSubtasks.filter(
+        (t) => t.status !== "cancelled" && t.project_id != null && ids.has(t.project_id)
+      );
+      const completed = rows.filter((t) => DONE_STATUSES.has(t.status)).length;
+      m.set(p.id, { total: rows.length, completed, people: involvedProfiles(rows, activeProfiles) });
+    }
+    return m;
+  }, [projects, descendantsOf, visibleSubtasks, activeProfiles]);
 
   const renderNode = (project: Project, depth: number) => {
     const children = childrenByParent.get(project.id) ?? [];
@@ -2680,6 +2696,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   ["subtasks", "Subtasks"],
                   ["todos", "To-Do List"],
                   ["docs", "Docs & Files"],
+                  ["progress", "Progress"],
                 ] as const).map(([key, label]) => (
                   <button
                     key={key}
@@ -2699,6 +2716,44 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 // this kind instead of one branch — see fetchSubtasks/
                 // fetchOutputSubtasks's null-projectId case above.
                 renderSubtasksCard()
+              ) : landingTab === "progress" ? (
+                // Every objective/operation of this kind with its whole-subtree
+                // progress bar + the people on it, all in one place.
+                <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
+                  <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">All {kindLabel} Progress</h3>
+                  {subtasksLoading ? (
+                    <p className="text-[12px] text-stone">Loading…</p>
+                  ) : projects.length === 0 ? (
+                    <p className="text-[12px] text-walnut">No {kindLabel.toLowerCase()}s yet.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {projects.map((p) => {
+                        const pr = landingProgress.get(p.id) ?? { total: 0, completed: 0, people: [] as MiniProfile[] };
+                        const pct = pr.total > 0 ? Math.round((pr.completed / pr.total) * 100) : 0;
+                        return (
+                          <div key={p.id} className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSelectProject(p)}
+                                className="min-w-0 flex-1 text-left text-[13px] font-semibold text-espresso hover:text-terracotta transition-colors truncate"
+                              >
+                                {p.name}
+                              </button>
+                              <span className="text-[11px] font-semibold text-walnut shrink-0">{pr.completed} of {pr.total} · {pct}%</span>
+                            </div>
+                            <div className="h-2.5 w-full overflow-hidden rounded-full bg-parchment">
+                              <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
+                            </div>
+                            {pr.people.length > 0 && (
+                              <div className="pt-0.5"><AvatarCluster profiles={pr.people} /></div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <ObjectiveOverview
                   currentUserId={currentUserId}
