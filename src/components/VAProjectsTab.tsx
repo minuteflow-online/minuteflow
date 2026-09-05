@@ -1236,7 +1236,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
         {subtaskView === "board" && (
           <SubtaskBoardView
-            subtasks={visibleSubtasks}
+            subtasks={filteredListSubtasks}
             editingSubId={editingSubId}
             onOpenEdit={openSubtaskEdit}
             formatDate={formatDate}
@@ -1337,7 +1337,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           );
         })()}
 
-        {subtaskView === "list" && visibleSubtasks.length > 0 && (
+        {(subtaskView === "list" || subtaskView === "board") && visibleSubtasks.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
             <button
               type="button"
