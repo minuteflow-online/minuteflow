@@ -454,7 +454,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const submitReply = useCallback(async () => {
     if (!activeThread || !reply.trim()) return;
     const r = await fetch(`/api/project-messages/${activeThread.id}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: reply.trim() }) });
-    if (r.ok) { const d = await r.json().catch(() => ({})); setReply(""); if (d.comment) setActiveThread((a) => a ? { ...a, comments: [...a.comments, { id: d.comment.id, body: d.comment.body, created_at: d.comment.created_at }] } : a); setReloadKey((k) => k + 1); }
+    if (r.ok) { const d = await r.json().catch(() => ({})); setReply(""); if (d.comment) setActiveThread((a) => a ? { ...a, comments: [...(a.comments ?? []), { id: d.comment.id, body: d.comment.body, created_at: d.comment.created_at }] } : a); setReloadKey((k) => k + 1); }
   }, [activeThread, reply]);
 
   const input = "w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white";
@@ -564,7 +564,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                   {activeThread.edited_at && <span className="italic text-stone"> · edited</span>}
                 </p>
               </div>
-              {activeThread.comments.map((c) => (
+              {(activeThread.comments ?? []).map((c) => (
                 <div key={c.id} className="flex gap-1.5">
                   <Avatar member={c.author_id ? memberById.get(c.author_id) : undefined} name={c.author} size={20} />
                   <div className="flex-1 min-w-0 rounded-lg border border-sand bg-white px-2.5 py-1.5">
