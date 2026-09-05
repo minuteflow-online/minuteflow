@@ -216,6 +216,12 @@ export default function ProductivityCalendarPage() {
   // totals), which compare "what's scheduled" against "everything actually
   // worked that day", not just the portion that happens to match a block.
   const [actualMinutesByVaDate, setActualMinutesByVaDate] = useState<Map<string, number>>(new Map());
+  // The logged category for actualMinutesByKey's unattributed bucket (no
+  // assigned_task_id — a genuinely never-planned log, so there's no task row
+  // to read a category from any other way) — lets "Worked, not on this day's
+  // plan" fill with the real category color (e.g. Break's blue-slate, a real
+  // Task's green) instead of falling back to the neutral/no-category look.
+  const [actualCategoryByKey, setActualCategoryByKey] = useState<Map<string, string | null>>(new Map());
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -1471,6 +1477,7 @@ export default function ProductivityCalendarPage() {
         setActualMinutesByKey(new Map());
         setActualMinutesByTaskId(new Map());
         setActualMinutesByVaDate(new Map());
+        setActualCategoryByKey(new Map());
         return;
       }
       // Covers whichever is wider — the Week grid only needs its own 7 days,
@@ -1481,7 +1488,7 @@ export default function ProductivityCalendarPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from("time_logs")
-        .select("user_id, task_name, account, session_date, duration_ms, assigned_task_id")
+        .select("user_id, task_name, account, category, session_date, duration_ms, assigned_task_id")
         .in("user_id", actualTimeVaIds)
         .gte("session_date", rangeStart)
         .lte("session_date", rangeEnd)
@@ -1490,8 +1497,9 @@ export default function ProductivityCalendarPage() {
       const byKey = new Map<string, number>();
       const byTaskId = new Map<string, number>();
       const byVaDate = new Map<string, number>();
+      const categoryByKey = new Map<string, string | null>();
       for (const log of (data ?? []) as {
-        user_id: string; task_name: string | null; account: string | null;
+        user_id: string; task_name: string | null; account: string | null; category: string | null;
         session_date: string | null; duration_ms: number | null; assigned_task_id: number | null;
       }[]) {
         if (!log.session_date) continue;
@@ -1510,10 +1518,12 @@ export default function ProductivityCalendarPage() {
         }
         const key = actualMatchKey(log.user_id, log.session_date, log.task_name, log.account);
         byKey.set(key, (byKey.get(key) ?? 0) + minutes);
+        if (log.category) categoryByKey.set(key, log.category);
       }
       setActualMinutesByKey(byKey);
       setActualMinutesByTaskId(byTaskId);
       setActualMinutesByVaDate(byVaDate);
+      setActualCategoryByKey(categoryByKey);
     })();
     return () => { cancelled = true; };
   }, [actualTimeVaIds, weekDates, monthGrid]);
@@ -1707,7 +1717,7 @@ export default function ProductivityCalendarPage() {
         taskId: null,
         name: titleCase(nameLower || "Unknown task"),
         account: accountLower ? titleCase(accountLower) : null,
-        category: null,
+        category: actualCategoryByKey.get(matchKey) ?? null,
         minutes,
         plannedMinutes: null,
         moved: false,
