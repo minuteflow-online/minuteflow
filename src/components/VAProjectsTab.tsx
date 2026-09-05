@@ -1516,7 +1516,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         {sub.pay_type.replace(/_/g, " ")}
                       </span>
                     )}
-                    {canEdit && (
+                    {/* Admins adjust status freely; a VA can only finish their
+                        own already-approved work (Approved → Completed), the same
+                        rule the board's drag enforces. */}
+                    {canEdit && (isAdmin || sub.status === "approved") && (
                       <select
                         value={sub.status}
                         onClick={(e) => e.stopPropagation()}
@@ -1525,7 +1528,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         aria-label="Change status"
                         title="Change status"
                       >
-                        {STATUS_OPTIONS.map((s) => (
+                        {(isAdmin ? STATUS_OPTIONS : ["approved", "completed"]).map((s) => (
                           <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
                         ))}
                       </select>
