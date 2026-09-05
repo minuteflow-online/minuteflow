@@ -23,6 +23,7 @@ import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords, isDuplicateActiveLogError } from "@/lib/utils";
 import { fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshots";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
+import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
 import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { useAccountsAndClients } from "@/hooks/useAccountsAndClients";
@@ -2763,6 +2764,15 @@ export default function DashboardPage() {
             : log
         )
       );
+
+      // The wizard is where a task's real specifics most often surface for
+      // the first time — a recurring "Blog Content Planning" turns out to be,
+      // specifically, this week's nutrition article. That detail belongs on
+      // the task itself, not just this one log, so the task editor and the
+      // calendar read the same thing going forward.
+      if (typeof updatePayload.client_memo === "string") {
+        void syncTaskDetailFromMemo(liveSessionData.assigned_task_id, updatePayload.client_memo);
+      }
     }
 
     // Upload screenshot for old task if captured
@@ -3277,6 +3287,12 @@ export default function DashboardPage() {
         } : log
       )
     );
+    // Entered while the task is actively being worked — the most common
+    // moment a recurring task's real specifics become known — so it becomes
+    // the task's own client detail, not just this log's.
+    if (sidebarClientMemo.trim()) {
+      void syncTaskDetailFromMemo(activeTask.assignedTaskId, sidebarClientMemo.trim());
+    }
   }, [activeTask, sidebarClientMemo, sidebarInternalMemo, supabase]);
 
   // Sync sidebar memos with active task

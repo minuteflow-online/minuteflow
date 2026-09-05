@@ -222,6 +222,12 @@ export default function ProductivityCalendarPage() {
   // plan" fill with the real category color (e.g. Break's blue-slate, a real
   // Task's green) instead of falling back to the neutral/no-category look.
   const [actualCategoryByKey, setActualCategoryByKey] = useState<Map<string, string | null>>(new Map());
+  // Same idea, keyed by assigned_task_id instead — the precisely-attributed
+  // branch has its own gray gap: a task that was created and played the same
+  // day (no plan to compare against) falls back to the ASSIGNED TASK's own
+  // category, which is often blank on a quickly-created row even though the
+  // log itself carries a real one. Read this before giving up and going gray.
+  const [actualCategoryByTaskId, setActualCategoryByTaskId] = useState<Map<string, string | null>>(new Map());
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -972,6 +978,57 @@ export default function ProductivityCalendarPage() {
     }
   };
 
+  // "Never planned" logs (unscheduledActualForDate's unattributed bucket) have
+  // no assigned_tasks row at all — logged straight from Log a Task, nothing to
+  // open in the real task editor. Used to be a dead end (block disabled,
+  // nothing to click); this pulls the actual time_logs it was summed from so
+  // there's still something to look at — the memo included, since that's
+  // often the only place the real specifics of quickly-logged work live.
+  const [viewingUnscheduled, setViewingUnscheduled] = useState<{
+    name: string; account: string | null; minutes: number;
+  } | null>(null);
+  const [unscheduledLogs, setUnscheduledLogs] = useState<Array<{
+    id: number; task_name: string; category: string | null;
+    start_time: string; end_time: string | null; duration_ms: number;
+    client_memo: string | null; internal_memo: string | null;
+  }> | null>(null);
+  const [loadingUnscheduledLogs, setLoadingUnscheduledLogs] = useState(false);
+
+  const openUnscheduledView = async (item: { key: string; name: string; account: string | null; minutes: number }) => {
+    // item.key is actualMatchKey's own "vaId|dateStr|nameLower|accountLower" —
+    // reparsed rather than re-passing vaId/dateStr separately, so this can
+    // never drift from the exact bucket the block summed.
+    const parts = item.key.split("|");
+    const [vaId, dateStr, nameLower, accountLower] = parts;
+    setViewingUnscheduled({ name: item.name, account: item.account, minutes: item.minutes });
+    setUnscheduledLogs(null);
+    setLoadingUnscheduledLogs(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("time_logs")
+      .select("id, task_name, category, start_time, end_time, duration_ms, client_memo, internal_memo, account")
+      .eq("user_id", vaId)
+      .eq("session_date", dateStr)
+      .is("assigned_task_id", null)
+      .is("deleted_at", null)
+      .order("start_time");
+    const rows = (data ?? []) as Array<{
+      id: number; task_name: string | null; category: string | null;
+      start_time: string; end_time: string | null; duration_ms: number;
+      client_memo: string | null; internal_memo: string | null; account: string | null;
+    }>;
+    const filtered = rows.filter(
+      (r) => (r.task_name ?? "").trim().toLowerCase() === nameLower
+        && (r.account ?? "").trim().toLowerCase() === (accountLower ?? "")
+    );
+    setUnscheduledLogs(filtered.map((r) => ({
+      id: r.id, task_name: r.task_name ?? "Unknown task", category: r.category,
+      start_time: r.start_time, end_time: r.end_time, duration_ms: r.duration_ms,
+      client_memo: r.client_memo, internal_memo: r.internal_memo,
+    })));
+    setLoadingUnscheduledLogs(false);
+  };
+
   const refreshAfterScheduleChange = useCallback(async () => {
     await Promise.all([fetchDaySchedule(), fetchAssignedTasksAll()]);
   }, [fetchDaySchedule, fetchAssignedTasksAll]);
@@ -1478,6 +1535,7 @@ export default function ProductivityCalendarPage() {
         setActualMinutesByTaskId(new Map());
         setActualMinutesByVaDate(new Map());
         setActualCategoryByKey(new Map());
+        setActualCategoryByTaskId(new Map());
         return;
       }
       // Covers whichever is wider — the Week grid only needs its own 7 days,
@@ -1498,6 +1556,7 @@ export default function ProductivityCalendarPage() {
       const byTaskId = new Map<string, number>();
       const byVaDate = new Map<string, number>();
       const categoryByKey = new Map<string, string | null>();
+      const categoryByTaskId = new Map<string, string | null>();
       for (const log of (data ?? []) as {
         user_id: string; task_name: string | null; account: string | null; category: string | null;
         session_date: string | null; duration_ms: number | null; assigned_task_id: number | null;
@@ -1514,6 +1573,7 @@ export default function ProductivityCalendarPage() {
         if (log.assigned_task_id != null) {
           const taskKey = `${log.assigned_task_id}|${log.session_date}`;
           byTaskId.set(taskKey, (byTaskId.get(taskKey) ?? 0) + minutes);
+          if (log.category) categoryByTaskId.set(taskKey, log.category);
           continue;
         }
         const key = actualMatchKey(log.user_id, log.session_date, log.task_name, log.account);
@@ -1524,6 +1584,7 @@ export default function ProductivityCalendarPage() {
       setActualMinutesByTaskId(byTaskId);
       setActualMinutesByVaDate(byVaDate);
       setActualCategoryByKey(categoryByKey);
+      setActualCategoryByTaskId(categoryByTaskId);
     })();
     return () => { cancelled = true; };
   }, [actualTimeVaIds, weekDates, monthGrid]);
@@ -1605,6 +1666,17 @@ export default function ProductivityCalendarPage() {
     // task read as "way over" the moment 15 minutes are logged against it.
     const durationMinutes = Math.max(0, endMinutes - startMinutes);
     return { top, height, durationMinutes };
+  }
+
+  // Blocks are positioned back-to-back by real time, so two stacked on the
+  // same day can share an edge exactly — leaving a "moved" border or an
+  // "over" ring nowhere to draw but on top of its neighbor's. A small vertical
+  // inset at render time keeps every block visually separate without
+  // touching the top/height values anything else (overlays, the "moved"
+  // check, overlap columns) compares against.
+  function blockGapStyle(top: number, height: number) {
+    const inset = Math.min(1.5, height / 4);
+    return { top: top + inset, height: Math.max(height - inset * 2, 4) };
   }
 
   // How long dateStr's rendering of task was actually worked, per the logged
@@ -1700,7 +1772,7 @@ export default function ProductivityCalendarPage() {
         taskId,
         name: task?.task_name ?? "Unknown task",
         account: task?.account ?? null,
-        category: task?.category ?? null,
+        category: task?.category ?? actualCategoryByTaskId.get(taskKey) ?? null,
         minutes,
         plannedMinutes: task?.planned_minutes ?? null,
         moved: Boolean(task?.start_date || task?.due_date),
@@ -2006,7 +2078,7 @@ export default function ProductivityCalendarPage() {
                                   }}
                                   title={`${task.task_name}${task.account ? " — " + task.account : ""}`}
                                   className={`pointer-events-auto absolute rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                                  style={{ top, height, left, width }}
+                                  style={{ ...blockGapStyle(top, height), left, width }}
                                 >
                                   {overlay && (
                                     <div
@@ -2124,7 +2196,7 @@ export default function ProductivityCalendarPage() {
                               moved ? timelineMoveSummary(plan, { top, height }) : null,
                             ].filter(Boolean).join(" · ")}
                             className={`pointer-events-auto absolute inset-x-0.5 rounded-md px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${moved ? "border-2 border-plum" : "border"} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                            style={{ top, height }}
+                            style={blockGapStyle(top, height)}
                           >
                             <p className="truncate text-[9px] font-semibold leading-tight">
                               {task.isRecurring && <RecurringMark className="mr-0.5" />}
@@ -2281,16 +2353,18 @@ export default function ProductivityCalendarPage() {
                     <button
                       key={item.key}
                       type="button"
-                      disabled={item.taskId == null}
                       onClick={() => {
-                        if (item.taskId == null) return;
-                        const task = assignedTasksAll.find((t) => t.id === item.taskId);
-                        if (task) void openScheduleExisting(task, dateStr);
+                        if (item.taskId != null) {
+                          const task = assignedTasksAll.find((t) => t.id === item.taskId);
+                          if (task) void openScheduleExisting(task, dateStr);
+                          return;
+                        }
+                        void openUnscheduledView(item);
                       }}
                       title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged, not scheduled this day`}
-                      className={`relative w-full overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm ${categoryBlockClasses(item.category)} ${
+                      className={`relative w-full overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm cursor-pointer hover:opacity-90 ${categoryBlockClasses(item.category)} ${
                         item.moved ? "ring-2 ring-plum ring-inset" : "ring-2 ring-blue-500 ring-inset"
-                      } ${item.taskId == null ? "cursor-default" : "cursor-pointer hover:opacity-90"}`}
+                      }`}
                     >
                       {overlay && (
                         <div
@@ -3317,7 +3391,7 @@ export default function ProductivityCalendarPage() {
                             }}
                             title={`${task.task_name}${task.account ? " — " + task.account : ""}`}
                             className={`pointer-events-auto absolute rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                            style={{ top, height, left, width }}
+                            style={{ ...blockGapStyle(top, height), left, width }}
                           >
                             {overlay && (
                               <div
@@ -3454,18 +3528,20 @@ export default function ProductivityCalendarPage() {
                       <button
                         key={item.key}
                         type="button"
-                        disabled={item.taskId == null}
                         onClick={() => {
-                          if (item.taskId == null) return;
-                          const task = assignedTasksAll.find((t) => t.id === item.taskId);
-                          if (task) void openScheduleExisting(task, selectedDate);
+                          if (item.taskId != null) {
+                            const task = assignedTasksAll.find((t) => t.id === item.taskId);
+                            if (task) void openScheduleExisting(task, selectedDate);
+                            return;
+                          }
+                          void openUnscheduledView(item);
                         }}
                         title={`${item.name}${item.account ? " — " + item.account : ""} · ${formatDuration(item.minutes)} logged today${
                           item.moved ? ", scheduled a different day" : ", never scheduled"
                         }`}
-                        className={`relative flex w-full items-center justify-between gap-3 overflow-hidden rounded-md border px-2 py-1.5 text-left shadow-sm transition-opacity ${categoryBlockClasses(item.category)} ${
+                        className={`relative flex w-full items-center justify-between gap-3 overflow-hidden rounded-md border px-2 py-1.5 text-left shadow-sm transition-opacity hover:opacity-90 cursor-pointer ${categoryBlockClasses(item.category)} ${
                           item.moved ? "ring-2 ring-plum ring-inset" : "ring-2 ring-blue-500 ring-inset"
-                        } ${item.taskId == null ? "cursor-default" : "hover:opacity-90 cursor-pointer"}`}
+                        }`}
                       >
                         {overlay && (
                           <div
@@ -3540,7 +3616,7 @@ export default function ProductivityCalendarPage() {
                                   moved ? timelineMoveSummary(plan, { top, height }) : null,
                                 ].filter(Boolean).join(" · ")}
                                 className={`pointer-events-auto absolute left-16 right-2 rounded-md px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${moved ? "border-2 border-plum" : "border"} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                                style={{ top, height }}
+                                style={blockGapStyle(top, height)}
                               >
                                 <p className="truncate text-[11px] font-semibold">
                                   {task.isRecurring && <RecurringMark className="mr-0.5" />}
@@ -3626,7 +3702,7 @@ export default function ProductivityCalendarPage() {
                           }}
                           title={`${task.task_name}${task.account ? " — " + task.account : ""}`}
                           className={`pointer-events-auto absolute rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                          style={{ top, height, left, width }}
+                          style={{ ...blockGapStyle(top, height), left, width }}
                         >
                           {overlay && (
                             <div
@@ -4081,6 +4157,62 @@ export default function ProductivityCalendarPage() {
                 </>
               )}
               </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Never-planned work has no assigned_tasks row to open, so this is a
+          read-only look at the actual time_logs the block summed — the memo
+          included, since that's often the only record of what quickly-logged
+          work actually was. */}
+      {viewingUnscheduled && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60] p-4" onClick={() => setViewingUnscheduled(null)}>
+          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="py-4 px-5 border-b border-parchment flex items-center justify-between sticky top-0 bg-white">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-espresso truncate">{viewingUnscheduled.name}</h3>
+                <p className="text-[11px] text-stone truncate">
+                  {[viewingUnscheduled.account, `${formatDuration(viewingUnscheduled.minutes)} logged`].filter(Boolean).join(" · ")} · never scheduled
+                </p>
+              </div>
+              <button type="button" onClick={() => setViewingUnscheduled(null)} className="shrink-0 text-stone hover:text-espresso cursor-pointer text-lg leading-none">×</button>
+            </div>
+            <div className="p-4 space-y-2.5">
+              {loadingUnscheduledLogs ? (
+                <p className="text-center text-xs text-stone py-4">Loading…</p>
+              ) : !unscheduledLogs || unscheduledLogs.length === 0 ? (
+                <p className="text-center text-xs text-stone py-4">No matching time entries found.</p>
+              ) : (
+                unscheduledLogs.map((log) => (
+                  <div key={log.id} className="rounded-lg border border-sand p-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-stone">
+                      <span>
+                        {new Date(log.start_time).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                        {log.end_time ? ` – ${new Date(log.end_time).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+                      </span>
+                      <span className="font-semibold text-espresso">{formatDuration(log.duration_ms / 60000)}</span>
+                    </div>
+                    {log.category && (
+                      <span className={`inline-block rounded px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wide ${categoryBlockClasses(log.category, true)}`}>
+                        {log.category}
+                      </span>
+                    )}
+                    {log.client_memo && (
+                      <div className="rounded bg-slate-blue-soft/50 border border-slate-blue/20 p-1.5">
+                        <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-blue">Client</span>
+                        <p className="text-[11px] text-espresso mt-0.5 whitespace-pre-wrap">{log.client_memo}</p>
+                      </div>
+                    )}
+                    {log.internal_memo && (
+                      <div className="rounded bg-amber-soft/50 border border-amber/20 p-1.5">
+                        <span className="text-[9px] font-semibold uppercase tracking-wide text-walnut">Internal</span>
+                        <p className="text-[11px] text-espresso mt-0.5 whitespace-pre-wrap">{log.internal_memo}</p>
+                      </div>
+                    )}
+                  </div>
+                ))
               )}
             </div>
           </div>

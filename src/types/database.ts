@@ -219,6 +219,8 @@ export interface TimeLog {
   deleted_at: string | null;
   /** e.g. "TD1" — set when this log was started by playing a specific to-do item, not the parent task itself. Internal-only, doesn't affect client_memo/invoicing. */
   todo_label?: string | null;
+  /** assigned_tasks.id this log was played against — set on a "Start" status transition (see assignedTaskStatus.ts). Null for logs started straight from Log a Task, with no task row to link to. */
+  assigned_task_id?: number | null;
 }
 
 export interface TaskScreenshot {

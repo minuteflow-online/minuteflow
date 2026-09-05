@@ -13,6 +13,7 @@ import ScreenshotMarkerModal from "./ScreenshotMarkerModal";
 import { ScreenshotTile } from "./ScreenshotTile";
 import RevisionBadge from "@/components/RevisionBadge";
 import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
+import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -204,6 +205,10 @@ export default function ActivityLog({
   const [editingMemoLogId, setEditingMemoLogId] = useState<number | null>(null);
   const [editClientMemo, setEditClientMemo] = useState("");
   const [editInternalMemo, setEditInternalMemo] = useState("");
+  // Captured at edit-start so saveMemo (which only gets the id back from the
+  // click handler) can still sync the new detail onto the task it was played
+  // against — see syncTaskDetailFromMemo.
+  const [editingMemoAssignedTaskId, setEditingMemoAssignedTaskId] = useState<number | null>(null);
   const [savingMemo, setSavingMemo] = useState(false);
   const supabaseClient = createClient();
 
@@ -212,6 +217,7 @@ export default function ActivityLog({
     setEditingMemoLogId(log.id);
     setEditClientMemo(log.client_memo || "");
     setEditInternalMemo(log.internal_memo || "");
+    setEditingMemoAssignedTaskId(log.assigned_task_id ?? null);
   }, []);
 
   const cancelEditMemo = useCallback((e: React.MouseEvent) => {
@@ -226,10 +232,15 @@ export default function ActivityLog({
       client_memo: editClientMemo || null,
       internal_memo: editInternalMemo || null,
     }).eq("id", logId);
+    // A specific detail entered while working the task — often the real
+    // brief, since a recurring task's exact particulars aren't always known
+    // until someone is doing it — replaces the task's own client detail so
+    // the task editor and the calendar both read the same thing this log does.
+    void syncTaskDetailFromMemo(editingMemoAssignedTaskId, editClientMemo);
     setSavingMemo(false);
     setEditingMemoLogId(null);
     if (onRefresh) onRefresh();
-  }, [supabaseClient, editClientMemo, editInternalMemo, onRefresh]);
+  }, [supabaseClient, editClientMemo, editInternalMemo, editingMemoAssignedTaskId, onRefresh]);
 
   // Expanded row (shows full text for long fields + memos)
   const [expandedRow, setExpandedRow] = useState<number | null>(null);

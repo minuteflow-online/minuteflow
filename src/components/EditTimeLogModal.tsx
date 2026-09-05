@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
 import type { TimeLog, Profile } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -414,6 +415,15 @@ export default function EditTimeLogModal({
         setError(updateError.message);
         setSaving(false);
         return;
+      }
+
+      // A memo changed while editing a log played against a real task means
+      // this is the up-to-date client detail for that task — often more
+      // specific than what the task started with, since the exact brief
+      // isn't always known until the work is done. Keeps the task editor and
+      // the calendar in sync with whatever this log now says.
+      if ((clientMemo || null) !== (log.client_memo || null)) {
+        void syncTaskDetailFromMemo(log.assigned_task_id, clientMemo);
       }
 
       // Insert audit records
