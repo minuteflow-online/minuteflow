@@ -953,7 +953,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      if (!VA_STATUSES_UNDER_REVIEW.includes(status)) {
+      // A VA may finish their own approved work: once a reviewer has approved it,
+      // moving Approved → Completed is the VA's to make, not an admin-only step.
+      const finishingApproved = taskForReview?.status === "approved" && status === "completed";
+      if (!finishingApproved && !VA_STATUSES_UNDER_REVIEW.includes(status)) {
         return Response.json({ error: VA_STATUS_UNDER_REVIEW_ERROR }, { status: 403 });
       }
     }
@@ -1028,7 +1031,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      if (!VA_STATUSES_UNDER_REVIEW.includes(status)) {
+      // A VA may finish their own approved work: once a reviewer has approved it,
+      // moving Approved → Completed is the VA's to make, not an admin-only step.
+      const finishingApproved = taskForReview?.status === "approved" && status === "completed";
+      if (!finishingApproved && !VA_STATUSES_UNDER_REVIEW.includes(status)) {
         return Response.json({ error: VA_STATUS_UNDER_REVIEW_ERROR }, { status: 403 });
       }
     }
