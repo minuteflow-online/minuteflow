@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue, buildUnclaimed } from "@/lib/teamDigest";
+import { buildTeamDigest, buildCelebrations, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue, buildUnclaimed } from "@/lib/teamDigest";
 import { findProfileGaps, gapMessage } from "@/lib/profileGaps";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { sendTelegram, sendTelegramTo, sendTelegramSticker, telegramEnabled, esc } from "@/lib/telegram";
@@ -153,21 +153,31 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: "kind must be today, tomorrow or weekly" }, { status: 400 });
   }
 
+  // Celebrations first, and on their own. A birthday stacked above four
+  // content deadlines reads as an agenda item, which is the opposite of the
+  // point — so it gets its own message and its own card.
+  const celebrations = await buildCelebrations(kind);
+  if (celebrations) {
+    await sendTelegram("team", celebrations.text);
+    // After the message, so the card lands under the greeting rather than
+    // ahead of it with nothing to explain itself.
+    for (let i = 0; i < celebrations.birthdayPeople.length; i++) {
+      await sendTelegramSticker("team", BIRTHDAY_STICKER);
+    }
+  }
+
   const digest = await buildTeamDigest(kind);
-  if (!digest) return Response.json({ ok: true, skipped: "nothing to report" });
+  if (digest) await sendTelegram("team", digest.text);
 
-  await sendTelegram("team", digest.text);
-
-  // After the message, so the card lands under the greeting rather than
-  // ahead of it with nothing to explain itself.
-  for (let i = 0; i < digest.birthdayPeople.length; i++) {
-    await sendTelegramSticker("team", BIRTHDAY_STICKER);
+  if (!celebrations && !digest) {
+    return Response.json({ ok: true, skipped: "nothing to report" });
   }
 
   return Response.json({
     ok: true,
     kind,
-    birthdays: digest.birthdayPeople.length,
+    birthdays: celebrations?.birthdayPeople.length ?? 0,
+    digest: Boolean(digest),
     at: new Date().toLocaleString("en-US", { timeZone: ORG_TIMEZONE }),
   });
 }

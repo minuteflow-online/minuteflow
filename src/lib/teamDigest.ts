@@ -121,6 +121,61 @@ async function offOn(date: string) {
 
 export type DigestKind = "today" | "tomorrow";
 
+/**
+ * Birthdays and work anniversaries, on their own.
+ *
+ * These used to be the first lines of the daily digest, above "Due tomorrow".
+ * Rhealin's birthday went out on 2026-09-05 stacked on top of four content
+ * deadlines, which is not how you tell someone their birthday matters. A
+ * celebration sharing a message with a to-do list reads as an agenda item.
+ *
+ * So it is posted separately, before the digest, and the digest no longer
+ * mentions either. Nothing else changes — same people, same day, same wording.
+ */
+export async function buildCelebrations(kind: DigestKind): Promise<{
+  text: string;
+  birthdayPeople: string[];
+} | null> {
+  // Only the evening note carries these. Sent the night before, Eastern, so
+  // they land on the morning of the day itself in Manila.
+  if (kind !== "tomorrow") return null;
+
+  const date = orgDate(1);
+  const [birthdays, anniversaries] = await Promise.all([
+    birthdaysOn(date),
+    anniversariesOn(date),
+  ]);
+  if (birthdays.length === 0 && anniversaries.length === 0) return null;
+
+  const lines: string[] = [];
+
+  for (const p of birthdays) {
+    const who = (p.full_name as string) || (p.username as string) || "Someone";
+    lines.push(
+      `🎂 <b>Happy birthday, ${mention(who, p.telegram_chat_id as number | null)}!</b>`,
+      "",
+      "Hope it is a good one. 🎉"
+    );
+  }
+
+  for (const p of anniversaries) {
+    if (lines.length > 0) lines.push("");
+    const who = (p.full_name as string) || (p.username as string) || "Someone";
+    lines.push(
+      `🎉 <b>${mention(who, p.telegram_chat_id as number | null)}</b> — ${p.years} year${p.years === 1 ? "" : "s"} with MinuteFlow today.`,
+      "",
+      "Thank you for the time you have given this."
+    );
+  }
+
+  return {
+    text: lines.join("\n"),
+    birthdayPeople: birthdays.map(
+      (p) => (p.full_name as string) || (p.username as string) || "Someone"
+    ),
+  };
+}
+
 /** Builds the message, or null when there is nothing worth saying. A digest
  *  that only ever says "nothing today" trains people to stop reading it. */
 export async function buildTeamDigest(kind: DigestKind): Promise<{
@@ -128,14 +183,11 @@ export async function buildTeamDigest(kind: DigestKind): Promise<{
   birthdayPeople: string[];
 } | null> {
   const date = kind === "today" ? orgDate(0) : orgDate(1);
-  const [birthdays, anniversaries, due, off] = await Promise.all([
-    kind === "tomorrow" ? birthdaysOn(date) : Promise.resolve([]),
-    kind === "tomorrow" ? anniversariesOn(date) : Promise.resolve([]),
-    dueOn(date),
-    offOn(date),
-  ]);
+  // Birthdays and anniversaries are deliberately absent — buildCelebrations
+  // posts those on their own, so they are not read as agenda items.
+  const [due, off] = await Promise.all([dueOn(date), offOn(date)]);
 
-  if (birthdays.length === 0 && anniversaries.length === 0 && due.length === 0 && off.length === 0) {
+  if (due.length === 0 && off.length === 0) {
     return null;
   }
 
@@ -145,24 +197,13 @@ export async function buildTeamDigest(kind: DigestKind): Promise<{
       : `🌙 <b>Tomorrow — ${longDate(date)}</b>`,
   ];
 
-  for (const p of birthdays) {
-    const who = (p.full_name as string) || (p.username as string) || "Someone";
-    lines.push("", `🎂 <b>Happy birthday, ${mention(who, p.telegram_chat_id as number | null)}!</b>`);
-  }
-
-  for (const p of anniversaries) {
-    const who = (p.full_name as string) || (p.username as string) || "Someone";
-    lines.push(
-      "",
-      `🎉 <b>${mention(who, p.telegram_chat_id as number | null)}</b> — ${p.years} year${p.years === 1 ? "" : "s"} with MinuteFlow today. Thank you.`
-    );
-  }
-
   if (due.length > 0) {
     lines.push("", kind === "today" ? "<b>Due today</b>" : "<b>Due tomorrow</b>");
     for (const t of due.slice(0, 15)) {
       const where = [t.account, t.project].filter(Boolean).join(" / ");
-      const at = t.due_time ? ` at ${esc(String(t.due_time).slice(0, 5))}` : "";
+      // Same 12-hour form the meeting reminder uses. "at 15:00" reads as a
+      // timestamp, and half the team is twelve hours from Eastern.
+      const at = t.due_time ? ` at ${esc(meetingClock(String(t.due_time)))}` : "";
       lines.push(`• ${esc(String(t.task_name ?? "a task"))}${at}${where ? ` — ${esc(where)}` : ""}`);
     }
     if (due.length > 15) lines.push(`…and ${due.length - 15} more`);
@@ -172,10 +213,7 @@ export async function buildTeamDigest(kind: DigestKind): Promise<{
     lines.push("", `🌴 <b>Away</b>: ${esc(off.join(", "))}`);
   }
 
-  return {
-    text: lines.join("\n"),
-    birthdayPeople: birthdays.map((p) => (p.full_name as string) || (p.username as string) || "Someone"),
-  };
+  return { text: lines.join("\n"), birthdayPeople: [] };
 }
 
 /**
