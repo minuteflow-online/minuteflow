@@ -276,7 +276,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [subtaskPage, setSubtaskPage] = useState(0);
   // List View filters: a single team member, or just my own subtasks.
   const [listMemberFilter, setListMemberFilter] = useState<string>("");
-  const [listMyOnly, setListMyOnly] = useState(false);
+  // Default to the viewer's own subtasks (matching the checklist and To-Do
+  // list); the "My Subtasks" toggle and member dropdown switch to all/one.
+  const [listMyOnly, setListMyOnly] = useState(true);
   // Batch-select subtasks in List View for one trash action.
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);

@@ -269,10 +269,10 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [subFilters, setSubFilters] = useState<Set<SubFilter>>(new Set());
   const MINE = "__mine";
   const [memberFilter, setMemberFilter] = useState<string>(MINE);
-  // The To-Do List keeps its own member filter (the checklist's stays "mine" so
-  // a VA lands on their own work; to-dos default to everyone so a to-do added
-  // on someone else's subtask isn't hidden by default).
-  const [todoMemberFilter, setTodoMemberFilter] = useState<string>("");
+  // The To-Do List keeps its own member filter, defaulting to the viewer's own
+  // work (like the checklist) with the dropdown to switch to All members or one
+  // person.
+  const [todoMemberFilter, setTodoMemberFilter] = useState<string>(MINE);
   const todayEastern = easternToday();
 
   useEffect(() => {
