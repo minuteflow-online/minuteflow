@@ -269,6 +269,10 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [subFilters, setSubFilters] = useState<Set<SubFilter>>(new Set());
   const MINE = "__mine";
   const [memberFilter, setMemberFilter] = useState<string>(MINE);
+  // The To-Do List keeps its own member filter (the checklist's stays "mine" so
+  // a VA lands on their own work; to-dos default to everyone so a to-do added
+  // on someone else's subtask isn't hidden by default).
+  const [todoMemberFilter, setTodoMemberFilter] = useState<string>("");
   const todayEastern = easternToday();
 
   useEffect(() => {
@@ -576,10 +580,17 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     return byItem;
   }, [subtasks, overviewItems, descendantsOf, rollup]);
 
-  const todoTasks = useMemo(
-    () => filteredSubtasks.filter((st) => (st.todos ?? []).length > 0),
-    [filteredSubtasks]
-  );
+  const todoTasks = useMemo(() => {
+    const today = easternToday();
+    const active = Array.from(subFilters);
+    const wanted = todoMemberFilter === MINE ? currentUserId : todoMemberFilter;
+    return subtasks.filter((st) => {
+      if ((st.todos ?? []).length === 0) return false;
+      if (wanted && !st.assignees.some((a) => a.id === wanted)) return false;
+      if (active.length > 0 && !active.some((f) => matchesSubFilter(st, f, today))) return false;
+      return true;
+    });
+  }, [subtasks, subFilters, todoMemberFilter, currentUserId, MINE]);
 
   const [togglingTodoIds, setTogglingTodoIds] = useState<Set<number>>(new Set());
 
@@ -1178,8 +1189,8 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
           <h3 className={`${CARD_TITLE} mb-0`}>To-Do List</h3>
           {subtaskMembers.length > 0 && (
             <select
-              value={memberFilter}
-              onChange={(e) => setMemberFilter(e.target.value)}
+              value={todoMemberFilter}
+              onChange={(e) => setTodoMemberFilter(e.target.value)}
               className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
             >
               <option value={MINE}>My To-Dos</option>
