@@ -452,7 +452,8 @@ export default function TaskListPage() {
   const [error, setError] = useState<string | null>(null);
   const [taskView, setTaskView] = useUrlTab<"active" | "archived" | "trash">("status", "active", ["active", "archived", "trash"]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
-  const TASKS_PAGE_SIZE = 10;
+  const TASK_PAGE_SIZE_OPTIONS = [10, 20, 100, 250] as const;
+  const [tasksPageSize, setTasksPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [filterStatuses, setFilterStatuses] = useState<AssignedTaskStatus[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
@@ -1286,16 +1287,16 @@ export default function TaskListPage() {
   // (via pageCount below) rather than resetting via effect, so an in-place
   // edit that refetches the same data doesn't jump you back to page 1 — only
   // an actual change in how many tasks match does.
-  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / TASKS_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / tasksPageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageTasks = useMemo(
-    () => filteredTasks.slice((safePage - 1) * TASKS_PAGE_SIZE, safePage * TASKS_PAGE_SIZE),
-    [filteredTasks, safePage]
+    () => filteredTasks.slice((safePage - 1) * tasksPageSize, safePage * tasksPageSize),
+    [filteredTasks, safePage, tasksPageSize]
   );
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filteredTasks.length]);
+  }, [filteredTasks.length, tasksPageSize]);
 
   const avgAccuracy = useMemo(() => {
     const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
@@ -2866,11 +2867,28 @@ export default function TaskListPage() {
                     </tbody>
                   </table>
                 </div>
-                {totalPages > 1 && (
-                  <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-stone">
+                <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-stone">
+                  <div className="flex items-center gap-2">
                     <span>
-                      Showing {(safePage - 1) * TASKS_PAGE_SIZE + 1}–{Math.min(safePage * TASKS_PAGE_SIZE, filteredTasks.length)} of {filteredTasks.length}
+                      Showing {(safePage - 1) * tasksPageSize + 1}–{Math.min(safePage * tasksPageSize, filteredTasks.length)} of {filteredTasks.length}
                     </span>
+                    <label className="flex items-center gap-1">
+                      <span>Show</span>
+                      <select
+                        value={tasksPageSize}
+                        onChange={(e) => setTasksPageSize(Number(e.target.value))}
+                        className="rounded-lg border border-sand bg-white px-1.5 py-0.5 text-[11px] text-espresso outline-none"
+                      >
+                        {TASK_PAGE_SIZE_OPTIONS.map((size) => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </select>
+                      <span>per page</span>
+                    </label>
+                  </div>
+                  {totalPages > 1 && (
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -2892,8 +2910,8 @@ export default function TaskListPage() {
                         Next
                       </button>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
                 </>
               )}
             </>
