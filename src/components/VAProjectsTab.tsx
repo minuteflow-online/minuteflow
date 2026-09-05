@@ -73,6 +73,20 @@ const STATUS_OPTIONS = [
   "reviewing", "revision_needed", "approved", "completed", "paid", "cancelled",
 ];
 
+// The statuses a VA may move a subtask to from the list, given where it is now.
+// Before review they cycle on-queue → in progress → submitted; once a reviewer
+// has approved it they can mark it Completed. The review stages between are the
+// reviewer's, and finished/cancelled work is done — both return null (no control).
+// Admins get the full STATUS_OPTIONS instead. Mirrors the server's own rule.
+const VA_WORKING_STATUSES = ["on_queue", "in_progress", "submitted"];
+function vaStatusOptionsFor(status: string): string[] | null {
+  if (status === "approved") return ["approved", "completed"];
+  if (["pending", "on_queue", "in_progress", "submitted", "revision_needed"].includes(status)) {
+    return Array.from(new Set([status, ...VA_WORKING_STATUSES]));
+  }
+  return null;
+}
+
 function profileLabel(p: Pick<Profile, "id" | "full_name" | "username">): string {
   return p.full_name || p.username || p.id;
 }
@@ -1516,23 +1530,29 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         {sub.pay_type.replace(/_/g, " ")}
                       </span>
                     )}
-                    {/* Admins adjust status freely; a VA can only finish their
-                        own already-approved work (Approved → Completed), the same
-                        rule the board's drag enforces. */}
-                    {canEdit && (isAdmin || sub.status === "approved") && (
-                      <select
-                        value={sub.status}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => { e.stopPropagation(); void handleMoveSubtaskStatus(sub.id, e.target.value); }}
-                        className="shrink-0 rounded-lg border border-sand px-1.5 py-1 text-[10px] text-espresso outline-none bg-white capitalize"
-                        aria-label="Change status"
-                        title="Change status"
-                      >
-                        {(isAdmin ? STATUS_OPTIONS : ["approved", "completed"]).map((s) => (
-                          <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                        ))}
-                      </select>
-                    )}
+                    {/* Admins adjust status freely; a VA only within their lane:
+                        on-queue→in-progress→submitted before review, and
+                        approved→completed after (the review stages between, and
+                        paid, are not theirs). Same rule the board's drag and the
+                        server enforce. */}
+                    {(() => {
+                      const opts = isAdmin ? STATUS_OPTIONS : vaStatusOptionsFor(sub.status);
+                      if (!canEdit || !opts || opts.length < 2) return null;
+                      return (
+                        <select
+                          value={sub.status}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => { e.stopPropagation(); void handleMoveSubtaskStatus(sub.id, e.target.value); }}
+                          className="shrink-0 rounded-lg border border-sand px-1.5 py-1 text-[10px] text-espresso outline-none bg-white capitalize"
+                          aria-label="Change status"
+                          title="Change status"
+                        >
+                          {opts.map((s) => (
+                            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => setViewingSubId(isViewing ? null : sub.id)}
