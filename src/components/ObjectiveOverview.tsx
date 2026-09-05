@@ -8,7 +8,7 @@ type Stats = Record<string, { total: number; done: number }>;
 // Objective banner (not a real thread). Chosen so no human topic collides.
 const PAGE_OBJECTIVE_TITLE = "__page_objective__";
 
-type FileRow = { id: number; project_id: string; filename: string; uploaded_at: string };
+type FileRow = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string | null };
 type SubmittedFileRow = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string };
 type CommentRow = { id: number; body: string; created_at: string; author: string; author_id: string | null };
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
@@ -1010,13 +1010,22 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               <div className="space-y-1.5">
                 {slice.map((f) => {
                   const proj = projectById.get(f.project_id);
-                  return (
-                    <button key={f.id} onClick={() => proj && onSelect(proj)} className="w-full text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors">
+                  const inner = (
+                    <>
                       <span className="min-w-0">
-                        <span className="block text-[12px] text-espresso truncate">{f.filename}</span>
+                        <span className="block text-[12px] text-espresso truncate">{f.href ? "🔗 " : ""}{f.filename}</span>
                         <span className="block text-[10px] text-bark truncate">{proj?.name ?? "Objective"}</span>
                       </span>
                       <span className="text-[10px] text-bark shrink-0">{formatDate(f.uploaded_at)}</span>
+                    </>
+                  );
+                  return f.href ? (
+                    <a key={f.id} href={f.href} target="_blank" rel="noreferrer" className="w-full text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors">
+                      {inner}
+                    </a>
+                  ) : (
+                    <button key={f.id} onClick={() => proj && onSelect(proj)} className="w-full text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors">
+                      {inner}
                     </button>
                   );
                 })}
