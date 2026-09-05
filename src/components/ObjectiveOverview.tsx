@@ -1146,12 +1146,12 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                               disabled={Boolean(blocked)}
                               title={blocked ?? undefined}
                               onChange={() => void toggleSubtask(st)}
-                              className="shrink-0 accent-sage disabled:cursor-not-allowed disabled:opacity-40"
+                              className="shrink-0 h-4 w-4 accent-sage ring-1 ring-inset ring-stone/40 rounded disabled:cursor-not-allowed disabled:opacity-40"
                             />
                             <span className="min-w-0 flex-1">
                               {/* Title = the client memo detail (distinguishes same-named
                                   tasks); coloured by status. Completed gets a ✓. */}
-                              <span className={`flex items-center gap-1 text-[12px] font-semibold ${subtaskTitleColor({ ...st, status: effectiveStatus(st) }, todayEastern)}`}>
+                              <span className={`flex items-center gap-1 text-[12px] font-semibold ${done ? "line-through decoration-stone/60" : ""} ${subtaskTitleColor({ ...st, status: effectiveStatus(st) }, todayEastern)}`}>
                                 {st.recurring && (
                                   <span title="Recurring" className="shrink-0 text-slate-blue" aria-label="Recurring">
                                     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1262,9 +1262,9 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                             disabled={!canCheck || togglingTodoIds.has(todo.id)}
                             onChange={() => void toggleTodo(st.id, todo)}
                             title={isLocked ? "Locked — this subtask has already been submitted" : !canCheck ? "Only the assignee can check this off" : undefined}
-                            className="mt-0.5 h-3 w-3 shrink-0 rounded border-sand text-terracotta focus:ring-terracotta disabled:cursor-not-allowed"
+                            className="mt-0.5 h-4 w-4 shrink-0 rounded accent-sage ring-1 ring-inset ring-stone/40 disabled:cursor-not-allowed disabled:opacity-40"
                           />
-                          <span className={todo.completed ? "line-through text-stone/70" : undefined}>{todo.text}</span>
+                          <span className={todo.completed ? "line-through decoration-stone/60 text-stone" : undefined}>{todo.text}</span>
                         </li>
                       ))}
                     </ul>
