@@ -136,11 +136,10 @@ export async function buildCelebrations(kind: DigestKind): Promise<{
   text: string;
   birthdayPeople: string[];
 } | null> {
-  // Only the evening note carries these. Sent the night before, Eastern, so
-  // they land on the morning of the day itself in Manila.
-  if (kind !== "tomorrow") return null;
-
-  const date = orgDate(1);
+  // The scheduled run only ever asks for "tomorrow" — sent the night before,
+  // Eastern, so it lands on the morning of the day itself in Manila. "today"
+  // exists for a resend on the day, when the scheduled one went out wrong.
+  const date = kind === "today" ? orgDate(0) : orgDate(1);
   const [birthdays, anniversaries] = await Promise.all([
     birthdaysOn(date),
     anniversariesOn(date),
@@ -176,6 +175,46 @@ export async function buildCelebrations(kind: DigestKind): Promise<{
   };
 }
 
+/**
+ * A private note to Toni that someone's day is coming.
+ *
+ * The team greeting fires on its own the evening before, which is their
+ * morning. She wanted three days of warning ahead of that, so there is time
+ * to arrange something — a card, a gift, a word of her own — rather than
+ * finding out when the bot posts.
+ *
+ * Goes to her chat only. A heads-up in the team room would spoil the thing it
+ * is warning her about.
+ */
+const HEADS_UP_LEAD_DAYS = 3;
+
+export async function buildBirthdayHeadsUp(): Promise<string | null> {
+  const date = orgDate(HEADS_UP_LEAD_DAYS);
+  const [birthdays, anniversaries] = await Promise.all([
+    birthdaysOn(date),
+    anniversariesOn(date),
+  ]);
+  if (birthdays.length === 0 && anniversaries.length === 0) return null;
+
+  const lines: string[] = ["🎂 <b>Heads-up</b>", ""];
+
+  for (const p of birthdays) {
+    const who = (p.full_name as string) || (p.username as string) || "Someone";
+    lines.push(`It is <b>${esc(who)}</b>'s birthday on ${longDate(date)}.`);
+  }
+  for (const p of anniversaries) {
+    const who = (p.full_name as string) || (p.username as string) || "Someone";
+    lines.push(
+      `<b>${esc(who)}</b> reaches ${p.years} year${p.years === 1 ? "" : "s"} with MinuteFlow on ${longDate(date)}.`
+    );
+  }
+
+  lines.push(
+    "",
+    "<i>The team chat gets its greeting automatically the evening before, which is their morning. This is just so you know it is coming.</i>"
+  );
+  return lines.join("\n");
+}
 /** Builds the message, or null when there is nothing worth saying. A digest
  *  that only ever says "nothing today" trains people to stop reading it. */
 export async function buildTeamDigest(kind: DigestKind): Promise<{

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { buildTeamDigest, buildCelebrations, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue, buildUnclaimed } from "@/lib/teamDigest";
+import { buildTeamDigest, buildCelebrations, buildBirthdayHeadsUp, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue, buildUnclaimed } from "@/lib/teamDigest";
 import { findProfileGaps, gapMessage } from "@/lib/profileGaps";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { sendTelegram, sendTelegramTo, sendTelegramSticker, telegramEnabled, esc } from "@/lib/telegram";
@@ -119,6 +119,16 @@ export async function GET(request: NextRequest) {
       });
     }
     return Response.json({ ok: true, kind, reminded: gaps.length });
+  }
+
+  // Toni's own warning, three days out. Private: a heads-up posted to the
+  // team would spoil the thing it is warning her about.
+  if (kind === "heads-up") {
+    const note = await buildBirthdayHeadsUp();
+    if (!note) return Response.json({ ok: true, skipped: "nothing coming up" });
+    if (!telegramEnabled("ops")) return Response.json({ ok: true, skipped: "ops chat not set" });
+    await sendTelegram("ops", note);
+    return Response.json({ ok: true, kind });
   }
 
   if (kind === "unclaimed") {
