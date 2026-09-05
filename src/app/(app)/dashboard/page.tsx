@@ -3174,6 +3174,13 @@ export default function DashboardPage() {
       )
     );
     setShowNotesModal(false);
+    // This is the actual live path a VA uses to record a task's real
+    // specifics while working it — often the first time they're known, for a
+    // recurring task. Syncs onto the task itself so the task editor and the
+    // calendar catch up, not just this one log.
+    if (notesClientMemo.trim()) {
+      void syncTaskDetailFromMemo(activeTask.assignedTaskId, notesClientMemo.trim());
+    }
   }, [activeTask, notesContent, notesClientMemo, supabase]);
 
   // ─── Project Sidebar Handlers ─────────────────────────────
