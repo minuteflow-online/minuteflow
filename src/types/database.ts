@@ -623,7 +623,10 @@ export interface RecurringTaskTemplate {
   category: string | null;
   pay_type: string | null;
   recurrence_type: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'every_2_months' | 'every_3_months';
-  recurrence_days: string[] | null;
+  /** integer[] in Postgres, 0=Sun..6=Sat — a day name like "Mon" was tried and
+   *  rejected at insert with "invalid input syntax for type integer". Only
+   *  meaningful when recurrence_type is "weekly". */
+  recurrence_days: number[] | null;
   recurrence_day_of_month: number | null;
   is_active: boolean;
   is_paused?: boolean;

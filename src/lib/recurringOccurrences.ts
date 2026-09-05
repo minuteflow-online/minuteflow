@@ -34,8 +34,20 @@ export type OccurrenceTemplate = {
   paused_until?: string | null;
   start_date?: string | null;
   repeat_until?: string | null;
+  /** The Work Span's own End Date. For a template this is a second series
+   *  ceiling alongside repeat_until — NOT a per-occurrence value. It used to
+   *  get copied verbatim onto every generated occurrence's own end_date
+   *  (taskRowFor), so a template with, say, a month-long End Date produced
+   *  occurrences that each rendered as a Calendar span from their own date
+   *  all the way to that fixed date — every occurrence overlapping every
+   *  other one instead of a clean single-day block per date. */
+  end_date?: string | null;
   recurrence_type: RecurrenceType | string;
   recurrence_day_of_month?: number | null;
+  /** Which weekdays a "weekly" template lands on — integer[] in Postgres,
+   *  0=Sun..6=Sat (same convention as profiles.work_days). Null/empty means
+   *  the legacy behavior: the single weekday start_date itself falls on. */
+  recurrence_days?: number[] | null;
 };
 
 /** Weekday index (0=Sun … 6=Sat) of an org "YYYY-MM-DD" date — matches the
@@ -72,6 +84,7 @@ export function fallsOn(template: OccurrenceTemplate, date: string): boolean {
   }
   if (!template.start_date || date < template.start_date) return false;
   if (template.repeat_until && date > template.repeat_until) return false;
+  if (template.end_date && date > template.end_date) return false;
 
   const days = daysBetween(template.start_date, date);
   const months = monthsBetween(template.start_date, date);
@@ -80,8 +93,17 @@ export function fallsOn(template: OccurrenceTemplate, date: string): boolean {
   switch (template.recurrence_type) {
     case "daily":
       return true;
-    case "weekly":
+    case "weekly": {
+      // Specific weekdays (e.g. Mon/Wed/Fri) override the plain "every 7 days
+      // from start_date" rule — one template, several days a week, rather
+      // than one template per weekday (which the active-template duplicate
+      // guard in the templates API would reject as a repeat of itself).
+      const chosenDays = (template.recurrence_days ?? []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+      if (chosenDays.length > 0) {
+        return chosenDays.includes(weekdayOf(date));
+      }
       return days % 7 === 0;
+    }
     case "biweekly":
       return days % 14 === 0;
     case "monthly":
@@ -103,7 +125,11 @@ export function fallsOn(template: OccurrenceTemplate, date: string): boolean {
 export function occurrenceDates(template: OccurrenceTemplate, from: string): string[] {
   const horizonDays = template.repeat_until ? MAX_HORIZON_DAYS : OPEN_ENDED_HORIZON_DAYS;
   const lastPossible = addDays(from, horizonDays);
-  const end = template.repeat_until && template.repeat_until < lastPossible ? template.repeat_until : lastPossible;
+  let end = template.repeat_until && template.repeat_until < lastPossible ? template.repeat_until : lastPossible;
+  // end_date is a second, independent ceiling — whichever of the two comes
+  // first stops the series. fallsOn already enforces this too; capping the
+  // loop itself just avoids walking days past it for nothing.
+  if (template.end_date && template.end_date < end) end = template.end_date;
 
   const dates: string[] = [];
   for (let d = from; d <= end; d = addDays(d, 1)) {
@@ -142,10 +168,14 @@ export function outputRowFor(
     // so an Output Based template with a duration set produced occurrences
     // with no length at all.
     planned_minutes: template.planned_minutes ?? null,
-    // The occurrence date is the start. Output Based work has no end date
-    // unless someone sets one, so none is invented here.
+    // The occurrence date is the start. template.end_date is a series
+    // ceiling now (see OccurrenceTemplate.end_date) — occurrenceDates already
+    // never asks for a date past it, so it has nothing left to say about any
+    // one occurrence. Stamping it here as well used to make every occurrence
+    // carry the SAME fixed end_date, rendering as a Calendar span from its
+    // own date to that one — every occurrence overlapping every other one.
     start_date: date,
-    end_date: template.end_date ?? null,
+    end_date: null,
     due_date: template.due_time ? date : null,
     review_required: Boolean(template.review_required),
     instructions: template.instructions ?? null,
@@ -177,7 +207,10 @@ export function taskRowFor(
     planned_minutes: template.planned_minutes ?? null,
     due_date: date,
     due_time: template.due_time ?? null,
-    end_date: template.end_date ?? null,
+    // template.end_date is a series ceiling now (see OccurrenceTemplate.end_date
+    // above), not a value each occurrence carries — see the matching comment
+    // in outputRowFor for what stamping it here used to do to the Calendar.
+    end_date: null,
     review_required: Boolean(template.review_required),
     review_required_locked: Boolean(template.review_required),
     // Clock times on the template become a real block on that date, read on the

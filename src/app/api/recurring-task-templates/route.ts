@@ -27,7 +27,9 @@ type TemplateRow = {
   category: string | null;
   pay_type: string | null;
   recurrence_type: RecurrenceType;
-  recurrence_days: string[] | null;
+  // integer[] in Postgres (0=Sun..6=Sat) — day *names* fail to insert
+  // ("invalid input syntax for type integer"), confirmed live.
+  recurrence_days: number[] | null;
   recurrence_day_of_month: number | null;
   is_active: boolean;
   created_by?: string | null;
@@ -47,16 +49,22 @@ function serviceClient() {
   );
 }
 
-function normalizeDays(value: unknown): string[] | null {
+// recurrence_days is integer[] in Postgres (0=Sun..6=Sat) — a day name like
+// "Mon" fails at insert with "invalid input syntax for type integer" rather
+// than at this parse step, so this has to actually produce integers.
+function normalizeDays(value: unknown): number[] | null {
+  const toInts = (raw: unknown[]) =>
+    raw
+      .map((d) => Number(d))
+      .filter((n): n is number => Number.isInteger(n) && n >= 0 && n <= 6);
+  let days: number[] = [];
   if (Array.isArray(value)) {
-    const days = value.map((day) => String(day).trim()).filter(Boolean);
-    return days.length > 0 ? days : null;
+    days = toInts(value);
+  } else if (typeof value === "string") {
+    days = toInts(value.split(","));
   }
-  if (typeof value === "string") {
-    const days = value.split(",").map((day) => day.trim()).filter(Boolean);
-    return days.length > 0 ? days : null;
-  }
-  return null;
+  const unique = [...new Set(days)];
+  return unique.length > 0 ? unique : null;
 }
 
 function normalizeIds(value: unknown): string[] | null {
@@ -152,7 +160,7 @@ async function decorateTemplates(rows: TemplateRow[], supabase = serviceClient()
   });
 }
 
-function parseBodyDays(body: Record<string, unknown>): string[] | null {
+function parseBodyDays(body: Record<string, unknown>): number[] | null {
   return normalizeDays(body.recurrence_days ?? body.custom_days);
 }
 
@@ -343,7 +351,10 @@ export async function POST(request: Request) {
     pay_type: stringOrNull(body.pay_type),
     rate: numberOrNull(body.rate),
     recurrence_type,
-    recurrence_days: null,
+    // Specific weekdays only mean anything for "weekly" — daily/monthly/etc.
+    // already say when they land, and holding onto a stale day list from a
+    // prior weekly selection would misdescribe a template that no longer is.
+    recurrence_days: recurrence_type === "weekly" ? recurrence_days : null,
     recurrence_day_of_month: resolvedDayOfMonth,
     is_active: booleanOrDefault(body.is_active, true),
     paused_until: stringOrNull(body.paused_until),
@@ -454,8 +465,20 @@ ${existingText}` : addition;
   if (body.pay_type !== undefined) updates.pay_type = stringOrNull(body.pay_type);
   if (body.rate !== undefined) updates.rate = numberOrNull(body.rate);
   if (body.recurrence_type) updates.recurrence_type = parseRecurrenceType(body.recurrence_type);
-  // Always clear recurrence_days — schedule is now driven by start_date + recurrence_type
-  updates.recurrence_days = null;
+  // Specific weekdays (Mon/Wed/Fri, say) ride along with a "weekly" repeat.
+  // Switching the repeat away from weekly always drops them — they'd be
+  // meaningless on a daily/monthly template and stale the next time it goes
+  // back to weekly. Staying on/going to weekly picks up whatever days this
+  // save sent (undefined body.recurrence_days on a weekly template that
+  // already didn't send one means "no change", not "clear it").
+  {
+    const patchRecurrenceType = (updates.recurrence_type as RecurrenceType | undefined) ?? undefined;
+    if (patchRecurrenceType && patchRecurrenceType !== "weekly") {
+      updates.recurrence_days = null;
+    } else if (body.recurrence_days !== undefined) {
+      updates.recurrence_days = parseBodyDays(body);
+    }
+  }
   // Derive day-of-month from start_date for month-based recurrences
   {
     const patchRecurrenceType = updates.recurrence_type as RecurrenceType | undefined ?? undefined;
