@@ -292,14 +292,16 @@ export default function TeamPage() {
         // Output-based work — entirely separate from time_logs, so a Per Task
         // VA's submitted/approved/completed items were invisible here before.
         // Not scoped to the selected range: an unpaid item from before this
-        // period is exactly what the carry-over toggle below needs to find,
-        // so paid_manually is what excludes a row, not updated_at.
+        // period is exactly what the carry-over toggle below needs to find.
+        // "paid" is set by the paystub send route once payroll actually
+        // covers an item — that, not paid_manually (a separate "someone paid
+        // this by hand outside payroll" flag), is what settles a row here.
         supabase
           .from("assigned_task_assignees")
           .select(
             "id, va_id, status, updated_at, assigned_tasks(task_name, account, fixed_pay_task_id, fixed_pay_tasks(rate, paid_manually, paid_period_label))"
           )
-          .neq("status", "cancelled"),
+          .not("status", "in", '("cancelled","paid")'),
       ]);
 
     if (orgRes.data?.timezone) {
@@ -357,9 +359,10 @@ export default function TeamPage() {
       const task = Array.isArray(row.assigned_tasks) ? row.assigned_tasks[0] : row.assigned_tasks;
       if (!task) return;
       const fixedPay = Array.isArray(task.fixed_pay_tasks) ? task.fixed_pay_tasks[0] : task.fixed_pay_tasks;
-      // Already paid — this overview is "what's still owed," not a payment
-      // history. The paystub view is where a settled item stays visible with
-      // its paid-period label.
+      // Already settled — this overview is "what's still owed," not a payment
+      // history. The main gate is status != paid (in the query above); this
+      // catches the other way an item stops being owed, someone paying it by
+      // hand outside payroll entirely.
       if (fixedPay?.paid_manually) return;
       if (!outputItemLookup[row.va_id]) outputItemLookup[row.va_id] = [];
       outputItemLookup[row.va_id].push({
