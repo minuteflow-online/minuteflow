@@ -135,6 +135,12 @@ export default function FixedPayTasksTab() {
   const [filterRates, setFilterRates] = useState<number[]>([]);
   const [filterStartDates, setFilterStartDates] = useState<string[]>([]);
   const [filterDueDates, setFilterDueDates] = useState<string[]>([]);
+  // Free-text search (task name / account / VA / project) and a Created-date
+  // range with Today / This week / This month presets plus a custom span.
+  const [search, setSearch] = useState("");
+  const [dateRange, setDateRange] = useState<"all" | "today" | "week" | "month" | "custom">("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
@@ -339,7 +345,21 @@ export default function FixedPayTasksTab() {
     [filterBaseTasks]
   );
 
+  // Start of today / this week (Sun) / this month, in the viewer's local time —
+  // the same clock the Created column reads to them. null = no lower bound.
+  const dateFloor = useMemo(() => {
+    if (dateRange === "all" || dateRange === "custom") return null;
+    const now = new Date();
+    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (dateRange === "today") return t;
+    if (dateRange === "week") { t.setDate(t.getDate() - t.getDay()); return t; }
+    return new Date(now.getFullYear(), now.getMonth(), 1); // month
+  }, [dateRange]);
+
   const filteredTasks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const from = dateRange === "custom" && customFrom ? new Date(`${customFrom}T00:00:00`) : null;
+    const to = dateRange === "custom" && customTo ? new Date(`${customTo}T23:59:59`) : null;
     return filterBaseTasks.filter((task) => {
       if (filterClaimedBy.length > 0 && !filterClaimedBy.includes(task.claimed_by ?? "")) return false;
       if (filterRates.length > 0 && !filterRates.includes(Number(task.rate))) return false;
@@ -350,9 +370,21 @@ export default function FixedPayTasksTab() {
         if (!filterAssignedBy.includes(assignedByName)) return false;
       }
       if (filterProjects.length > 0 && !filterProjects.includes(task.projects?.name ?? "")) return false;
+      if (q) {
+        const vaName = task.claimed_by_profile?.full_name || task.claimed_by_profile?.username || "";
+        const hay = [task.task_name, task.account, vaName, task.projects?.name, task.category].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (dateFloor || from || to) {
+        const created = task.created_at ? new Date(task.created_at) : null;
+        if (!created) return false;
+        if (dateFloor && created < dateFloor) return false;
+        if (from && created < from) return false;
+        if (to && created > to) return false;
+      }
       return true;
     });
-  }, [filterBaseTasks, filterClaimedBy, filterRates, filterStartDates, filterDueDates, filterAssignedBy, filterProjects]);
+  }, [filterBaseTasks, filterClaimedBy, filterRates, filterStartDates, filterDueDates, filterAssignedBy, filterProjects, search, dateFloor, dateRange, customFrom, customTo]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
@@ -809,9 +841,36 @@ export default function FixedPayTasksTab() {
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search tasks…"
+                className="w-52 rounded-lg border border-sand px-2.5 py-1.5 text-[12px] text-espresso outline-none bg-white"
+              />
+              <select
+                value={dateRange}
+                onChange={(e) => setDateRange(e.target.value as "all" | "today" | "week" | "month" | "custom")}
+                className="rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white"
+                title="Filter by Created date"
+              >
+                <option value="all">All dates</option>
+                <option value="today">Today</option>
+                <option value="week">This week</option>
+                <option value="month">This month</option>
+                <option value="custom">Custom range…</option>
+              </select>
+              {dateRange === "custom" && (
+                <span className="flex items-center gap-1">
+                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white" />
+                  <span className="text-[11px] text-stone">–</span>
+                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white" />
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
-              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterClaimedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || activeFilter !== "all") && (
+              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterClaimedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || activeFilter !== "all" || search.trim() !== "" || dateRange !== "all") && (
                 <button
                   type="button"
                   onClick={() => {
@@ -826,6 +885,10 @@ export default function FixedPayTasksTab() {
                     setFilterRates([]);
                     setFilterStartDates([]);
                     setFilterDueDates([]);
+                    setSearch("");
+                    setDateRange("all");
+                    setCustomFrom("");
+                    setCustomTo("");
                   }}
                   className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
                 >
