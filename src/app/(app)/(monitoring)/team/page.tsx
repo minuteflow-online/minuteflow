@@ -49,11 +49,12 @@ type TeamMember = {
   // Approved absences (day off / time off / schedule change) overlapping the selected range.
   // start_time/end_time set = a partial "short day"; null = full day.
   absences: { type: string; start_date: string | null; end_date: string | null; start_time: string | null; end_time: string | null; subject: string }[];
-  // Output-based (per-task) work touched in the selected range — invisible to
-  // todayLogs entirely, since it's tracked in assigned_task_assignees/
-  // fixed_pay_tasks, not time_logs. "Touched" means updated_at falls in range,
-  // same window the screenshots query uses, since there's no dedicated
-  // submitted_at column to filter on instead.
+  // Every unpaid output-based (per-task) item for this VA, any age — invisible
+  // to todayLogs entirely, since it's tracked in assigned_task_assignees/
+  // fixed_pay_tasks, not time_logs. Not date-filtered at fetch time: a still-
+  // unpaid item from three weeks ago is exactly what this exists to surface,
+  // not something to hide behind the period picker. The panel below splits it
+  // into "this period" vs. "carried over from before" using updated_at.
   outputItems: OutputItem[];
 };
 
@@ -114,6 +115,29 @@ function formatCurrency(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+/** One row in the Output-Based Items list — shared between the current-period
+ *  and carried-over groups so the two never drift in how a row looks. */
+function OutputItemRow({ item, isAdmin }: { item: OutputItem; isAdmin: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg bg-parchment/40 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-[12px] font-semibold text-espresso truncate">{item.taskName}</div>
+        {item.account && <div className="text-[10px] text-stone/80 truncate">{item.account}</div>}
+      </div>
+      <span
+        className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+          OUTPUT_STATUS_BADGE[item.status] ?? "bg-stone/10 text-stone border-stone/20"
+        }`}
+      >
+        {OUTPUT_STATUS_LABEL[item.status] ?? item.status}
+      </span>
+      {isAdmin && item.rate != null && (
+        <span className="shrink-0 text-[12px] font-bold text-espresso w-14 text-right">{formatCurrency(item.rate)}</span>
+      )}
+    </div>
+  );
 }
 
 function formatDateShort(d: Date, timezone?: string): string {
@@ -267,15 +291,14 @@ export default function TeamPage() {
           .in("type", ["time_off", "schedule_change"]),
         // Output-based work — entirely separate from time_logs, so a Per Task
         // VA's submitted/approved/completed items were invisible here before.
-        // Filtered to updated_at in range rather than a submitted_at column,
-        // which doesn't exist — same compromise the screenshots query makes.
+        // Not scoped to the selected range: an unpaid item from before this
+        // period is exactly what the carry-over toggle below needs to find,
+        // so paid_manually is what excludes a row, not updated_at.
         supabase
           .from("assigned_task_assignees")
           .select(
-            "id, va_id, status, updated_at, assigned_tasks(task_name, account, fixed_pay_task_id, fixed_pay_tasks(rate))"
+            "id, va_id, status, updated_at, assigned_tasks(task_name, account, fixed_pay_task_id, fixed_pay_tasks(rate, paid_manually, paid_period_label))"
           )
-          .gte("updated_at", startISO)
-          .lte("updated_at", endISO)
           .neq("status", "cancelled"),
       ]);
 
@@ -316,14 +339,15 @@ export default function TeamPage() {
     // Output-based items, keyed by VA. assigned_tasks/fixed_pay_tasks come
     // back nested per the select() above; Supabase types this as an array
     // even for a to-one join, so [0] is what actually applies.
+    type FixedPayRow = { rate: number; paid_manually: boolean | null; paid_period_label: string | null };
     type OutputItemRow = {
       id: number;
       va_id: string | null;
       status: string;
       updated_at: string;
       assigned_tasks:
-        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: { rate: number } | { rate: number }[] | null }
-        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: { rate: number } | { rate: number }[] | null }[]
+        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: FixedPayRow | FixedPayRow[] | null }
+        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: FixedPayRow | FixedPayRow[] | null }[]
         | null;
     };
     const outputItemRows = (outputItemsRes.data ?? []) as unknown as OutputItemRow[];
@@ -333,6 +357,10 @@ export default function TeamPage() {
       const task = Array.isArray(row.assigned_tasks) ? row.assigned_tasks[0] : row.assigned_tasks;
       if (!task) return;
       const fixedPay = Array.isArray(task.fixed_pay_tasks) ? task.fixed_pay_tasks[0] : task.fixed_pay_tasks;
+      // Already paid — this overview is "what's still owed," not a payment
+      // history. The paystub view is where a settled item stays visible with
+      // its paid-period label.
+      if (fixedPay?.paid_manually) return;
       if (!outputItemLookup[row.va_id]) outputItemLookup[row.va_id] = [];
       outputItemLookup[row.va_id].push({
         id: row.id,
@@ -907,6 +935,7 @@ export default function TeamPage() {
                   member={member}
                   isAdmin={isAdmin}
                   isToday={isToday}
+                  rangeStart={rangeStart}
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
                   onDeselect={() => toggleMember(member.profile.id)}
                   userMoods={moodData[member.profile.id] || {}}
@@ -1439,10 +1468,11 @@ function DailyRatingsPanel({ vaId, isAdmin, timezone = "UTC" }: { vaId: string; 
 
 /* ── Expanded Member Card (Full Width) ───────────────────── */
 
-function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselect, userMoods, timezone }: {
+function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogout, onDeselect, userMoods, timezone }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
+  rangeStart: Date;
   onForceLogout?: (userId: string, fullName: string) => void;
   onDeselect: () => void;
   userMoods: Record<string, string>; // { "YYYY-MM-DD": mood }
@@ -1452,6 +1482,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const avatarColor = getAvatarColor(profile.id);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"activity" | "ratings">("activity");
+  const [showCarriedOverOutput, setShowCarriedOverOutput] = useState(false);
 
   const toggleDate = useCallback((dateLabel: string) => {
     setExpandedDates(prev => {
@@ -1567,26 +1598,26 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     return cats;
   }, [member]);
 
-  // Output-based (per-task) items touched in this period, newest first.
+  // Output-based (per-task) items, unpaid, split by whether they were
+  // touched during the selected period or carried over from before it.
   // "Projected" is submitted-only, deliberately not added to the Payable
   // figure above: this codebase's rule everywhere else (FinancialSummaryTab,
   // invoices) is "earned means approved," and a submitted item hasn't cleared
   // review yet. This is a preview of what's coming, not a promise of pay.
-  const sortedOutputItems = useMemo(
-    () => [...member.outputItems].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
-    [member.outputItems]
+  const sortByRecent = (items: OutputItem[]) =>
+    [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  const currentPeriodOutputItems = useMemo(
+    () => sortByRecent(member.outputItems.filter((item) => new Date(item.updatedAt).getTime() >= rangeStart.getTime())),
+    [member.outputItems, rangeStart]
   );
-  const projectedSubmittedTotal = useMemo(
-    () =>
-      member.outputItems
-        .filter((item) => item.status === "submitted")
-        .reduce((sum, item) => sum + (item.rate ?? 0), 0),
-    [member.outputItems]
+  const carriedOverOutputItems = useMemo(
+    () => sortByRecent(member.outputItems.filter((item) => new Date(item.updatedAt).getTime() < rangeStart.getTime())),
+    [member.outputItems, rangeStart]
   );
-  const submittedCount = useMemo(
-    () => member.outputItems.filter((item) => item.status === "submitted").length,
-    [member.outputItems]
-  );
+  const submittedTotal = (items: OutputItem[]) =>
+    items.filter((item) => item.status === "submitted").reduce((sum, item) => sum + (item.rate ?? 0), 0);
+  const submittedCountOf = (items: OutputItem[]) => items.filter((item) => item.status === "submitted").length;
 
   return (
     <div className="overflow-hidden rounded-xl border border-terracotta bg-white shadow-[0_4px_20px_rgba(0,0,0,.08)] ring-2 ring-terracotta/20">
@@ -1750,39 +1781,63 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 
         {/* Row 4: Output-Based Items — separate from time_logs entirely, so a
             Per Task VA's work is otherwise invisible up here. Payable above
-            stays time-log-only; this is visibility, not a second pay total. */}
-        {sortedOutputItems.length > 0 && (
-          <div className="mt-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark">Output-Based Items</div>
-              {isAdmin && submittedCount > 0 && (
-                <div className="text-[11px] font-semibold text-amber">
-                  Projected (pending review): {formatCurrency(projectedSubmittedTotal)} across {submittedCount}
+            stays time-log-only; this is visibility, not a second pay total.
+            Unpaid only — a settled item belongs to paystub history, not this
+            "what's still owed" overview. */}
+        {(currentPeriodOutputItems.length > 0 || carriedOverOutputItems.length > 0) && (
+          <div className="mt-4 space-y-3">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark">Output-Based Items</div>
+                {isAdmin && submittedCountOf(currentPeriodOutputItems) > 0 && (
+                  <div className="text-[11px] font-semibold text-amber">
+                    Projected (pending review): {formatCurrency(submittedTotal(currentPeriodOutputItems))} across{" "}
+                    {submittedCountOf(currentPeriodOutputItems)}
+                  </div>
+                )}
+              </div>
+              {currentPeriodOutputItems.length > 0 ? (
+                <div className="space-y-1.5">
+                  {currentPeriodOutputItems.map((item) => (
+                    <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} />
+                  ))}
                 </div>
+              ) : (
+                <div className="text-[12px] text-stone">No output-based items touched in this period.</div>
               )}
             </div>
-            <div className="space-y-1.5">
-              {sortedOutputItems.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-parchment/40 px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[12px] font-semibold text-espresso truncate">{item.taskName}</div>
-                    {item.account && <div className="text-[10px] text-stone/80 truncate">{item.account}</div>}
-                  </div>
-                  <span
-                    className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
-                      OUTPUT_STATUS_BADGE[item.status] ?? "bg-stone/10 text-stone border-stone/20"
-                    }`}
+
+            {carriedOverOutputItems.length > 0 && (
+              <div>
+                {!showCarriedOverOutput ? (
+                  <button
+                    onClick={() => setShowCarriedOverOutput(true)}
+                    className="text-[11px] font-semibold text-terracotta hover:underline"
                   >
-                    {OUTPUT_STATUS_LABEL[item.status] ?? item.status}
-                  </span>
-                  {isAdmin && item.rate != null && (
-                    <span className="shrink-0 text-[12px] font-bold text-espresso w-14 text-right">
-                      {formatCurrency(item.rate)}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
+                    Include {carriedOverOutputItems.length} unpaid item{carriedOverOutputItems.length === 1 ? "" : "s"} from before this period
+                  </button>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark">
+                        Carried Over — Unpaid From Before This Period
+                      </div>
+                      <button
+                        onClick={() => setShowCarriedOverOutput(false)}
+                        className="text-[10px] font-semibold text-stone hover:text-espresso"
+                      >
+                        Hide
+                      </button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {carriedOverOutputItems.map((item) => (
+                        <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
