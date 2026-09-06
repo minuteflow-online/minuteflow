@@ -49,6 +49,21 @@ type TeamMember = {
   // Approved absences (day off / time off / schedule change) overlapping the selected range.
   // start_time/end_time set = a partial "short day"; null = full day.
   absences: { type: string; start_date: string | null; end_date: string | null; start_time: string | null; end_time: string | null; subject: string }[];
+  // Output-based (per-task) work touched in the selected range — invisible to
+  // todayLogs entirely, since it's tracked in assigned_task_assignees/
+  // fixed_pay_tasks, not time_logs. "Touched" means updated_at falls in range,
+  // same window the screenshots query uses, since there's no dedicated
+  // submitted_at column to filter on instead.
+  outputItems: OutputItem[];
+};
+
+type OutputItem = {
+  id: number;
+  taskName: string;
+  account: string | null;
+  rate: number | null;
+  status: string;
+  updatedAt: string;
 };
 
 /* ── Helpers ──────────────────────────────────────────────── */
@@ -66,6 +81,31 @@ function computePayable(hoursMs: number, rate: number, rateType: string): number
   if (rateType === "daily") return (hours / 8) * rate; // assume 8h workday
   return 0; // monthly doesn't compute from daily hours
 }
+
+// Matches AssignedTasksWidget's status badge palette exactly, so a status
+// reads the same color everywhere it appears in the app.
+const OUTPUT_STATUS_BADGE: Record<string, string> = {
+  pending: "bg-stone/10 text-stone border-stone/20",
+  on_queue: "bg-stone/10 text-stone border-stone/20",
+  in_progress: "bg-amber-50 text-amber-500 border-amber-200",
+  submitted: "bg-sky-50 text-sky-600 border-sky-200",
+  reviewing: "bg-violet-50 text-violet-600 border-violet-200",
+  revision_needed: "bg-amber-50 text-amber-600 border-amber-200",
+  approved: "bg-emerald-50 text-emerald-600 border-emerald-200",
+  completed: "bg-sage-soft text-sage border-sage/20",
+  paid: "bg-purple-50 text-purple-600 border-purple-200",
+};
+const OUTPUT_STATUS_LABEL: Record<string, string> = {
+  pending: "Pending",
+  on_queue: "On Queue",
+  in_progress: "In Progress",
+  submitted: "Submitted",
+  reviewing: "Reviewing",
+  revision_needed: "Revision Needed",
+  approved: "Approved",
+  completed: "Completed",
+  paid: "Paid",
+};
 
 function formatCurrency(amount: number): string {
   return amount.toLocaleString("en-US", {
@@ -199,7 +239,7 @@ export default function TeamPage() {
     const moodStart = formatDateLocalTZ(rangeStart, tz);
     const moodEnd = formatDateLocalTZ(rangeEnd, tz);
 
-    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes, requestsRes] =
+    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes, requestsRes, outputItemsRes] =
       await Promise.all([
         supabase.from("profiles").select("*"),
         supabase.from("sessions").select("*"),
@@ -225,6 +265,18 @@ export default function TeamPage() {
           .select("user_id, type, subject, start_date, end_date, start_time, end_time, status")
           .eq("status", "approved")
           .in("type", ["time_off", "schedule_change"]),
+        // Output-based work — entirely separate from time_logs, so a Per Task
+        // VA's submitted/approved/completed items were invisible here before.
+        // Filtered to updated_at in range rather than a submitted_at column,
+        // which doesn't exist — same compromise the screenshots query makes.
+        supabase
+          .from("assigned_task_assignees")
+          .select(
+            "id, va_id, status, updated_at, assigned_tasks(task_name, account, fixed_pay_task_id, fixed_pay_tasks(rate))"
+          )
+          .gte("updated_at", startISO)
+          .lte("updated_at", endISO)
+          .neq("status", "cancelled"),
       ]);
 
     if (orgRes.data?.timezone) {
@@ -259,6 +311,37 @@ export default function TeamPage() {
       if (reqStart > moodEnd || reqEnd < moodStart) return;
       if (!absenceLookup[r.user_id]) absenceLookup[r.user_id] = [];
       absenceLookup[r.user_id].push({ type: r.type, start_date: r.start_date, end_date: r.end_date, start_time: r.start_time ?? null, end_time: r.end_time ?? null, subject: r.subject });
+    });
+
+    // Output-based items, keyed by VA. assigned_tasks/fixed_pay_tasks come
+    // back nested per the select() above; Supabase types this as an array
+    // even for a to-one join, so [0] is what actually applies.
+    type OutputItemRow = {
+      id: number;
+      va_id: string | null;
+      status: string;
+      updated_at: string;
+      assigned_tasks:
+        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: { rate: number } | { rate: number }[] | null }
+        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: { rate: number } | { rate: number }[] | null }[]
+        | null;
+    };
+    const outputItemRows = (outputItemsRes.data ?? []) as unknown as OutputItemRow[];
+    const outputItemLookup: Record<string, OutputItem[]> = {};
+    outputItemRows.forEach((row) => {
+      if (!row.va_id) return;
+      const task = Array.isArray(row.assigned_tasks) ? row.assigned_tasks[0] : row.assigned_tasks;
+      if (!task) return;
+      const fixedPay = Array.isArray(task.fixed_pay_tasks) ? task.fixed_pay_tasks[0] : task.fixed_pay_tasks;
+      if (!outputItemLookup[row.va_id]) outputItemLookup[row.va_id] = [];
+      outputItemLookup[row.va_id].push({
+        id: row.id,
+        taskName: task.task_name,
+        account: task.account,
+        rate: fixedPay?.rate ?? null,
+        status: row.status,
+        updatedAt: row.updated_at,
+      });
     });
 
     const teamMembers: TeamMember[] = profiles.map((profile) => {
@@ -357,6 +440,7 @@ export default function TeamPage() {
         messageMs,
         todayLogs: userLogs,
         absences: absenceLookup[profile.id] || [],
+        outputItems: outputItemLookup[profile.id] || [],
       };
     });
 
@@ -1483,6 +1567,27 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     return cats;
   }, [member]);
 
+  // Output-based (per-task) items touched in this period, newest first.
+  // "Projected" is submitted-only, deliberately not added to the Payable
+  // figure above: this codebase's rule everywhere else (FinancialSummaryTab,
+  // invoices) is "earned means approved," and a submitted item hasn't cleared
+  // review yet. This is a preview of what's coming, not a promise of pay.
+  const sortedOutputItems = useMemo(
+    () => [...member.outputItems].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [member.outputItems]
+  );
+  const projectedSubmittedTotal = useMemo(
+    () =>
+      member.outputItems
+        .filter((item) => item.status === "submitted")
+        .reduce((sum, item) => sum + (item.rate ?? 0), 0),
+    [member.outputItems]
+  );
+  const submittedCount = useMemo(
+    () => member.outputItems.filter((item) => item.status === "submitted").length,
+    [member.outputItems]
+  );
+
   return (
     <div className="overflow-hidden rounded-xl border border-terracotta bg-white shadow-[0_4px_20px_rgba(0,0,0,.08)] ring-2 ring-terracotta/20">
       {/* Header Row */}
@@ -1637,6 +1742,44 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                       </span>
                     )}
                   </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Row 4: Output-Based Items — separate from time_logs entirely, so a
+            Per Task VA's work is otherwise invisible up here. Payable above
+            stays time-log-only; this is visibility, not a second pay total. */}
+        {sortedOutputItems.length > 0 && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark">Output-Based Items</div>
+              {isAdmin && submittedCount > 0 && (
+                <div className="text-[11px] font-semibold text-amber">
+                  Projected (pending review): {formatCurrency(projectedSubmittedTotal)} across {submittedCount}
+                </div>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              {sortedOutputItems.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-parchment/40 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12px] font-semibold text-espresso truncate">{item.taskName}</div>
+                    {item.account && <div className="text-[10px] text-stone/80 truncate">{item.account}</div>}
+                  </div>
+                  <span
+                    className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+                      OUTPUT_STATUS_BADGE[item.status] ?? "bg-stone/10 text-stone border-stone/20"
+                    }`}
+                  >
+                    {OUTPUT_STATUS_LABEL[item.status] ?? item.status}
+                  </span>
+                  {isAdmin && item.rate != null && (
+                    <span className="shrink-0 text-[12px] font-bold text-espresso w-14 text-right">
+                      {formatCurrency(item.rate)}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
