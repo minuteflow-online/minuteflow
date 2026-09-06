@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { statusBadgeClasses, statusLabel } from "@/lib/taskSchedule";
 
 interface Props {
   profiles: Profile[];
@@ -32,6 +33,12 @@ interface FixedAssignment {
   amount: number;
   status: string;
   date: string | null;
+  /** Whether this item actually counts toward fixedTotal on this paystub —
+   *  always true for va_task_assignments; for fixed_pay_tasks, only
+   *  Completed items or ones explicitly checked in below. */
+  included: boolean;
+  /** Only fixed_pay_task rows get the include-checkbox / Approve controls. */
+  source: "va_task_assignment" | "fixed_pay_task";
 }
 
 interface PreviewData {
@@ -73,6 +80,60 @@ interface PaystubSnapshot {
   personal_message: string | null;
   paystub_link: string | null;
   fee?: number | null;
+}
+
+/** One Output Based Task row: checkbox (locked on for Completed items),
+ *  status badge, and an Approve action for anything not yet Completed. */
+function OutputTaskRow({
+  item,
+  checked,
+  onToggle,
+  onApprove,
+  approving,
+}: {
+  item: FixedAssignment;
+  checked: boolean;
+  onToggle: () => void;
+  onApprove: () => void;
+  approving: boolean;
+}) {
+  const isCompleted = item.status === "completed";
+  return (
+    <tr className="border-b border-linen/50">
+      <td className="py-1.5">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={isCompleted}
+          onChange={onToggle}
+          title={isCompleted ? "Completed items are always paid" : "Include in this paystub"}
+        />
+      </td>
+      <td className="py-1.5 text-bark/70">
+        {item.task_name}
+        {item.account && <span className="text-bark/40 ml-1">· {item.account}</span>}
+      </td>
+      <td className="py-1.5">
+        <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusBadgeClasses(item.status)}`}>
+          {statusLabel(item.status)}
+        </span>
+      </td>
+      <td className="py-1.5 text-bark/70">{item.date ? formatDateLabel(item.date.split("T")[0]) : "—"}</td>
+      <td className="py-1.5 text-right text-bark/70">{formatCurrency(item.amount)}</td>
+      <td className="py-1.5 text-right">
+        {!isCompleted && (
+          <button
+            type="button"
+            onClick={onApprove}
+            disabled={approving}
+            className="text-[10px] font-semibold text-sage hover:underline disabled:opacity-50"
+          >
+            {approving ? "Approving…" : "Approve"}
+          </button>
+        )}
+      </td>
+    </tr>
+  );
 }
 
 /* ── Date helpers ─────────────────────────────────────────── */
@@ -214,6 +275,13 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [paymentWarning, setPaymentWarning] = useState<string | null>(null);
 
+  // Output Based Tasks not yet Completed that the caller chose to pay anyway
+  // this run, without changing their status. Completed items need no entry
+  // here — they're always included.
+  const [includedOutputItemIds, setIncludedOutputItemIds] = useState<Set<number>>(new Set());
+  const [showCarriedOverOutput, setShowCarriedOverOutput] = useState(false);
+  const [approvingId, setApprovingId] = useState<number | null>(null);
+
   // Company name (editable, shown on paystub email)
   const [companyName, setCompanyName] = useState<string>(orgName || "MinuteFlow");
 
@@ -341,11 +409,19 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     return getPeriodRange(preset, orgTimezone);
   }
 
-  const handleCalculate = useCallback(async () => {
+  const handleCalculate = useCallback(async (opts?: { resetOutputSelections?: boolean }) => {
     setError(null);
     setPreview(null);
     setSent(false);
     setDraftSaved(false);
+    // Default true: a fresh calculate is normally a new VA or period, so any
+    // checked-but-not-Completed items from before no longer apply. The one
+    // exception is the post-Approve refresh, which explicitly opts out —
+    // approving one item must never silently uncheck a sibling.
+    if (opts?.resetOutputSelections !== false) {
+      setIncludedOutputItemIds(new Set());
+      setShowCarriedOverOutput(false);
+    }
 
     if (!selectedUserId) { setError("Please select a VA."); return; }
     const range = getRange();
@@ -424,7 +500,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         pay_period_label: range.label,
         total_hours_ms: Math.round(preview.totalHours * 3_600_000),
         pay_rate: preview.payRate,
-        gross_pay: preview.totalGrossPay ?? preview.grossPay,
+        gross_pay:
+          (preview.totalGrossPay ?? preview.grossPay) +
+          (preview.fixedAssignments ?? [])
+            .filter((a) => a.source === "fixed_pay_task" && a.status !== "completed" && includedOutputItemIds.has(a.id))
+            .reduce((sum, a) => sum + a.amount, 0),
         by_date: byDateWithRates,
         company_name: companyName.trim() || "MinuteFlow",
       };
@@ -450,7 +530,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSavingDraft(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, companyName, loadDrafts]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, companyName, loadDrafts, includedOutputItemIds]);
 
   // "Edit" on a draft → pre-fill the generator with that VA + period, then
   // auto-calculate so the full form (line items, fee, custom amount) is ready.
@@ -526,8 +606,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           confirmation_number: confirmationNumber || null,
           payment_date: paymentDate,
           personal_message: personalMessage.trim() || null,
+          // Which not-yet-Completed Output Based Tasks to pay this run anyway
+          // — self-contained here rather than reusing a render-scope value,
+          // so this stays correct regardless of when React re-creates this
+          // callback relative to the rest of the component body.
+          included_output_item_ids: (preview?.fixedAssignments ?? [])
+            .filter((a) => a.source === "fixed_pay_task" && a.status !== "completed" && includedOutputItemIds.has(a.id))
+            .map((a) => a.id),
           custom_amount: (() => {
-            const base = customAmount !== "" ? parseFloat(customAmount) : (preview?.totalGrossPay ?? preview?.grossPay ?? 0);
+            const outputItems = (preview?.fixedAssignments ?? []).filter((a) => a.source === "fixed_pay_task");
+            const checkedTotal = outputItems
+              .filter((item) => item.status === "completed" || includedOutputItemIds.has(item.id))
+              .reduce((sum, item) => sum + item.amount, 0);
+            const completedTotal = outputItems
+              .filter((item) => item.status === "completed")
+              .reduce((sum, item) => sum + item.amount, 0);
+            const effectiveGross = (preview?.totalGrossPay ?? preview?.grossPay ?? 0) + (checkedTotal - completedTotal);
+            const base = customAmount !== "" ? parseFloat(customAmount) : effectiveGross;
             const misc = miscAmount !== "" ? parseFloat(miscAmount) : 0;
             return base + misc + lineItemsTotal;
           })(),
@@ -569,7 +664,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -707,6 +802,66 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
   const range = getRange();
 
+  // Output Based Task rows (fixed_pay_tasks) get a checkbox and Approve
+  // button; legacy va_task_assignment rows don't — they're always included,
+  // no optional-include step exists for them. Split by whether the row was
+  // last touched before the selected period's start, same as the Team page's
+  // carry-over grouping, so a still-unpaid item from weeks ago never just
+  // silently disappears behind the period picker.
+  const outputTaskItems = preview?.fixedAssignments.filter((a) => a.source === "fixed_pay_task") ?? [];
+  const currentPeriodOutputItems = range
+    ? outputTaskItems.filter((a) => !a.date || a.date.slice(0, 10) >= range.start)
+    : outputTaskItems;
+  const carriedOverOutputItems = range
+    ? outputTaskItems.filter((a) => a.date && a.date.slice(0, 10) < range.start)
+    : [];
+  const isOutputItemChecked = (item: FixedAssignment) => item.status === "completed" || includedOutputItemIds.has(item.id);
+  const toggleIncludedOutputItem = (id: number) => {
+    setIncludedOutputItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const handleApproveOutputItem = async (id: number) => {
+    setApprovingId(id);
+    try {
+      const res = await fetch(`/api/fixed-pay-tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to approve.");
+      }
+      setIncludedOutputItemIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      await handleCalculate({ resetOutputSelections: false });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to approve.");
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  // The server only ever bakes Completed items into totalGrossPay — it has
+  // no way to know which optional items are checked right now, since
+  // checking one doesn't round-trip to the server. This layers the live
+  // checkbox state on top without needing to recalculate.
+  const checkedOutputItemsTotal = outputTaskItems.filter(isOutputItemChecked).reduce((sum, item) => sum + item.amount, 0);
+  const completedOutputItemsTotal = outputTaskItems
+    .filter((item) => item.status === "completed")
+    .reduce((sum, item) => sum + item.amount, 0);
+  const effectiveTotalGrossPay = preview
+    ? (preview.totalGrossPay ?? preview.grossPay) + (checkedOutputItemsTotal - completedOutputItemsTotal)
+    : 0;
+  const effectiveFixedTotal = preview ? (preview.fixedTotal ?? 0) + (checkedOutputItemsTotal - completedOutputItemsTotal) : 0;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -802,7 +957,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
           {/* Calculate button */}
           <button
-            onClick={handleCalculate}
+            onClick={() => handleCalculate()}
             disabled={loading || !selectedUserId}
             className="w-full py-2.5 rounded-lg bg-terracotta text-white text-sm font-semibold hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
@@ -830,7 +985,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <div className="text-sm font-semibold text-bark">Paystub sent!</div>
                   {preview && (
                     <div className="text-xs text-bark/60">
-                      Sent to {preview.vaEmail} · {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : (preview.totalGrossPay ?? preview.grossPay)) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
+                      Sent to {preview.vaEmail} · {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
                     </div>
                   )}
                 </div>
@@ -972,10 +1127,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 )}
               </div>
 
-              {/* Output Based Assignments */}
-              {preview.fixedAssignments && preview.fixedAssignments.length > 0 && (
+              {/* Fixed-Rate Assignments (legacy va_task_assignments) — always
+                  included, no checkbox: this flow only ever fetches
+                  approved/completed, unconditionally paid. */}
+              {preview.fixedAssignments.filter((a) => a.source === "va_task_assignment").length > 0 && (
                 <div className="px-5 py-3 border-t border-linen">
-                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Output Based Assignments</div>
+                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Fixed-Rate Assignments</div>
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-bark/40 border-b border-linen">
@@ -986,7 +1143,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.fixedAssignments.map((a) => (
+                      {preview.fixedAssignments.filter((a) => a.source === "va_task_assignment").map((a) => (
                         <tr key={a.id} className="border-b border-linen/50">
                           <td className="py-1.5 text-bark/70">
                             {a.task_name}
@@ -1003,6 +1160,95 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* Output Based Tasks — Completed items are always included;
+                  anything earlier gets a checkbox to include it this run
+                  without changing its status, plus an Approve action that
+                  moves it to Completed for good. */}
+              {(currentPeriodOutputItems.length > 0 || carriedOverOutputItems.length > 0) && (
+                <div className="px-5 py-3 border-t border-linen">
+                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Output Based Tasks</div>
+                  {currentPeriodOutputItems.length > 0 ? (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-bark/40 border-b border-linen">
+                          <th className="text-left pb-1.5 font-semibold w-6"></th>
+                          <th className="text-left pb-1.5 font-semibold">Task</th>
+                          <th className="text-left pb-1.5 font-semibold">Status</th>
+                          <th className="text-left pb-1.5 font-semibold">Date</th>
+                          <th className="text-right pb-1.5 font-semibold">Amount</th>
+                          <th className="text-right pb-1.5 font-semibold"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentPeriodOutputItems.map((item) => (
+                          <OutputTaskRow
+                            key={item.id}
+                            item={item}
+                            checked={isOutputItemChecked(item)}
+                            onToggle={() => toggleIncludedOutputItem(item.id)}
+                            onApprove={() => handleApproveOutputItem(item.id)}
+                            approving={approvingId === item.id}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="text-xs text-bark/40 italic py-1">No output-based items touched in this period.</p>
+                  )}
+
+                  {carriedOverOutputItems.length > 0 && (
+                    <div className="mt-2">
+                      {!showCarriedOverOutput ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowCarriedOverOutput(true)}
+                          className="text-[11px] font-semibold text-terracotta hover:underline"
+                        >
+                          Include {carriedOverOutputItems.length} unpaid item{carriedOverOutputItems.length === 1 ? "" : "s"} from before this period
+                        </button>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between mb-1 mt-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-bark/40">Carried Over — Before This Period</div>
+                            <button
+                              type="button"
+                              onClick={() => setShowCarriedOverOutput(false)}
+                              className="text-[10px] font-semibold text-bark/50 hover:text-bark"
+                            >
+                              Hide
+                            </button>
+                          </div>
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-bark/40 border-b border-linen">
+                                <th className="text-left pb-1.5 font-semibold w-6"></th>
+                                <th className="text-left pb-1.5 font-semibold">Task</th>
+                                <th className="text-left pb-1.5 font-semibold">Status</th>
+                                <th className="text-left pb-1.5 font-semibold">Date</th>
+                                <th className="text-right pb-1.5 font-semibold">Amount</th>
+                                <th className="text-right pb-1.5 font-semibold"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {carriedOverOutputItems.map((item) => (
+                                <OutputTaskRow
+                                  key={item.id}
+                                  item={item}
+                                  checked={isOutputItemChecked(item)}
+                                  onToggle={() => toggleIncludedOutputItem(item.id)}
+                                  onApprove={() => handleApproveOutputItem(item.id)}
+                                  approving={approvingId === item.id}
+                                />
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1050,10 +1296,10 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <span>Time-based Pay</span>
                   <span>{formatCurrency(preview.grossPay)}</span>
                 </div>
-                {preview.fixedTotal > 0 && (
+                {effectiveFixedTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                     <span>Output Based Assignments</span>
-                    <span>+ {formatCurrency(preview.fixedTotal)}</span>
+                    <span>+ {formatCurrency(effectiveFixedTotal)}</span>
                   </div>
                 )}
                 {lineItemsTotal > 0 && (
@@ -1064,7 +1310,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 )}
                 <div className="flex justify-between items-center font-semibold text-bark border-t border-linen pt-2 mt-1">
                   <span className="text-sm">Gross Pay</span>
-                  <span className="text-sm">{formatCurrency((preview.totalGrossPay ?? preview.grossPay) + lineItemsTotal)}</span>
+                  <span className="text-sm">{formatCurrency(effectiveTotalGrossPay + lineItemsTotal)}</span>
                 </div>
                 {preview.previousTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/50 mt-1">
@@ -1128,7 +1374,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   />
                 </div>
                 {advanceAmount !== "" && parseFloat(advanceAmount) > 0 && (() => {
-                  const gross = preview.totalGrossPay ?? preview.grossPay;
+                  const gross = effectiveTotalGrossPay;
                   const now = customAmount !== "" ? (parseFloat(customAmount) || 0) : gross;
                   const adv = parseFloat(advanceAmount) || 0;
                   const remaining = gross - adv - now;
@@ -1164,9 +1410,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-terracotta bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                   />
                 </div>
-                {customAmount !== "" && parseFloat(customAmount) !== (preview.totalGrossPay ?? preview.grossPay) && (
+                {customAmount !== "" && parseFloat(customAmount) !== effectiveTotalGrossPay && (
                   <p className="text-xs text-bark/40 mt-1">
-                    Default: {formatCurrency(preview.totalGrossPay ?? preview.grossPay)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
+                    Default: {formatCurrency(effectiveTotalGrossPay)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
                   </p>
                 )}
               </div>
@@ -1192,7 +1438,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <div className="mt-2 flex justify-between items-center rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark">
                     <span>Total to Send</span>
                     <span className="text-terracotta">
-                      {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : (preview.totalGrossPay ?? preview.grossPay)) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
+                      {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
                     </span>
                   </div>
                 ) : null}

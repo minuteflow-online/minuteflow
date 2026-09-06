@@ -54,7 +54,16 @@ export async function POST(request: Request) {
     company_name,
     custom_line_items,
     fee,
+    // Output Based Tasks (fixed_pay_tasks) the caller chose to pay this run
+    // despite not being Completed yet — Toni wants to be able to pay for
+    // work with loose ends still open, without the payroll act itself
+    // forcing a status change that implies it was fully signed off.
+    // Completed items need no entry here; they're always included.
+    included_output_item_ids = [],
   } = body;
+  const includedOutputItemIds = new Set<number>(
+    Array.isArray(included_output_item_ids) ? included_output_item_ids.map((id: number) => Number(id)) : []
+  );
 
   // Each item = rate × quantity (amount computed server-side). Older payloads
   // may carry only { label, amount } — treated as rate = amount, quantity = 1.
@@ -203,17 +212,25 @@ export async function POST(request: Request) {
     amount: (Number(a.rate) || 0) * (Number(a.quantity_claimed) || 1),
     status: a.status as string,
     date: (a.assigned_at as string | null) ?? null,
+    // This flow only ever fetches approved/completed, unconditionally paid —
+    // no optional-include step exists here, only for fixed_pay_tasks below.
+    included: true,
+    source: "va_task_assignment" as const,
   }));
 
-  // Fetch Output Based Tasks (the Team/VA "Output Based Tasks" tab) this VA has
-  // completed but not yet been paid for. Separate table from the legacy
+  // Fetch Output Based Tasks (the Team/VA "Output Based Tasks" tab) this VA
+  // has not yet been paid for — any status, not just Completed. Completed
+  // items are always paid; anything earlier (submitted, reviewing, approved,
+  // ...) is included only if the caller explicitly asked for it via
+  // includedOutputItemIds, so paying early work never implies it was
+  // reviewed and signed off. Separate table from the legacy
   // va_task_assignments fixed-rate flow above — folded into the same
   // "Output Based Assignments" section on the paystub so they show up together.
   const { data: fixedPayTasksRaw } = await adminClient
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, category, rate, claimed_at")
+    .select("id, task_name, account, category, rate, status, updated_at")
     .eq("claimed_by", user_id)
-    .eq("status", "completed")
+    .not("status", "in", '("cancelled","paid")')
     .is("deleted_at", null);
 
   const fixedPayTaskItems = (fixedPayTasksRaw ?? []).map((t) => ({
@@ -224,12 +241,19 @@ export async function POST(request: Request) {
     rate: Number(t.rate) || 0,
     quantity: 1,
     amount: Number(t.rate) || 0,
-    status: "completed",
-    date: (t.claimed_at as string | null) ?? null,
+    status: t.status as string,
+    date: (t.updated_at as string | null) ?? null,
+    // Completed work is always paid. Anything earlier only counts toward
+    // this paystub if the caller explicitly checked it in.
+    included: t.status === "completed" || includedOutputItemIds.has(t.id as number),
+    source: "fixed_pay_task" as const,
   }));
 
+  const includedFixedPayTaskItems = fixedPayTaskItems.filter((t) => t.included);
   const allFixedItems = [...fixedAssignments, ...fixedPayTaskItems];
-  const fixedTotal = allFixedItems.reduce((sum, a) => sum + a.amount, 0);
+  const fixedTotal =
+    fixedAssignments.reduce((sum, a) => sum + a.amount, 0) +
+    includedFixedPayTaskItems.reduce((sum, t) => sum + t.amount, 0);
   const totalGrossPay = grossPay + fixedTotal + customLineItemsTotal;
 
   // Preview mode — return numbers only (include payment_accounts so UI can show account details)
@@ -294,14 +318,19 @@ export async function POST(request: Request) {
       .in("id", fixedIds);
   }
 
-  // Step 1c: Mark included Output Based Tasks as paid (separate table, own status enum)
-  if (fixedPayTaskItems.length > 0) {
-    const fixedPayTaskIds = fixedPayTaskItems.map((t) => t.id);
+  // Step 1c: Mark included Output Based Tasks as paid (separate table, own
+  // status enum). Only the ones actually included this run — a not-completed
+  // item the caller left unchecked must stay exactly as it was, so it's still
+  // there to include (or not) on the next paystub.
+  if (includedFixedPayTaskItems.length > 0) {
+    const fixedPayTaskIds = includedFixedPayTaskItems.map((t) => t.id);
     await adminClient
       .from("fixed_pay_tasks")
       // paid_manually=false: this is payroll, so the badge stays purple even if
-      // the task had been marked paid by hand earlier.
-      .update({ status: "paid", paid_manually: false })
+      // the task had been marked paid by hand earlier. paid_period_label
+      // records which paystub covered it, for "Paid on cutoff period X"
+      // wherever this item is looked up later — status alone doesn't say when.
+      .update({ status: "paid", paid_manually: false, paid_period_label: periodLabel })
       .in("id", fixedPayTaskIds);
   }
 
@@ -504,6 +533,13 @@ interface FixedAssignment {
   amount: number;
   status: string;
   date: string | null;
+  /** Whether this item actually counts toward fixedTotal on this paystub.
+   *  Always true for va_task_assignments; for fixed_pay_tasks, true only for
+   *  Completed items or ones the caller explicitly included by id. */
+  included: boolean;
+  /** Which table this came from — only fixed_pay_task rows get an optional
+   *  include checkbox and an Approve action on the client. */
+  source: "va_task_assignment" | "fixed_pay_task";
 }
 
 interface PaystubData {
