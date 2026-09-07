@@ -1593,6 +1593,11 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
         const dayOutputItems = [...dayOutputItemsRaw].sort(
           (a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime()
         );
+        // Every item shown that day, not just completed ones — this is the
+        // same "projected, not a promise of pay" figure as the summary line
+        // above Daily Breakdown, just broken out per day instead of totaled
+        // across the whole period.
+        const dayOutputTotal = dayOutputItems.reduce((sum, item) => sum + (item.rate ?? 0), 0);
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Clock Out");
         // Total = every logged minute that day, no exclusions — matches the Time Log page.
         const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
@@ -1626,7 +1631,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
         const personalMs = dayLogs.filter(l => l.category === "Personal").reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
         const sortedDayLogs = [...dayLogs].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-        return { dateLabel, isoDate, totalMs, billedMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, outputItems: dayOutputItems, mood, dayInProgress, dayCompleted, dayOnHold };
+        return { dateLabel, isoDate, totalMs, billedMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, outputItems: dayOutputItems, dayOutputTotal, mood, dayInProgress, dayCompleted, dayOnHold };
       });
   }, [member.todayLogs, member.outputItems, isToday, profile.pay_rate, profile.pay_rate_type, profile.position, userMoods, rangeStart, rangeEnd, timezone]);
 
@@ -1944,7 +1949,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                           className="inline-flex items-center gap-1 rounded-full bg-terracotta-soft px-2 py-[2px] text-[9px] font-semibold text-terracotta"
                           title="Output-based items touched this day"
                         >
-                          <span className="w-1.5 h-1.5 rounded-full bg-terracotta" />{day.outputItems.length} output
+                          <span className="w-1.5 h-1.5 rounded-full bg-terracotta" />
+                          {day.outputItems.length} output
+                          {isAdmin && ` · ${formatCurrency(day.dayOutputTotal)}`}
                         </span>
                       )}
                       <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
