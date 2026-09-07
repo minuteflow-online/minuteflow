@@ -1693,6 +1693,48 @@ export default function DashboardPage() {
     try {
     const now = new Date().toISOString();
 
+    // No negotiations: close ALL open task logs at DB level first — the same
+    // safety net startTask() already runs before every other task start.
+    // endBreak() closes the break log itself right before calling this, but
+    // that update has no result check of its own — relying on it alone is
+    // exactly what let a break sit open for over an hour alongside a resumed
+    // task on 2026-09-04 (Flordeliz). This re-checks the database directly
+    // rather than trusting that the earlier close actually landed.
+    {
+      const { data: openLogs } = await supabase
+        .from("time_logs")
+        .select("id, start_time")
+        .eq("user_id", userId)
+        .is("end_time", null)
+        .neq("category", "Clock Out");
+
+      if (openLogs && openLogs.length > 0) {
+        const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now)]));
+        for (const openLog of openLogs) {
+          const { endTime, durationMs } = closeTimes.get(openLog.id)!;
+          const { error: closeError } = await supabase
+            .from("time_logs")
+            .update({ end_time: endTime, duration_ms: durationMs })
+            .eq("id", openLog.id);
+          if (closeError) {
+            // Bail rather than resume on top of a log that failed to close —
+            // that's the exact overlapping situation this block prevents.
+            alert("Couldn't resume your task (failed to close a leftover open log): " + closeError.message + ". Please try again.");
+            return;
+          }
+        }
+        setTimeLogs((prev) =>
+          prev.map((log) => {
+            const closed = closeTimes.get(log.id);
+            if (closed && !log.end_time) {
+              return { ...log, end_time: closed.endTime, duration_ms: closed.durationMs } as TimeLog;
+            }
+            return log;
+          })
+        );
+      }
+    }
+
     const isBillable = isBillableCategory(preBreakTask.category);
 
     const { data: logData, error: resumeLogError } = await supabase
@@ -1790,10 +1832,20 @@ export default function DashboardPage() {
             );
           }
         }
-        await supabase
+        const { error: closeBreakError } = await supabase
           .from("time_logs")
           .update({ end_time: now, duration_ms: breakDurationMs })
           .eq("id", logId);
+
+        if (closeBreakError) {
+          // This update failing silently — with nothing after it re-checking —
+          // is exactly what let a break stay open for over an hour alongside a
+          // resumed task on 2026-09-04. resumePreBreakTask() now re-verifies
+          // and force-closes any still-open log itself, so this alone won't
+          // repeat that incident, but the person should still know now rather
+          // than finding out from a payroll report later.
+          console.error("[endBreak] failed to close break log", logId, closeBreakError.message);
+        }
 
         setTimeLogs((prev) =>
           prev.map((log) =>
