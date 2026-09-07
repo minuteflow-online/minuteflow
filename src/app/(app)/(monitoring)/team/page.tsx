@@ -266,7 +266,7 @@ export default function TeamPage() {
     const moodStart = formatDateLocalTZ(rangeStart, tz);
     const moodEnd = formatDateLocalTZ(rangeEnd, tz);
 
-    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes, requestsRes, outputItemsRes] =
+    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes, requestsRes, fixedPayTasksRes, assignedTaskStatusRes] =
       await Promise.all([
         supabase.from("profiles").select("*"),
         supabase.from("sessions").select("*"),
@@ -296,15 +296,24 @@ export default function TeamPage() {
         // VA's submitted/approved/completed items were invisible here before.
         // Not scoped to the selected range: an unpaid item from before this
         // period is exactly what the carry-over toggle below needs to find.
-        // "paid" is set by the paystub send route once payroll actually
-        // covers an item — that, not paid_manually (a separate "someone paid
-        // this by hand outside payroll" flag), is what settles a row here.
+        // Flat query on fixed_pay_tasks directly, the same shape the Paystub
+        // send route already uses successfully — an earlier version went
+        // through a two-level nested embed (assigned_task_assignees ->
+        // assigned_tasks -> fixed_pay_tasks) and silently dropped most
+        // Submitted/Approved rows for reasons that didn't trace back to RLS,
+        // column typing, or the date-range grouping below; this sidesteps
+        // the embed entirely rather than leave that unexplained.
         supabase
-          .from("assigned_task_assignees")
-          .select(
-            "id, va_id, status, updated_at, assigned_tasks(task_name, account, fixed_pay_task_id, fixed_pay_tasks(rate, paid_manually, paid_period_label))"
-          )
-          .not("status", "in", '("cancelled","paid")'),
+          .from("fixed_pay_tasks")
+          .select("id, task_name, account, rate, status, updated_at, claimed_by, paid_manually, paid_period_label")
+          .not("status", "in", '("cancelled","paid")')
+          .not("claimed_by", "is", null),
+        // fixed_pay_tasks.status lags behind for some transitions (see
+        // fixedPayTaskSync.ts — "reviewing"/"approved" are deliberately never
+        // written back). assigned_tasks.status is the live value once a
+        // mirror row exists; GET /api/fixed-pay-tasks overlays it the same
+        // way for the exact same reason.
+        supabase.from("assigned_tasks").select("fixed_pay_task_id, status").not("fixed_pay_task_id", "is", null),
       ]);
 
     if (orgRes.data?.timezone) {
@@ -341,47 +350,49 @@ export default function TeamPage() {
       absenceLookup[r.user_id].push({ type: r.type, start_date: r.start_date, end_date: r.end_date, start_time: r.start_time ?? null, end_time: r.end_time ?? null, subject: r.subject });
     });
 
-    // Output-based items, keyed by VA. assigned_tasks/fixed_pay_tasks come
-    // back nested per the select() above; Supabase types this as an array
-    // even for a to-one join, so [0] is what actually applies.
-    type FixedPayRow = { rate: number; paid_manually: boolean | null; paid_period_label: string | null };
-    type OutputItemRow = {
+    // Output-based items, keyed by VA (claimed_by is the VA id directly on
+    // fixed_pay_tasks — no assignee join needed at all).
+    type FixedPayTaskRow = {
       id: number;
-      va_id: string | null;
+      task_name: string;
+      account: string | null;
+      rate: number;
       status: string;
       updated_at: string;
-      assigned_tasks:
-        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: FixedPayRow | FixedPayRow[] | null }
-        | { task_name: string; account: string | null; fixed_pay_task_id: number | null; fixed_pay_tasks: FixedPayRow | FixedPayRow[] | null }[]
-        | null;
+      claimed_by: string;
+      paid_manually: boolean | null;
     };
-    const outputItemRows = (outputItemsRes.data ?? []) as unknown as OutputItemRow[];
+    const fixedPayTaskRows = (fixedPayTasksRes.data ?? []) as FixedPayTaskRow[];
+
+    // Live-status overlay: fixed_pay_tasks.status is never rewritten for the
+    // "reviewing"/"approved" transitions (see fixedPayTaskSync.ts), so a task
+    // sitting at either of those on the real submission flow would otherwise
+    // still read as whatever it was before, e.g. "submitted".
+    const liveStatusByFixedPayTaskId = new Map<number, string>(
+      ((assignedTaskStatusRes.data ?? []) as { fixed_pay_task_id: number; status: string }[]).map((r) => [
+        r.fixed_pay_task_id,
+        r.status,
+      ])
+    );
+
     const outputItemLookup: Record<string, OutputItem[]> = {};
-    outputItemRows.forEach((row) => {
-      if (!row.va_id) return;
-      const task = Array.isArray(row.assigned_tasks) ? row.assigned_tasks[0] : row.assigned_tasks;
-      if (!task) return;
-      // assigned_task_assignees holds every kind of assigned task, not just
-      // output-based ones — a VA's ordinary time-tracked queue (ECC_Processing,
-      // Collaboration, whatever's pending/on_queue) lives in this same table.
-      // Only a row with a real fixed_pay_task_id link is actually output-based,
-      // priced, per-task work; anything else here isn't what this section is
-      // for and was showing up with no rate and no meaningful date as a result.
-      if (task.fixed_pay_task_id == null) return;
-      const fixedPay = Array.isArray(task.fixed_pay_tasks) ? task.fixed_pay_tasks[0] : task.fixed_pay_tasks;
-      if (!fixedPay) return;
+    fixedPayTaskRows.forEach((row) => {
       // Already settled — this overview is "what's still owed," not a payment
       // history. The main gate is status != paid (in the query above); this
       // catches the other way an item stops being owed, someone paying it by
       // hand outside payroll entirely.
-      if (fixedPay.paid_manually) return;
-      if (!outputItemLookup[row.va_id]) outputItemLookup[row.va_id] = [];
-      outputItemLookup[row.va_id].push({
+      if (row.paid_manually) return;
+      const effectiveStatus = liveStatusByFixedPayTaskId.get(row.id) ?? row.status;
+      // The live status can reveal a settle that the stale column above
+      // didn't — re-check now that the real status is known.
+      if (effectiveStatus === "cancelled" || effectiveStatus === "paid") return;
+      if (!outputItemLookup[row.claimed_by]) outputItemLookup[row.claimed_by] = [];
+      outputItemLookup[row.claimed_by].push({
         id: row.id,
-        taskName: task.task_name,
-        account: task.account,
-        rate: fixedPay?.rate ?? null,
-        status: row.status,
+        taskName: row.task_name,
+        account: row.account,
+        rate: row.rate,
+        status: effectiveStatus,
         updatedAt: row.updated_at,
       });
     });
