@@ -961,6 +961,7 @@ export default function TeamPage() {
                   isAdmin={isAdmin}
                   isToday={isToday}
                   rangeStart={rangeStart}
+                  rangeEnd={rangeEnd}
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
                   onDeselect={() => toggleMember(member.profile.id)}
                   userMoods={moodData[member.profile.id] || {}}
@@ -1493,11 +1494,12 @@ function DailyRatingsPanel({ vaId, isAdmin, timezone = "UTC" }: { vaId: string; 
 
 /* ── Expanded Member Card (Full Width) ───────────────────── */
 
-function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogout, onDeselect, userMoods, timezone }: {
+function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, onForceLogout, onDeselect, userMoods, timezone }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
   rangeStart: Date;
+  rangeEnd: Date;
   onForceLogout?: (userId: string, fullName: string) => void;
   onDeselect: () => void;
   userMoods: Record<string, string>; // { "YYYY-MM-DD": mood }
@@ -1559,19 +1561,38 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
 
   const dailyBreakdown = useMemo(() => {
     if (isToday) return [];
-    const byDate: Record<string, { logs: TimeLog[]; dateSort: number; isoDate: string }> = {};
+    const byDate: Record<string, { logs: TimeLog[]; outputItems: OutputItem[]; dateSort: number; isoDate: string }> = {};
     member.todayLogs.forEach((log) => {
       const isoDate = log.session_date || formatDateLocalTZ(new Date(log.start_time), timezone); // "YYYY-MM-DD"
       const d = new Date(isoDate + "T12:00:00"); // noon to avoid DST edge cases
       const key = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
       const dateSort = new Date(isoDate).getTime();
-      if (!byDate[key]) byDate[key] = { logs: [], dateSort, isoDate };
+      if (!byDate[key]) byDate[key] = { logs: [], outputItems: [], dateSort, isoDate };
       byDate[key].logs.push(log);
+    });
+
+    // Output-based items belong inside the day they were touched, sorted by
+    // submission time alongside that day's tasks — not off in a separate
+    // list elsewhere on the page. Only items within the selected period; an
+    // item from before it has no day here to attach to and stays behind the
+    // carry-over toggle instead.
+    member.outputItems.forEach((item) => {
+      const updatedMs = new Date(item.updatedAt).getTime();
+      if (updatedMs < rangeStart.getTime() || updatedMs > rangeEnd.getTime()) return;
+      const isoDate = formatDateLocalTZ(new Date(item.updatedAt), timezone);
+      const d = new Date(isoDate + "T12:00:00");
+      const key = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      const dateSort = new Date(isoDate).getTime();
+      if (!byDate[key]) byDate[key] = { logs: [], outputItems: [], dateSort, isoDate };
+      byDate[key].outputItems.push(item);
     });
 
     return Object.entries(byDate)
       .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
-      .map(([dateLabel, { logs: dayLogs, isoDate }]) => {
+      .map(([dateLabel, { logs: dayLogs, outputItems: dayOutputItemsRaw, isoDate }]) => {
+        const dayOutputItems = [...dayOutputItemsRaw].sort(
+          (a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime()
+        );
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Clock Out");
         // Total = every logged minute that day, no exclusions — matches the Time Log page.
         const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
@@ -1605,9 +1626,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
         const personalMs = dayLogs.filter(l => l.category === "Personal").reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
         const sortedDayLogs = [...dayLogs].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-        return { dateLabel, isoDate, totalMs, billedMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
+        return { dateLabel, isoDate, totalMs, billedMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, outputItems: dayOutputItems, mood, dayInProgress, dayCompleted, dayOnHold };
       });
-  }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, profile.position, userMoods]);
+  }, [member.todayLogs, member.outputItems, isToday, profile.pay_rate, profile.pay_rate_type, profile.position, userMoods, rangeStart, rangeEnd, timezone]);
 
   // Category totals - only show non-zero
   const categoryTotals = useMemo(() => {
@@ -1804,33 +1825,22 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
           </div>
         )}
 
-        {/* Row 4: Output-Based Items — separate from time_logs entirely, so a
-            Per Task VA's work is otherwise invisible up here. Payable above
-            stays time-log-only; this is visibility, not a second pay total.
-            Unpaid only — a settled item belongs to paystub history, not this
-            "what's still owed" overview. */}
-        {(currentPeriodOutputItems.length > 0 || carriedOverOutputItems.length > 0) && (
-          <div className="mt-4 space-y-3">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark">Output-Based Items</div>
-                {isAdmin && submittedCountOf(currentPeriodOutputItems) > 0 && (
-                  <div className="text-[11px] font-semibold text-amber">
-                    Projected (pending review): {formatCurrency(submittedTotal(currentPeriodOutputItems))} across{" "}
-                    {submittedCountOf(currentPeriodOutputItems)}
-                  </div>
-                )}
+        {/* Row 4: Output-based summary + carry-over. The itemized list for
+            this period now lives inside each day in Daily Breakdown below,
+            sorted by submission time alongside that day's tasks — this is
+            just the aggregate, plus anything from before the period that has
+            no day here to attach to. Payable above stays time-log-only; this
+            is visibility, not a second pay total. Unpaid only — a settled
+            item belongs to paystub history, not this "what's still owed"
+            overview. */}
+        {(isAdmin && submittedCountOf(currentPeriodOutputItems) > 0) || carriedOverOutputItems.length > 0 ? (
+          <div className="mt-4 space-y-2">
+            {isAdmin && submittedCountOf(currentPeriodOutputItems) > 0 && (
+              <div className="text-[11px] font-semibold text-amber">
+                Projected (pending review): {formatCurrency(submittedTotal(currentPeriodOutputItems))} across{" "}
+                {submittedCountOf(currentPeriodOutputItems)} — see Daily Breakdown below
               </div>
-              {currentPeriodOutputItems.length > 0 ? (
-                <div className="space-y-1.5">
-                  {currentPeriodOutputItems.map((item) => (
-                    <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-[12px] text-stone">No output-based items touched in this period.</div>
-              )}
-            </div>
+            )}
 
             {carriedOverOutputItems.length > 0 && (
               <div>
@@ -1864,7 +1874,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
               </div>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Expandable Daily Breakdown / Task Log */}
@@ -1873,7 +1883,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
           {dailyBreakdown.length > 0 ? "Daily Breakdown" : `Task Log (${sortedLogs.length} entries)`}
         </div>
 
-        {sortedLogs.length === 0 ? (
+        {sortedLogs.length === 0 && dailyBreakdown.length === 0 ? (
           <div className="text-[13px] text-stone py-4">No tasks recorded in this period.</div>
         ) : dailyBreakdown.length > 0 ? (
           /* Multi-day: expandable date rows */
@@ -1929,6 +1939,14 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
                           <span className="w-1.5 h-1.5 rounded-full bg-amber" />{day.dayOnHold}
                         </span>
                       )}
+                      {day.outputItems.length > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-terracotta-soft px-2 py-[2px] text-[9px] font-semibold text-terracotta"
+                          title="Output-based items touched this day"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-terracotta" />{day.outputItems.length} output
+                        </span>
+                      )}
                       <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
                       <span className="text-[12px] font-bold text-espresso">{formatDuration(day.totalMs)}</span>
                       <span className="text-[10px] text-bark/70 flex items-center gap-1">
@@ -1942,10 +1960,24 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
                     </div>
                   </button>
 
-                  {/* Expanded: task list for this date */}
+                  {/* Expanded: task list for this date, output-based items
+                      alongside it — sorted by submission time among
+                      themselves, same as the time-log entries above them. */}
                   {isExpanded && (
-                    <div className="px-4 py-3 border-t border-sand bg-white">
+                    <div className="px-4 py-3 border-t border-sand bg-white space-y-3">
                       <TaskLogList logs={day.logs} showProgress timezone={timezone} />
+                      {day.outputItems.length > 0 && (
+                        <div>
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-1.5">
+                            Output-Based Items
+                          </div>
+                          <div className="space-y-1.5">
+                            {day.outputItems.map((item) => (
+                              <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1984,8 +2016,22 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
               </div>
             </button>
             {expandedDates.has("today") && (
-              <div className="px-4 py-3 border-t border-sand bg-white max-h-[400px] overflow-y-auto">
+              <div className="px-4 py-3 border-t border-sand bg-white max-h-[400px] overflow-y-auto space-y-3">
                 <TaskLogList logs={sortedLogs} showProgress timezone={timezone} />
+                {currentPeriodOutputItems.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-1.5">
+                      Output-Based Items
+                    </div>
+                    <div className="space-y-1.5">
+                      {[...currentPeriodOutputItems]
+                        .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime())
+                        .map((item) => (
+                          <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
