@@ -119,13 +119,16 @@ function formatCurrency(amount: number): string {
 
 /** One row in the Output-Based Items list — shared between the current-period
  *  and carried-over groups so the two never drift in how a row looks. */
-function OutputItemRow({ item, isAdmin }: { item: OutputItem; isAdmin: boolean }) {
+function OutputItemRow({ item, isAdmin, timezone }: { item: OutputItem; isAdmin: boolean; timezone?: string }) {
   return (
     <div className="flex items-center justify-between gap-2 rounded-lg bg-parchment/40 px-3 py-2">
       <div className="min-w-0 flex-1">
         <div className="text-[12px] font-semibold text-espresso truncate">{item.taskName}</div>
         {item.account && <div className="text-[10px] text-stone/80 truncate">{item.account}</div>}
       </div>
+      <span className="shrink-0 text-[10px] text-stone/80 w-16 text-right">
+        {formatDateShort(new Date(item.updatedAt), timezone)}
+      </span>
       <span
         className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
           OUTPUT_STATUS_BADGE[item.status] ?? "bg-stone/10 text-stone border-stone/20"
@@ -358,12 +361,20 @@ export default function TeamPage() {
       if (!row.va_id) return;
       const task = Array.isArray(row.assigned_tasks) ? row.assigned_tasks[0] : row.assigned_tasks;
       if (!task) return;
+      // assigned_task_assignees holds every kind of assigned task, not just
+      // output-based ones — a VA's ordinary time-tracked queue (ECC_Processing,
+      // Collaboration, whatever's pending/on_queue) lives in this same table.
+      // Only a row with a real fixed_pay_task_id link is actually output-based,
+      // priced, per-task work; anything else here isn't what this section is
+      // for and was showing up with no rate and no meaningful date as a result.
+      if (task.fixed_pay_task_id == null) return;
       const fixedPay = Array.isArray(task.fixed_pay_tasks) ? task.fixed_pay_tasks[0] : task.fixed_pay_tasks;
+      if (!fixedPay) return;
       // Already settled — this overview is "what's still owed," not a payment
       // history. The main gate is status != paid (in the query above); this
       // catches the other way an item stops being owed, someone paying it by
       // hand outside payroll entirely.
-      if (fixedPay?.paid_manually) return;
+      if (fixedPay.paid_manually) return;
       if (!outputItemLookup[row.va_id]) outputItemLookup[row.va_id] = [];
       outputItemLookup[row.va_id].push({
         id: row.id,
@@ -1802,7 +1813,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
               {currentPeriodOutputItems.length > 0 ? (
                 <div className="space-y-1.5">
                   {currentPeriodOutputItems.map((item) => (
-                    <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} />
+                    <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
                   ))}
                 </div>
               ) : (
@@ -1834,7 +1845,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, onForceLogou
                     </div>
                     <div className="space-y-1.5">
                       {carriedOverOutputItems.map((item) => (
-                        <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} />
+                        <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
                       ))}
                     </div>
                   </>
