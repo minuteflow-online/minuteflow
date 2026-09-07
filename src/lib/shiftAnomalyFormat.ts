@@ -23,6 +23,7 @@ const FINDING_TITLES: Record<ShiftAnomalyFinding["type"], string> = {
   billed_break: "Break billed as work",
   orphaned_clock_in: "Clock In left running",
   overlap: "Two tasks counted at once",
+  break_overlap: "Break didn't actually close",
 };
 
 /** Entries shown either side of a flagged one. */
