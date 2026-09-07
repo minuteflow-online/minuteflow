@@ -1318,9 +1318,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           // fixed_pay_tasks has a single assigned_to column rather than a
           // join table, so an output-based task takes the first pick.
           body.assigned_to = effectiveVaIds[0] || null;
-          body.assigned_by = assignedBy || null;
           if (!isEditing) body.status = initialStatus;
         }
+        // Assigned By (who actually handed the VA the work) is a VA-editable
+        // field on this mode, unlike Assign To — see VA_EDITABLE_FIELDS.
+        body.assigned_by = assignedBy || null;
         if (!isEditing) body.instructions_locked = instructionsLocked;
 
         const res = await fetch(
@@ -2116,16 +2118,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Assigned By</label>
-          {/* Output-based specifically: a VA's own edit never sends assigned_by
-              at all (see the save body below, gated to isAdminOrManager) — so
-              this dropdown looked editable but silently discarded any change
-              a VA made to it. Disabled here rather than left interactive with
-              no effect. Left untouched for time-based, which has its own,
-              different assigned_by rules server-side. */}
+          {/* Output-based: who actually handed the VA this work (e.g. Toni,
+              verbally) — separate from Assign To, which is admin-routed only.
+              A VA may set this on their own task, both on create and while
+              it's still in a VA-editable status (see VA_EDITABLE_FIELDS on
+              the server). */}
           <select
             value={assignedBy}
             onChange={(e) => setAssignedBy(e.target.value)}
-            disabled={readOnly || (mode === "output_based" && !isAdminOrManager)}
+            disabled={readOnly}
             className={inputClass}>
             {assignByOptions.map((m) => (
               <option key={m.id} value={m.id}>{m.full_name || m.username}</option>

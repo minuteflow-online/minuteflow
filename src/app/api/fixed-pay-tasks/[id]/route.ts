@@ -15,7 +15,10 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 // VA_EDITABLE_STATUSES state — once admin has moved it into review/payroll
 // (revision_needed/completed/cancelled/paid), the rate and details are
 // locked so a VA can't retroactively change what they're being paid for.
-const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date", "planned_minutes"]);
+// assigned_by is on this list (unlike assigned_to) because it's a record of
+// who actually handed the VA the work, not a claim/routing field — a VA
+// self-logging a task Toni assigned verbally needs to be able to say so.
+const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date", "planned_minutes", "assigned_by"]);
 const TASK_SELECT =
   "id, task_name, account, category, project, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, review_required, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
 
@@ -205,6 +208,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if ("due_date" in body) updates.due_date = normalizeDate(body.due_date);
       if ("end_date" in body) updates.end_date = normalizeDate(body.end_date);
       if ("planned_minutes" in body) updates.planned_minutes = normalizePlannedMinutes(body.planned_minutes);
+      if ("assigned_by" in body) updates.assigned_by = normalizeText(body.assigned_by);
     }
 
     const { data, error } = await admin

@@ -279,7 +279,11 @@ export async function POST(request: Request) {
       end_date: normalizeDate(body.end_date),
       planned_minutes: normalizePlannedMinutes(body.planned_minutes),
       assigned_to: isAdminOrManager ? normalizeText(body.assigned_to) : null,
-      assigned_by: isAdminOrManager ? normalizeText(body.assigned_by) : null,
+      // Unlike assigned_to (who does the work — admin-routed only), assigned_by
+      // is a record of who handed the VA the work, so an eligible VA creating
+      // their own task may set it too (e.g. logging a task Toni assigned
+      // verbally). Reaching this line already means isAdminOrManager || isEligibleVa.
+      assigned_by: normalizeText(body.assigned_by),
       is_active: isAdminOrManager ? body.is_active !== false : true,
       created_by: userId,
       claimed_by: autoClaim ? userId : null,
