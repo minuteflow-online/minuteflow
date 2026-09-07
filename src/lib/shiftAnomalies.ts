@@ -18,7 +18,7 @@ const ORPHAN_CLOCK_IN_MINUTES = 20;
 const OVERLAP_MINUTES = 2;
 
 export interface ShiftAnomalyFinding {
-  type: "billed_break" | "orphaned_clock_in" | "overlap";
+  type: "billed_break" | "orphaned_clock_in" | "overlap" | "break_overlap";
   logId: number;
   /** Every log the finding implicates — two of them for an overlap. */
   logIds: number[];
@@ -115,11 +115,26 @@ export async function checkShiftAnomalies(
     }
   }
 
+  const isOwnTime = (row: ShiftLogRow) => row.category === "Break" || row.category === "Personal";
+
   for (let i = 0; i < rows.length; i++) {
     for (let j = i + 1; j < rows.length; j++) {
       const a = rows[i];
       const b = rows[j];
-      if (!a.billable || !b.billable || !a.end_time || !b.end_time) continue;
+      if (!a.end_time || !b.end_time) continue;
+
+      // The August-review check only looked at two billable entries
+      // double-counting paid hours. A Break is never billable, so it was
+      // structurally invisible here — Break overlapping a real task never
+      // tripped this at all, which is exactly the shape of the 2026-09-04
+      // incident (Flordeliz): a break log stayed open for over an hour
+      // alongside the task resumed after it, and nothing caught it. One side
+      // being Break or Personal ("own time," which must never run alongside
+      // anything else) is now enough to flag on its own — it doesn't also
+      // need both sides billable the way a pure double-count does.
+      const bothBillable = a.billable && b.billable;
+      const ownTimeInvolved = isOwnTime(a) || isOwnTime(b);
+      if (!bothBillable && !ownTimeInvolved) continue;
 
       const aStart = new Date(a.start_time).getTime();
       const aEnd = new Date(a.end_time).getTime();
@@ -130,8 +145,9 @@ export async function checkShiftAnomalies(
       const overlapMinutes = (overlapEnd - overlapStart) / 60000;
 
       if (overlapMinutes > OVERLAP_MINUTES) {
+        const type = bothBillable ? "overlap" : "break_overlap";
         findings.push({
-          type: "overlap",
+          type,
           logId: b.id,
           logIds: [a.id, b.id],
           taskName: b.task_name,
@@ -142,7 +158,10 @@ export async function checkShiftAnomalies(
           windowStart: new Date(overlapStart).toISOString(),
           windowEnd: new Date(overlapEnd).toISOString(),
           minutes: overlapMinutes,
-          detail: `"${b.task_name}" (log ${b.id}) overlaps "${a.task_name}" (log ${a.id}) by ${overlapMinutes.toFixed(0)} min — possible double count`,
+          detail:
+            type === "overlap"
+              ? `"${b.task_name}" (log ${b.id}) overlaps "${a.task_name}" (log ${a.id}) by ${overlapMinutes.toFixed(0)} min — possible double count`
+              : `"${a.category === "Break" || a.category === "Personal" ? a.task_name : b.task_name}" (own time) overlaps "${a.category === "Break" || a.category === "Personal" ? b.task_name : a.task_name}" by ${overlapMinutes.toFixed(0)} min — one of them didn't actually close`,
         });
       }
     }
