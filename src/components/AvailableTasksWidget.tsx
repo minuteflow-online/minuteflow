@@ -236,24 +236,43 @@ export default function AvailableTasksWidget({
         if (assignedRes.ok) {
           const assignedJson = await assignedRes.json();
           const assignedRows = (assignedJson.tasks ?? []) as VAAssignedTask[];
-          // Only show fixed pay directly-assigned tasks here; hourly pending tasks appear in My Tasks
+          // Only the fixed-pay ones here — the hourly counterpart is fetched
+          // in the Time-based branch below, so each tab shows its own kind.
           setPendingAssigned(assignedRows.filter((row) => row.assigned_tasks?.fixed_pay_task_id != null));
         }
 
         setHourlyTasks([]);
       } else {
         setTasks([]);
-        setPendingAssigned([]);
 
-        const { data, error: hourlyError } = await supabase
-          .from("assigned_tasks")
-          .select("id, account, project, project_id, projects(name), task_name, task_detail, due_date, fixed_pay_task_id, status, archived_at, deleted_at, created_at, updated_at")
-          .eq("status", "unassigned")
-          .is("fixed_pay_task_id", null)
-          .is("deleted_at", null)
-          .is("archived_at", null)
-          .order("created_at", { ascending: false });
+        // A task assigned directly to you (created via "Add Subtask" or
+        // handed to you by an admin) starts life as "pending" — it doesn't
+        // show up in the Assigned Tasks widget above until it's accepted
+        // into on_queue. Without surfacing it here too, an hourly VA had no
+        // way to ever see or start it: this tab is the only place a
+        // fixed_pay_task_id-less pending task reaches a VA who can't see the
+        // Output Based tab.
+        const [assignedRes, poolResult] = await Promise.all([
+          fetch("/api/assigned-tasks?status=pending&selfOnly=true", { cache: "no-store" }),
+          supabase
+            .from("assigned_tasks")
+            .select("id, account, project, project_id, projects(name), task_name, task_detail, due_date, fixed_pay_task_id, status, archived_at, deleted_at, created_at, updated_at")
+            .eq("status", "unassigned")
+            .is("fixed_pay_task_id", null)
+            .is("deleted_at", null)
+            .is("archived_at", null)
+            .order("created_at", { ascending: false }),
+        ]);
 
+        if (assignedRes.ok) {
+          const assignedJson = await assignedRes.json();
+          const assignedRows = (assignedJson.tasks ?? []) as VAAssignedTask[];
+          setPendingAssigned(assignedRows.filter((row) => row.assigned_tasks?.fixed_pay_task_id == null));
+        } else {
+          setPendingAssigned([]);
+        }
+
+        const { data, error: hourlyError } = poolResult;
         if (hourlyError) throw new Error(hourlyError.message);
         setHourlyTasks((data ?? []) as unknown as AssignedTask[]);
       }
@@ -367,7 +386,7 @@ export default function AvailableTasksWidget({
   // already claimed by *other* VAs showing a Grab button. Gate on claimed_by
   // so a claimed task drops out of the pool for everyone.
   const openTasks = viewMode === "fixed_pay" && canSeeFixedPay ? tasks.filter((t) => !t.claimed_by) : [];
-  const totalCount = viewMode === "fixed_pay" ? pendingAssigned.length + openTasks.length : hourlyTasks.length;
+  const totalCount = pendingAssigned.length + (viewMode === "fixed_pay" ? openTasks.length : hourlyTasks.length);
 
   return (
     <div className={bare ? "space-y-2" : "rounded-xl border border-amber/30 bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto"}>
@@ -430,50 +449,15 @@ export default function AvailableTasksWidget({
         <p className="text-stone text-[11px] text-center py-3">Loading...</p>
       ) : totalCount === 0 ? (
         <p className="text-stone text-[11px] text-center py-3 italic">No available tasks right now.</p>
-      ) : viewMode === "hourly" ? (
-        <div className="space-y-1.5">
-          {hourlyTasks.map((task) => {
-            const isGrabbing = hourlyGrabbingId === task.id;
-            const due = formatDueDate(task.due_date, task.status);
-            const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
-
-            return (
-              <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
-                <div className="px-2.5 py-2 bg-parchment/20">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-bold text-espresso truncate">
-                      {cardTitle((task as { task_detail?: string | null }).task_detail, task.task_name)}
-                    </span>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
-                      {due.label === "—" ? "No due date" : `Due ${due.label}`}
-                    </span>
-                  </div>
-                  <CardMeta
-                    taskName={task.task_name}
-                    project={task.project}
-                    objective={objectiveName(task)}
-                    account={task.account}
-                  />
-                </div>
-
-                <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
-                  <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
-                  <button
-                    type="button"
-                    onClick={() => void handleHourlyGrab(task.id)}
-                    disabled={isGrabbing}
-                    className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isGrabbing ? "Grabbing..." : "Grab This Task"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       ) : (
         <div className="space-y-1.5">
-          {/* Pending assigned tasks (admin-assigned, awaiting acceptance) */}
+          {/* Pending assigned tasks (admin- or self-assigned, awaiting
+              acceptance) — hourly ones show here in the Time-based tab,
+              fixed-pay ones in Output Based; both use the same Accept flow.
+              Without this, a freshly-assigned or self-created task sat in
+              "pending" with no button anywhere: the Assigned Tasks widget
+              only shows on_queue/in_progress, so there was no way to ever
+              accept it and start the clock. */}
           {pendingAssigned.length > 0 && (
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Assigned to You</p>
           )}
@@ -549,86 +533,127 @@ export default function AvailableTasksWidget({
             );
           })}
 
-          {canSeeFixedPay && (
-            <>
-              {/* Fixed-pay tasks available to grab */}
-              {openTasks.length > 0 && (
-                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Output Based Tasks</p>
-              )}
-              {openTasks.map((task) => {
-                const isClaiming = claimingId === task.id;
-                const isExpanded = expandedIds.has(`fixed-${task.id}`);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const taskData = task as any;
-                return (
-                  <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
-                    <div className="px-2.5 py-2 bg-parchment/20">
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-xs font-bold text-espresso truncate">
-                          {cardTitle(taskData?.task_detail, task.task_name)}
-                        </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
-                            ${Number(task.rate).toFixed(2)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => toggleExpanded(`fixed-${task.id}`)}
-                            aria-expanded={isExpanded}
-                            className="inline-flex items-center gap-1 rounded-lg border border-sand bg-white px-2 py-1 text-[10px] font-semibold text-walnut hover:border-walnut transition-colors"
-                          >
-                            {isExpanded ? "Hide details" : "Details"}
-                            <svg
-                              className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                            >
-                              <path d="M6 9l6 6 6-6" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                      <CardMeta
-                        taskName={task.task_name}
-                        project={taskData?.project ?? task.category}
-                        objective={objectiveName(taskData)}
-                        account={task.account}
-                      />
-                    </div>
+          {viewMode === "hourly" ? (
+            hourlyTasks.map((task) => {
+              const isGrabbing = hourlyGrabbingId === task.id;
+              const due = formatDueDate(task.due_date, task.status);
+              const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
 
-                    {isExpanded && (
-                      <div className="px-2.5 py-2.5 bg-parchment/10 border-t border-sand/60">
-                        {renderDetails({
-                          taskDetail: taskData.task_detail,
-                          instructions: taskData.instructions,
-                          link: taskData.link,
-                          notes: taskData.task_notes,
-                        })}
-                      </div>
-                    )}
-
-                    <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
-                      <div className="text-[11px] text-stone">
-                        {task.claimed_at ? (
-                          <span>Claimed {formatClaimedAt(task.claimed_at)}</span>
-                        ) : (
-                          <span>Unclaimed</span>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => void handleClaim(task.id)}
-                        disabled={isClaiming}
-                        className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
-                      >
-                        {isClaiming ? "Claiming..." : "Grab This Task"}
-                      </button>
+              return (
+                <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
+                  <div className="px-2.5 py-2 bg-parchment/20">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-bold text-espresso truncate">
+                        {cardTitle((task as { task_detail?: string | null }).task_detail, task.task_name)}
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
+                        {due.label === "—" ? "No due date" : `Due ${due.label}`}
+                      </span>
                     </div>
+                    <CardMeta
+                      taskName={task.task_name}
+                      project={task.project}
+                      objective={objectiveName(task)}
+                      account={task.account}
+                    />
                   </div>
-                );
-              })}
-            </>
+
+                  <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
+                    <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
+                    <button
+                      type="button"
+                      onClick={() => void handleHourlyGrab(task.id)}
+                      disabled={isGrabbing}
+                      className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isGrabbing ? "Grabbing..." : "Grab This Task"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            canSeeFixedPay && (
+              <>
+                {/* Fixed-pay tasks available to grab */}
+                {openTasks.length > 0 && (
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Output Based Tasks</p>
+                )}
+                {openTasks.map((task) => {
+                  const isClaiming = claimingId === task.id;
+                  const isExpanded = expandedIds.has(`fixed-${task.id}`);
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const taskData = task as any;
+                  return (
+                    <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
+                      <div className="px-2.5 py-2 bg-parchment/20">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-xs font-bold text-espresso truncate">
+                            {cardTitle(taskData?.task_detail, task.task_name)}
+                          </span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
+                              ${Number(task.rate).toFixed(2)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(`fixed-${task.id}`)}
+                              aria-expanded={isExpanded}
+                              className="inline-flex items-center gap-1 rounded-lg border border-sand bg-white px-2 py-1 text-[10px] font-semibold text-walnut hover:border-walnut transition-colors"
+                            >
+                              {isExpanded ? "Hide details" : "Details"}
+                              <svg
+                                className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <path d="M6 9l6 6 6-6" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                        <CardMeta
+                          taskName={task.task_name}
+                          project={taskData?.project ?? task.category}
+                          objective={objectiveName(taskData)}
+                          account={task.account}
+                        />
+                      </div>
+
+                      {isExpanded && (
+                        <div className="px-2.5 py-2.5 bg-parchment/10 border-t border-sand/60">
+                          {renderDetails({
+                            taskDetail: taskData.task_detail,
+                            instructions: taskData.instructions,
+                            link: taskData.link,
+                            notes: taskData.task_notes,
+                          })}
+                        </div>
+                      )}
+
+                      <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
+                        <div className="text-[11px] text-stone">
+                          {task.claimed_at ? (
+                            <span>Claimed {formatClaimedAt(task.claimed_at)}</span>
+                          ) : (
+                            <span>Unclaimed</span>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => void handleClaim(task.id)}
+                          disabled={isClaiming}
+                          className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
+                        >
+                          {isClaiming ? "Claiming..." : "Grab This Task"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )
           )}
         </div>
       )}
