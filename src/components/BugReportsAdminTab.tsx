@@ -80,6 +80,14 @@ export default function BugReportsAdminTab({
   // Which report is mid-dismissal, and the reason being typed for it.
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [dismissReason, setDismissReason] = useState("");
+  // A status/archive change made from an open report's own panel must not pull
+  // that report out of the filtered list it's sitting in — the current filter
+  // is almost always "match my current status", so acting on a report is
+  // exactly what makes it stop matching. Losing the row unmounts its note
+  // composer along with any unsaved draft or attached screenshot. This keeps
+  // the report visible until you deliberately move on (change filters, or
+  // open a different report).
+  const [keepVisibleId, setKeepVisibleId] = useState<number | null>(null);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -177,12 +185,19 @@ export default function BugReportsAdminTab({
   );
   // The archive is a separate shelf: everything else is the working list, so a
   // status view never mixes archived reports back in.
-  const visible =
+  const baseVisible =
     statusFilter === "archived"
       ? scoped.filter((r) => r.archived_at)
       : scoped.filter(
           (r) => !r.archived_at && (statusFilter === "all" || r.status === statusFilter)
         );
+  // Pin the report just acted on back into view if the status/archive change
+  // pushed it out of the current filter — see keepVisibleId above.
+  const keptReport = keepVisibleId != null ? scoped.find((r) => r.id === keepVisibleId) : undefined;
+  const visible =
+    keptReport && !baseVisible.some((r) => r.id === keptReport.id)
+      ? [keptReport, ...baseVisible]
+      : baseVisible;
 
   // Clamped rather than reset through an effect: archiving the last report on
   // the final page shortens the list, and a stale page number would otherwise
@@ -215,7 +230,7 @@ export default function BugReportsAdminTab({
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={typeFilter}
-            onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); }}
+            onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); setKeepVisibleId(null); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">All types</option>
@@ -224,7 +239,7 @@ export default function BugReportsAdminTab({
           </select>
           <select
             value={reporterFilter}
-            onChange={(e) => { setReporterFilter(e.target.value); setPage(1); }}
+            onChange={(e) => { setReporterFilter(e.target.value); setPage(1); setKeepVisibleId(null); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">Everyone</option>
@@ -237,7 +252,7 @@ export default function BugReportsAdminTab({
           {allTags.length > 0 && (
             <select
               value={tagFilter}
-              onChange={(e) => { setTagFilter(e.target.value); setPage(1); }}
+              onChange={(e) => { setTagFilter(e.target.value); setPage(1); setKeepVisibleId(null); }}
               className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
             >
               <option value="all">All topics</option>
@@ -252,7 +267,7 @@ export default function BugReportsAdminTab({
               reporter selects wrapped onto a second row at normal widths. */}
           <select
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value as StatusChoice); setPage(1); }}
+            onChange={(e) => { setStatusFilter(e.target.value as StatusChoice); setPage(1); setKeepVisibleId(null); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">All statuses ({countFor("all")})</option>
@@ -291,7 +306,7 @@ export default function BugReportsAdminTab({
               return (
                 <div key={report.id} className="rounded-lg border border-sand bg-white">
                   <button
-                    onClick={() => setExpandedId(isOpen ? null : report.id)}
+                    onClick={() => { setExpandedId(isOpen ? null : report.id); setKeepVisibleId(null); }}
                     className="flex w-full flex-wrap items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-cream"
                   >
                     <span
@@ -392,6 +407,7 @@ export default function BugReportsAdminTab({
                             key={status}
                             disabled={updating[report.id] || report.status === status}
                             onClick={() => {
+                              setKeepVisibleId(report.id);
                               if (status === "dismissed") {
                                 setDismissReason("");
                                 setDismissingId(report.id);
@@ -411,7 +427,7 @@ export default function BugReportsAdminTab({
 
                         <button
                           disabled={updating[report.id]}
-                          onClick={() => setArchived(report.id, !report.archived_at)}
+                          onClick={() => { setKeepVisibleId(report.id); setArchived(report.id, !report.archived_at); }}
                           className="ml-auto rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
                         >
                           {report.archived_at ? "Restore" : "Archive"}
