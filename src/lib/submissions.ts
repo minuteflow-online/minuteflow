@@ -169,6 +169,19 @@ export function submissionSummary({
   return "Submitted";
 }
 
+/**
+ * A submission's link field, split into its individual URLs. The column
+ * itself is a single text field — this is what lets it hold several links
+ * (one per line) without a schema change, the same way a textarea full of
+ * pasted lines already worked before anything read it as more than one URL.
+ */
+export function splitSubmissionLinks(raw: string | null | undefined): string[] {
+  return (raw ?? "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** Fetches the full thread for one assigned task, oldest first. */
 export async function fetchSubmissions(assignedTaskId: number): Promise<TaskSubmission[]> {
   try {

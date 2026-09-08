@@ -601,6 +601,54 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
+  // Drag-and-drop and paste onto the form, both routed through the same
+  // handleFilesPicked() the "Attach File" button uses. Enter/leave are
+  // counted rather than a plain boolean — dragging over a child element
+  // fires leave-then-enter on the parent first, which would otherwise
+  // flicker the highlight off mid-drag.
+  const [dragActive, setDragActive] = useState(false);
+  const dragCounter = useRef(0);
+  const handleFormDragEnter = useCallback((e: React.DragEvent) => {
+    if (readOnly) return;
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragActive(true);
+  }, [readOnly]);
+  const handleFormDragLeave = useCallback((e: React.DragEvent) => {
+    if (readOnly) return;
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragActive(false);
+    }
+  }, [readOnly]);
+  const handleFormDragOver = useCallback((e: React.DragEvent) => {
+    if (readOnly) return;
+    e.preventDefault();
+  }, [readOnly]);
+  const handleFormDrop = useCallback((e: React.DragEvent) => {
+    if (readOnly) return;
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragActive(false);
+    void handleFilesPicked(Array.from(e.dataTransfer.files ?? []));
+  }, [readOnly, handleFilesPicked]);
+  // Only intercepted when the clipboard actually carries a file — pasting
+  // text into Task Name, Client Detail, etc. is left alone.
+  const handleFormPaste = useCallback((e: React.ClipboardEvent) => {
+    if (readOnly) return;
+    const fromFiles = Array.from(e.clipboardData?.files ?? []);
+    const fromItems = Array.from(e.clipboardData?.items ?? [])
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    const picked = fromFiles.length > 0 ? fromFiles : fromItems;
+    if (picked.length === 0) return;
+    e.preventDefault();
+    void handleFilesPicked(picked);
+  }, [readOnly, handleFilesPicked]);
+
   // Accordion behavior for the Basics/Details/Attachments/Assignment/Rate/
   // Schedule/Screenshots Sections below — opening one closes whichever was
   // open, so only one is expanded at a time. Keyed by a stable id passed
@@ -1696,7 +1744,19 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const assignByOptions = teamMembers;
 
   return (
-    <div className="space-y-3">
+    <div
+      onDragEnter={handleFormDragEnter}
+      onDragLeave={handleFormDragLeave}
+      onDragOver={handleFormDragOver}
+      onDrop={handleFormDrop}
+      onPaste={handleFormPaste}
+      className={`relative space-y-3 rounded-xl transition-colors ${dragActive ? "ring-2 ring-terracotta" : ""}`}
+    >
+      {dragActive && (
+        <div className="pointer-events-none sticky top-0 z-20 -mb-3 flex items-center justify-center rounded-lg border-2 border-dashed border-terracotta bg-terracotta-soft/60 py-2">
+          <p className="text-[12px] font-semibold text-terracotta">Drop to attach to this task</p>
+        </div>
+      )}
       <Section title="Basics" {...accordionProps("basics")} warning={missingBasics}>
         <div>
           <label className={labelClass}>Account</label>
@@ -1992,6 +2052,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               }}
             />
           </div>
+          {!readOnly && (
+            <p className="mb-2 text-[10px] text-stone/70">or drag files anywhere onto this form, or paste (Ctrl/Cmd+V)</p>
+          )}
 
           {attachmentsLoading ? (
             <p className="text-[12px] text-stone">Loading...</p>

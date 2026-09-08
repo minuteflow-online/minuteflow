@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
 import { notifyOne } from "@/lib/notifyOne";
 import { esc } from "@/lib/telegram";
+import { fetchAttachmentsByTargets } from "@/lib/messageAttachments";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   const { data, error } = await admin
     .from("direct_messages")
-    .select("id, sender_id, body, created_at")
+    .select("id, sender_id, body, created_at, edited_at")
     .eq("conversation_id", id)
     .order("created_at", { ascending: true })
     .limit(500);
@@ -50,13 +51,21 @@ export async function GET(_request: Request, { params }: RouteContext) {
   // Mark read.
   await admin.from("conversation_members").update({ last_read_at: new Date().toISOString() }).eq("conversation_id", id).eq("user_id", user.id);
 
+  const attachmentsByDm = await fetchAttachmentsByTargets(
+    admin,
+    "direct_message",
+    (data ?? []).map((m) => m.id as number)
+  );
+
   const messages = (data ?? []).map((m) => ({
     id: m.id as number,
     body: m.body as string,
     created_at: m.created_at as string,
+    edited_at: (m.edited_at as string | null) ?? null,
     sender_id: m.sender_id as string,
     mine: m.sender_id === user.id,
     sender_name: nameById.get(m.sender_id as string)?.name ?? "?",
+    attachments: attachmentsByDm.get(String(m.id)) ?? [],
   }));
   return Response.json({ messages });
 }
@@ -104,5 +113,46 @@ export async function POST(request: Request, { params }: RouteContext) {
     });
   }
 
-  return Response.json({ message: { id: msg.id, body, created_at: msg.created_at, mine: true, sender_id: user.id, sender_name: senderName } }, { status: 201 });
+  return Response.json({ message: { id: msg.id, body, created_at: msg.created_at, edited_at: null, mine: true, sender_id: user.id, sender_name: senderName } }, { status: 201 });
+}
+
+/**
+ * PATCH /api/conversations/[id]/messages?messageId=<id>
+ * body: { body }
+ * Sender-only, same as editing a comment — a DM has no admin-moderation
+ * concept, it's just the two (or group's) own words.
+ */
+export async function PATCH(request: Request, { params }: RouteContext) {
+  const { id } = await params;
+  const auth = await requireMember(id);
+  if ("error" in auth) return auth.error;
+  const { user, admin } = auth;
+
+  const { searchParams } = new URL(request.url);
+  const messageId = searchParams.get("messageId");
+  if (!messageId) return Response.json({ error: "messageId is required" }, { status: 400 });
+
+  const b = (await request.json()) as { body?: string };
+  const body = typeof b.body === "string" ? b.body.trim() : "";
+  if (!body) return Response.json({ error: "Message can't be empty" }, { status: 400 });
+
+  const { data: existing } = await admin
+    .from("direct_messages")
+    .select("sender_id")
+    .eq("id", messageId)
+    .eq("conversation_id", id)
+    .maybeSingle();
+  if (!existing) return Response.json({ error: "Message not found" }, { status: 404 });
+  if (existing.sender_id !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
+
+  const { data, error } = await admin
+    .from("direct_messages")
+    // Stamped so the other person can tell the words changed after the fact
+    // — same reasoning as project_message_comments' edited_at.
+    .update({ body, edited_at: new Date().toISOString() })
+    .eq("id", messageId)
+    .select("id, body, created_at, edited_at")
+    .single();
+  if (error) return Response.json({ error: error.message }, { status: 400 });
+  return Response.json({ message: data });
 }

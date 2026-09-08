@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { canAccessProject, serviceClient } from "@/lib/projectAccess";
 import { notifyMentions } from "@/lib/notifyMentions";
+import { fetchAttachmentsByTargets } from "@/lib/messageAttachments";
 
 export const dynamic = "force-dynamic";
 
@@ -58,11 +59,30 @@ export async function GET(request: Request) {
 
   // Drop soft-deleted comments and sort each post's thread oldest-first,
   // without a second round trip.
-  const messages = (data ?? []).map((m) => ({
+  const withSortedComments = (data ?? []).map((m) => ({
     ...m,
     project_message_comments: (m.project_message_comments ?? [])
       .slice()
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+  }));
+
+  // Attachments, batched in two queries (one per target type) rather than
+  // one per topic/comment — a board with fifty threads would otherwise be
+  // fifty extra round trips.
+  const messageIds = withSortedComments.map((m) => m.id);
+  const commentIds = withSortedComments.flatMap((m) => m.project_message_comments.map((c) => c.id));
+  const [attachmentsByMessage, attachmentsByComment] = await Promise.all([
+    fetchAttachmentsByTargets(supabase, "project_message", messageIds),
+    fetchAttachmentsByTargets(supabase, "project_message_comment", commentIds),
+  ]);
+
+  const messages = withSortedComments.map((m) => ({
+    ...m,
+    attachments: attachmentsByMessage.get(String(m.id)) ?? [],
+    project_message_comments: m.project_message_comments.map((c) => ({
+      ...c,
+      attachments: attachmentsByComment.get(String(c.id)) ?? [],
+    })),
   }));
 
   return Response.json({ messages });

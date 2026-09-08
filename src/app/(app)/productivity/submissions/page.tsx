@@ -6,10 +6,12 @@ import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import {
   SUBMISSION_TYPE_BADGE,
   SUBMISSION_TYPE_LABELS,
+  splitSubmissionLinks,
   type SubmissionMessageType,
   type SubmissionScopeFilter,
   type TaskSubmissionAttachment,
 } from "@/lib/submissions";
+import { linkifyText } from "@/lib/linkify";
 import RevisionBadge from "@/components/RevisionBadge";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
@@ -1704,19 +1706,24 @@ function SubmissionEntry({
           full height one entry pushes every other submission off the screen. */}
       {item.submission_comment && (
         <p className="mt-1.5 max-h-44 overflow-y-auto whitespace-pre-wrap pr-1 text-[12px] leading-snug text-espresso">
-          {item.submission_comment}
+          {linkifyText(item.submission_comment)}
         </p>
       )}
 
       {item.submission_link && (
-        <a
-          href={item.submission_link}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-1 block truncate text-[12px] text-terracotta hover:underline"
-        >
-          {item.submission_link}
-        </a>
+        <div className="mt-1 space-y-0.5">
+          {splitSubmissionLinks(item.submission_link).map((url) => (
+            <a
+              key={url}
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate text-[12px] text-terracotta hover:underline"
+            >
+              {url}
+            </a>
+          ))}
+        </div>
       )}
 
       {item.attachments.length > 0 && (() => {
