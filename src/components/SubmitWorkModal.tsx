@@ -79,6 +79,15 @@ export default function SubmitWorkModal({
     : Boolean(message.trim() || link.trim() || files.length > 0);
   const allChecked = !needsEvidence || CHECKLIST.every((c) => checked.has(c.key));
   const canSubmit = hasContent && allChecked;
+  // Dragging over the modal, so the "Drop to attach" cue can show while the
+  // pointer is anywhere over it — not just over the file-picker button.
+  const [dragActive, setDragActive] = useState(false);
+  const dragCounter = useRef(0);
+
+  const appendFiles = (picked: File[]) => {
+    if (picked.length === 0) return;
+    setFiles((prev) => [...prev, ...picked]);
+  };
 
   const addFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -87,12 +96,54 @@ export default function SubmitWorkModal({
     // same file can be re-picked), which empties that FileList. A deferred
     // Array.from() would copy zero files and the attachment would vanish with
     // no error anywhere.
-    const picked = Array.from(list);
-    setFiles((prev) => [...prev, ...picked]);
+    appendFiles(Array.from(list));
   };
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Files dropped anywhere on the modal. Counted enter/leave rather than a
+  // plain boolean — dragging over a child element fires leave-then-enter on
+  // the parent, which would otherwise flicker the highlight off mid-drag.
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragActive(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragActive(false);
+    }
+  };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragActive(false);
+    if (saving) return;
+    appendFiles(Array.from(e.dataTransfer.files ?? []));
+  };
+
+  // Pasted files (a screenshot copied to the clipboard, most often). Only
+  // intercepted when the clipboard actually carries a file — a plain text
+  // paste into the message or link box is left alone.
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (saving) return;
+    const fromFiles = Array.from(e.clipboardData?.files ?? []);
+    const fromItems = Array.from(e.clipboardData?.items ?? [])
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    const picked = fromFiles.length > 0 ? fromFiles : fromItems;
+    if (picked.length === 0) return;
+    e.preventDefault();
+    appendFiles(picked);
   };
 
   const handleSubmit = async () => {
@@ -194,7 +245,21 @@ export default function SubmitWorkModal({
         if (e.target === e.currentTarget && !saving) onClose();
       }}
     >
-      <div className="mx-4 max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-sand bg-white shadow-xl">
+      <div
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        onPaste={handlePaste}
+        className={`relative mx-4 max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border bg-white shadow-xl transition-colors ${
+          dragActive ? "border-terracotta" : "border-sand"
+        }`}
+      >
+        {dragActive && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-terracotta bg-terracotta-soft/40">
+            <p className="text-[12px] font-semibold text-terracotta">Drop to attach</p>
+          </div>
+        )}
         <div className="flex items-start justify-between border-b border-sand px-4 py-3">
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wide text-espresso">
@@ -225,6 +290,7 @@ export default function SubmitWorkModal({
               }}
               className="block w-full text-[11px] text-stone file:mr-2 file:rounded-lg file:border-0 file:bg-parchment file:px-3 file:py-1 file:text-[11px] file:font-semibold file:text-espresso hover:file:bg-sand"
             />
+            <p className="mt-1 text-[10px] text-stone/70">or drag files onto this window, or paste (Ctrl/Cmd+V)</p>
             {files.length > 0 && (
               <div className="mt-2 space-y-1">
                 {files.map((file, i) => (
@@ -260,12 +326,13 @@ export default function SubmitWorkModal({
 
           <div>
             <label className={labelClass}>Link</label>
-            <input
+            <textarea
               value={link}
               onChange={(e) => setLink(e.target.value)}
               disabled={saving}
-              placeholder="https://..."
-              className={inputClass}
+              rows={link.includes("\n") ? 3 : 1}
+              placeholder="https://... (one per line for more than one)"
+              className={`${inputClass} resize-none`}
             />
           </div>
 

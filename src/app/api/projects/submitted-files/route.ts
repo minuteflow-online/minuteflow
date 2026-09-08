@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { splitSubmissionLinks } from "@/lib/submissions";
 
 export const dynamic = "force-dynamic";
 
@@ -56,13 +57,17 @@ export async function GET(request: Request) {
   type Item = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string };
   const items: Item[] = [];
 
-  // Pasted links count as submitted docs too.
+  // Pasted links count as submitted docs too — a submission can carry more
+  // than one (stored one per line in the same field), so each becomes its
+  // own entry rather than one entry whose filename is several URLs at once.
   for (const s of subs ?? []) {
-    const link = (s.submission_link as string | null) ?? null;
-    if (!link) continue;
+    const links = splitSubmissionLinks(s.submission_link as string | null);
+    if (links.length === 0) continue;
     const pid = taskProject.get(s.assigned_task_id as number);
     if (!pid) continue;
-    items.push({ id: `link-${s.id}`, project_id: pid, filename: link, uploaded_at: s.created_at as string, href: link });
+    links.forEach((link, i) => {
+      items.push({ id: `link-${s.id}-${i}`, project_id: pid, filename: link, uploaded_at: s.created_at as string, href: link });
+    });
   }
 
   // 3. Attachments tied to those submissions.

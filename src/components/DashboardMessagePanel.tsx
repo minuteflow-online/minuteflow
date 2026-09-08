@@ -7,19 +7,288 @@
 //  • Comments — the in-app notification feed (the `messages` table the bell reads):
 //               submission comments, @mentions, job orders, and new DMs.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getInitials, getAvatarColor } from "@/lib/utils";
 
 type Project = { id: string; name: string };
-type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null; edited_at?: string | null };
-type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null };
+// Kept local rather than imported from src/lib/messageAttachments — that file
+// also drags in the service-role Supabase client, which has no business in a
+// browser bundle. The three values just have to match what the API sends.
+type AttachmentTargetType = "project_message" | "project_message_comment" | "direct_message";
+type Attachment = {
+  id: string;
+  kind: "file" | "link";
+  filename: string | null;
+  file_size: number | null;
+  mime_type: string | null;
+  url: string | null;
+  signedUrl: string | null;
+};
+type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
+type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
 type Notif = { id: number; content: string; read: boolean; created_at: string; kind?: string | null };
 type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
 type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string };
-type DM = { id: number; body: string; created_at: string; mine: boolean; sender_name: string; sender_id?: string | null };
+type DM = { id: number; body: string; created_at: string; edited_at?: string | null; mine: boolean; sender_name: string; sender_id?: string | null; attachments?: Attachment[] };
 
 type Tab = "general" | "personal" | "comments";
+
+const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
+// A URL glued straight into the sentence ("check this out: https://x.com/y.")
+// tends to drag trailing punctuation along with it — split that back off so
+// the link itself doesn't end in a period, comma, or closing bracket that was
+// never part of it.
+const URL_TRAILING_PUNCTUATION = /[.,!?;:)\]"']+$/;
+
+/** Turns any bare https:// URL sitting inside typed text into a real link — for the message someone just types, as opposed to the dedicated Link field. */
+function linkifyText(text: string): ReactNode {
+  const parts = text.split(URL_PATTERN);
+  return parts.map((part, i) => {
+    if (i % 2 === 0) return part;
+    const trailingMatch = part.match(URL_TRAILING_PUNCTUATION);
+    const trailing = trailingMatch ? trailingMatch[0] : "";
+    const url = trailing ? part.slice(0, -trailing.length) : part;
+    return (
+      <span key={i}>
+        <a href={url} target="_blank" rel="noreferrer" className="text-slate-blue underline hover:no-underline break-all">
+          {url}
+        </a>
+        {trailing}
+      </span>
+    );
+  });
+}
+
+function formatBytes(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Files and links already attached to a topic, reply, or DM. An image shows itself rather than a filename chip — a pasted screenshot is the point, not "Screenshot 2026-09-08.png". */
+function AttachmentList({ attachments }: { attachments?: Attachment[] }) {
+  const list = attachments ?? [];
+  if (list.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1.5">
+      {list.map((a) => {
+        if (a.kind === "file" && a.mime_type?.startsWith("image/") && a.signedUrl) {
+          return (
+            <a key={a.id} href={a.signedUrl} target="_blank" rel="noreferrer" className="block">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={a.signedUrl}
+                alt={a.filename ?? "Attached image"}
+                className="max-h-40 max-w-full rounded-lg border border-sand object-cover"
+              />
+            </a>
+          );
+        }
+        return a.kind === "link" ? (
+          <a
+            key={a.id}
+            href={a.url ?? "#"}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-blue/30 bg-slate-blue-soft px-2 py-[2px] text-[10px] font-semibold text-slate-blue hover:underline"
+          >
+            <span className="truncate">🔗 {a.url}</span>
+          </a>
+        ) : (
+          <a
+            key={a.id}
+            href={a.signedUrl ?? "#"}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex max-w-full items-center gap-1 rounded-full border border-sand bg-white px-2 py-[2px] text-[10px] font-semibold text-espresso hover:bg-cream"
+          >
+            <span className="truncate">📎 {a.filename}</span>
+            {a.file_size != null && <span className="shrink-0 text-stone">{formatBytes(a.file_size)}</span>}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Files (paste, drag, or the button) and a link, held locally until the
+ * topic/reply/DM they belong to actually exists — same reasoning TaskEditor
+ * uses for attaching to a task that isn't saved yet: there's no id to attach
+ * to before the parent row is created.
+ */
+function useAttachmentComposer() {
+  const [files, setFiles] = useState<File[]>([]);
+  const [link, setLink] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const dragCounter = useRef(0);
+
+  const addFiles = useCallback((picked: File[]) => {
+    if (picked.length === 0) return;
+    setFiles((prev) => [...prev, ...picked]);
+  }, []);
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+  const reset = useCallback(() => {
+    setFiles([]);
+    setLink("");
+  }, []);
+
+  // Enter/leave are counted rather than a plain boolean — dragging over a
+  // child element fires leave-then-enter on the parent first, which would
+  // otherwise flicker the highlight off mid-drag.
+  const onDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragActive(true);
+  }, []);
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragActive(false);
+    }
+  }, []);
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setDragActive(false);
+      addFiles(Array.from(e.dataTransfer.files ?? []));
+    },
+    [addFiles]
+  );
+  // Only intercepted when the clipboard actually carries a file — pasting
+  // text into the message box is left alone.
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const fromFiles = Array.from(e.clipboardData?.files ?? []);
+      const fromItems = Array.from(e.clipboardData?.items ?? [])
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((f): f is File => f !== null);
+      const picked = fromFiles.length > 0 ? fromFiles : fromItems;
+      if (picked.length === 0) return;
+      e.preventDefault();
+      addFiles(picked);
+    },
+    [addFiles]
+  );
+
+  /**
+   * Uploads every pending file and the link (if any) against a now-real
+   * target. Best-effort per item — the topic/reply/DM itself already saved,
+   * so one attachment failing shouldn't look like the whole post failed.
+   */
+  const flush = useCallback(
+    async (targetType: AttachmentTargetType, targetId: string | number) => {
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("targetType", targetType);
+        form.append("targetId", String(targetId));
+        await fetch("/api/message-attachments", { method: "POST", body: form }).catch(() => {});
+      }
+      if (link.trim()) {
+        await fetch("/api/message-attachments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetType, targetId: String(targetId), kind: "link", url: link.trim() }),
+        }).catch(() => {});
+      }
+      reset();
+    },
+    [files, link, reset]
+  );
+
+  // A link or a file is content on its own — the boss's whole ask was that
+  // pasting/dropping/attaching should work as a way to send something, not
+  // just as a decoration on text you were already going to type.
+  const hasAttachment = files.length > 0 || link.trim().length > 0;
+  const fallbackBody = useMemo(() => {
+    if (files.length > 0 && link.trim()) return "📎 Sent an attachment and a link";
+    if (files.length > 0) return files.length === 1 ? "📎 Sent an attachment" : `📎 Sent ${files.length} attachments`;
+    if (link.trim()) return "🔗 Shared a link";
+    return "";
+  }, [files, link]);
+
+  return { files, link, setLink, dragActive, hasAttachment, fallbackBody, addFiles, removeFile, reset, flush, onDragEnter, onDragLeave, onDragOver, onDrop, onPaste };
+}
+
+/** The attach button, drop zone, link field, and pending-file list for one composer. */
+function AttachmentPicker({
+  composer,
+  disabled,
+}: {
+  composer: ReturnType<typeof useAttachmentComposer>;
+  disabled?: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div
+      onDragEnter={composer.onDragEnter}
+      onDragLeave={composer.onDragLeave}
+      onDragOver={composer.onDragOver}
+      onDrop={composer.onDrop}
+      onPaste={composer.onPaste}
+      className={`space-y-1.5 rounded-lg border p-1.5 transition-colors ${
+        composer.dragActive ? "border-terracotta bg-terracotta-soft/20" : "border-dashed border-sand"
+      }`}
+    >
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={disabled}
+          className="shrink-0 px-2 py-0.5 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20 disabled:opacity-50"
+        >
+          + Attach
+        </button>
+        <span className="truncate text-[10px] text-stone/70">or drag / paste files here</span>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            composer.addFiles(Array.from(e.target.files ?? []));
+            e.target.value = "";
+          }}
+        />
+      </div>
+      <input
+        value={composer.link}
+        onChange={(e) => composer.setLink(e.target.value)}
+        disabled={disabled}
+        placeholder="Add a link (https://...)"
+        className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+      />
+      {composer.files.length > 0 && (
+        <div className="space-y-1">
+          {composer.files.map((f, i) => (
+            <div key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-0.5">
+              <span className="truncate text-[11px] text-espresso">{f.name}</span>
+              <button
+                type="button"
+                onClick={() => composer.removeFile(i)}
+                className="shrink-0 text-[10px] font-semibold text-terracotta hover:underline"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ago(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -83,6 +352,9 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [composingTopic, setComposingTopic] = useState(false);
   const [topicTitle, setTopicTitle] = useState("");
   const [topicBody, setTopicBody] = useState("");
+  const topicComposer = useAttachmentComposer();
+  const replyComposer = useAttachmentComposer();
+  const dmComposer = useAttachmentComposer();
   const [busyThread, setBusyThread] = useState<number | null>(null);
   // Trashed topics are hidden from everyone; an admin can read them back here
   // and put one returned. The endpoint answers with isAdmin so the Trash option
@@ -97,6 +369,11 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   // quietly rewritten.
   const [editingComment, setEditingComment] = useState<number | null>(null);
   const [editCommentText, setEditCommentText] = useState("");
+  // Same idea, for the topic's own title/body — the PATCH route and the
+  // edited_at label already existed for this; there was just no button.
+  const [editingTopic, setEditingTopic] = useState(false);
+  const [editTopicTitle, setEditTopicTitle] = useState("");
+  const [editTopicBody, setEditTopicBody] = useState("");
   // Typing "@" opens a name list; picking one completes the mention. Keyed by
   // which box is being typed in, so the reply box and the topic body can each
   // have their own picker without sharing state.
@@ -120,6 +397,9 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   const [groupTitle, setGroupTitle] = useState("");
   const [sending, setSending] = useState(false);
   const dmEndRef = useRef<HTMLDivElement>(null);
+  // Editing one of your own DMs in place — same shape as editing a comment.
+  const [editingDm, setEditingDm] = useState<number | null>(null);
+  const [editDmText, setEditDmText] = useState("");
 
   useEffect(() => {
     try {
@@ -214,6 +494,26 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
     [editCommentText]
   );
 
+  const saveTopicEdit = useCallback(async () => {
+    if (!activeThread) return;
+    const title = editTopicTitle.trim();
+    const body = editTopicBody.trim();
+    if (!title || !body) return;
+    const r = await fetch(`/api/project-messages?id=${activeThread.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body }),
+    });
+    if (r.ok) {
+      const d = await r.json().catch(() => ({}));
+      setEditingTopic(false);
+      setActiveThread((a) =>
+        a ? { ...a, title: d.message?.title ?? title, body: d.message?.body ?? body, edited_at: d.message?.edited_at ?? new Date().toISOString() } : a
+      );
+      setReloadKey((k) => k + 1);
+    }
+  }, [activeThread, editTopicTitle, editTopicBody]);
+
   const setThreadArchived = useCallback(async (t: Thread, next: boolean) => {
     setBusyThread(t.id);
     try {
@@ -291,15 +591,17 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   }, [team, mentionQuery]);
 
   const createTopic = useCallback(async () => {
-    if (!topicTitle.trim() || !topicBody.trim()) return;
+    if (!topicTitle.trim() || (!topicBody.trim() && !topicComposer.hasAttachment)) return;
     setSending(true);
     try {
       const r = await fetch("/api/project-messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: topicTitle.trim(), body: topicBody.trim() }),
+        body: JSON.stringify({ title: topicTitle.trim(), body: topicBody.trim() || topicComposer.fallbackBody }),
       });
       if (r.ok) {
+        const d = await r.json().catch(() => ({}));
+        if (d.message?.id) await topicComposer.flush("project_message", d.message.id);
         setComposingTopic(false);
         setTopicTitle("");
         setTopicBody("");
@@ -308,7 +610,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
     } finally {
       setSending(false);
     }
-  }, [topicTitle, topicBody]);
+  }, [topicTitle, topicBody, topicComposer]);
 
   // Soft delete: the route stamps deleted_at, so the topic leaves every list
   // without the replies underneath it being destroyed. Author or admin only,
@@ -427,13 +729,46 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   }, [tab, activeConv]);
 
   const sendDm = useCallback(async () => {
-    if (!activeConv || !dmText.trim()) return;
+    if (!activeConv || (!dmText.trim() && !dmComposer.hasAttachment)) return;
     setSending(true);
     try {
-      const r = await fetch(`/api/conversations/${activeConv.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: dmText.trim() }) });
-      if (r.ok) { const d = await r.json(); setDms((prev) => [...prev, d.message]); setDmText(""); void loadConvs(); setTimeout(() => dmEndRef.current?.scrollIntoView({ block: "end" }), 50); }
+      const r = await fetch(`/api/conversations/${activeConv.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: dmText.trim() || dmComposer.fallbackBody }) });
+      if (r.ok) {
+        const d = await r.json();
+        setDms((prev) => [...prev, d.message]);
+        setDmText("");
+        if (d.message?.id) {
+          await dmComposer.flush("direct_message", d.message.id);
+          // Attachments just landed after the optimistic append above, which
+          // has none — refetch this one conversation so they show without
+          // waiting for the 8s poll.
+          const refreshed = await fetch(`/api/conversations/${activeConv.id}/messages`, { cache: "no-store" }).then((res) => res.json()).catch(() => ({}));
+          if (refreshed.messages) setDms(refreshed.messages);
+        }
+        void loadConvs();
+        setTimeout(() => dmEndRef.current?.scrollIntoView({ block: "end" }), 50);
+      }
     } finally { setSending(false); }
-  }, [activeConv, dmText, loadConvs]);
+  }, [activeConv, dmText, loadConvs, dmComposer]);
+
+  const saveDmEdit = useCallback(async (messageId: number) => {
+    if (!activeConv) return;
+    const text = editDmText.trim();
+    if (!text) return;
+    const r = await fetch(`/api/conversations/${activeConv.id}/messages?messageId=${messageId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: text }),
+    });
+    if (r.ok) {
+      const d = await r.json().catch(() => ({}));
+      setDms((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, body: d.message?.body ?? text, edited_at: d.message?.edited_at ?? new Date().toISOString() } : m))
+      );
+      setEditingDm(null);
+      setEditDmText("");
+    }
+  }, [activeConv, editDmText]);
 
   const startChat = useCallback(async () => {
     const ids = Array.from(picked);
@@ -452,10 +787,16 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   }, [picked, groupTitle, loadConvs, openConv]);
 
   const submitReply = useCallback(async () => {
-    if (!activeThread || !reply.trim()) return;
-    const r = await fetch(`/api/project-messages/${activeThread.id}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: reply.trim() }) });
-    if (r.ok) { const d = await r.json().catch(() => ({})); setReply(""); if (d.comment) setActiveThread((a) => a ? { ...a, comments: [...(a.comments ?? []), { id: d.comment.id, body: d.comment.body, created_at: d.comment.created_at }] } : a); setReloadKey((k) => k + 1); }
-  }, [activeThread, reply]);
+    if (!activeThread || (!reply.trim() && !replyComposer.hasAttachment)) return;
+    const r = await fetch(`/api/project-messages/${activeThread.id}/comments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: reply.trim() || replyComposer.fallbackBody }) });
+    if (r.ok) {
+      const d = await r.json().catch(() => ({}));
+      setReply("");
+      if (d.comment?.id) await replyComposer.flush("project_message_comment", d.comment.id);
+      if (d.comment) setActiveThread((a) => a ? { ...a, comments: [...(a.comments ?? []), { id: d.comment.id, body: d.comment.body, created_at: d.comment.created_at }] } : a);
+      setReloadKey((k) => k + 1);
+    }
+  }, [activeThread, reply, replyComposer]);
 
   const input = "w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white";
   const unreadTotal = convs.reduce((n, c) => n + c.unread, 0);
@@ -537,6 +878,19 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
               <div className="flex items-center justify-between">
                 <button type="button" onClick={() => setActiveThread(null)} className="text-[10px] font-semibold text-slate-blue hover:underline">← Back</button>
                 <span className="flex items-center gap-2">
+                  {activeThread.author_id === currentUserId && !editingTopic && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingTopic(true);
+                        setEditTopicTitle(activeThread.title || "");
+                        setEditTopicBody(activeThread.body || "");
+                      }}
+                      className="text-[10px] font-semibold text-slate-blue hover:underline"
+                    >
+                      Edit
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void setThreadArchived(activeThread, true)}
@@ -557,12 +911,35 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                 </span>
               </div>
               <div className="rounded-lg border border-sand bg-cream/40 p-2.5">
-                <p className="text-[12px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
-                {activeThread.body && <p className="mt-1 text-[11px] text-espresso whitespace-pre-wrap">{activeThread.body}</p>}
-                <p className="mt-1 text-[10px] text-bark">
-                  {projectName.get(activeThread.project_id) ?? "Project"} · {ago(activeThread.created_at)} ago
-                  {activeThread.edited_at && <span className="italic text-stone"> · edited</span>}
-                </p>
+                {editingTopic ? (
+                  <div className="space-y-1.5">
+                    <input value={editTopicTitle} onChange={(e) => setEditTopicTitle(e.target.value)} placeholder="Topic title" className={input} autoFocus />
+                    <textarea value={editTopicBody} onChange={(e) => setEditTopicBody(e.target.value)} rows={3} className={`${input} resize-none w-full`} />
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void saveTopicEdit()}
+                        disabled={!editTopicTitle.trim() || !editTopicBody.trim()}
+                        className="px-2.5 py-1 rounded-lg bg-amber-soft text-amber text-[10px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50"
+                      >
+                        Save
+                      </button>
+                      <button type="button" onClick={() => setEditingTopic(false)} className="px-2.5 py-1 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-[12px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
+                    {activeThread.body && <p className="mt-1 text-[11px] text-espresso whitespace-pre-wrap">{linkifyText(activeThread.body)}</p>}
+                    <AttachmentList attachments={activeThread.attachments} />
+                    <p className="mt-1 text-[10px] text-bark">
+                      {projectName.get(activeThread.project_id) ?? "Project"} · {ago(activeThread.created_at)} ago
+                      {activeThread.edited_at && <span className="italic text-stone"> · edited</span>}
+                    </p>
+                  </>
+                )}
               </div>
               {(activeThread.comments ?? []).map((c) => (
                 <div key={c.id} className="flex gap-1.5">
@@ -597,7 +974,8 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                       </div>
                     ) : (
                       <>
-                        <p className="text-[11px] text-espresso whitespace-pre-wrap">{c.body}</p>
+                        <p className="text-[11px] text-espresso whitespace-pre-wrap">{linkifyText(c.body)}</p>
+                        <AttachmentList attachments={c.attachments} />
                         <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-bark">
                           <span>
                             {c.author ? `${c.author} · ` : ""}{ago(c.created_at)} ago
@@ -621,6 +999,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                   </div>
                 </div>
               ))}
+              <AttachmentPicker composer={replyComposer} />
               <div className="flex items-end gap-1.5 pt-1">
                 <div className="relative flex-1">
                   {mentionFor === "reply" && mentionMatches.length > 0 && (
@@ -645,7 +1024,7 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                     className={`${input} resize-none w-full`}
                   />
                 </div>
-                <button type="button" onClick={() => void submitReply()} disabled={!reply.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 shrink-0">Send</button>
+                <button type="button" onClick={() => void submitReply()} disabled={!reply.trim() && !replyComposer.hasAttachment} className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
           ) : (
@@ -676,11 +1055,12 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                       className={`${input} resize-none w-full`}
                     />
                   </div>
+                  <AttachmentPicker composer={topicComposer} disabled={sending} />
                   <div className="flex gap-1.5">
                     <button
                       type="button"
                       onClick={() => void createTopic()}
-                      disabled={sending || !topicTitle.trim() || !topicBody.trim()}
+                      disabled={sending || !topicTitle.trim() || (!topicBody.trim() && !topicComposer.hasAttachment)}
                       className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50"
                     >
                       Post
@@ -810,16 +1190,62 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                     )}
                     <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "bg-amber-soft text-espresso border border-amber/20" : "bg-parchment text-espresso"}`}>
                       {activeConv.is_group && !m.mine && <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>}
-                      <p className="whitespace-pre-wrap">{m.body}</p>
-                      <p className="mt-0.5 text-[9px] text-bark">{ago(m.created_at)} ago</p>
+                      {editingDm === m.id ? (
+                        <div className="space-y-1.5">
+                          <textarea
+                            value={editDmText}
+                            onChange={(e) => setEditDmText(e.target.value)}
+                            rows={2}
+                            autoFocus
+                            className="w-full resize-none rounded-lg border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none bg-white"
+                          />
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void saveDmEdit(m.id)}
+                              disabled={!editDmText.trim()}
+                              className="px-2.5 py-1 rounded-lg bg-amber-soft text-amber text-[10px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button type="button" onClick={() => setEditingDm(null)} className="px-2.5 py-1 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
+                          <AttachmentList attachments={m.attachments} />
+                          <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-bark">
+                            <span>
+                              {ago(m.created_at)} ago
+                              {m.edited_at && <span className="italic text-stone"> · edited</span>}
+                            </span>
+                            {m.mine && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingDm(m.id);
+                                  setEditDmText(m.body);
+                                }}
+                                className="font-semibold text-slate-blue hover:underline"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </p>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
                 <div ref={dmEndRef} />
               </div>
+              <AttachmentPicker composer={dmComposer} disabled={sending} />
               <div className="flex items-end gap-1.5">
                 <textarea value={dmText} onChange={(e) => setDmText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDm(); } }} rows={1} placeholder="Message…" className={`${input} resize-none flex-1`} />
-                <button type="button" onClick={() => void sendDm()} disabled={sending || !dmText.trim()} className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 shrink-0">Send</button>
+                <button type="button" onClick={() => void sendDm()} disabled={sending || (!dmText.trim() && !dmComposer.hasAttachment)} className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
           ) : composingChat ? (

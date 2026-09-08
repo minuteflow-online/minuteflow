@@ -1,6 +1,8 @@
 "use client";
 
 import type { TaskSubmission } from "@/lib/submissions";
+import { splitSubmissionLinks } from "@/lib/submissions";
+import { linkifyText } from "@/lib/linkify";
 
 /**
  * Read-only submission rows for the task editor.
@@ -42,7 +44,7 @@ export function SubmissionNotes({ submissions }: { submissions: TaskSubmission[]
         <div key={s.id} className="rounded-lg border border-sand bg-cream/40 px-2 py-1.5">
           <div className="flex items-start justify-between gap-2">
             <p className="whitespace-pre-wrap text-[12px] leading-snug text-espresso">
-              {s.submission_comment}
+              {linkifyText(s.submission_comment!)}
             </p>
             <SubmissionBadge />
           </div>
@@ -53,7 +55,7 @@ export function SubmissionNotes({ submissions }: { submissions: TaskSubmission[]
   );
 }
 
-/** Submitted links, shown under the editable task Link field. */
+/** Submitted links, shown under the editable task Link field. A submission can carry more than one — they're stored one per line in the same field. */
 export function SubmissionLinks({ submissions }: { submissions: TaskSubmission[] }) {
   const withLinks = submissions.filter((s) => s.submission_link?.trim());
   if (withLinks.length === 0) return null;
@@ -63,16 +65,21 @@ export function SubmissionLinks({ submissions }: { submissions: TaskSubmission[]
       {withLinks.map((s) => (
         <div
           key={s.id}
-          className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-1.5"
+          className="flex items-start justify-between gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-1.5"
         >
-          <a
-            href={s.submission_link!}
-            target="_blank"
-            rel="noreferrer"
-            className="truncate text-[12px] text-terracotta hover:underline"
-          >
-            {s.submission_link}
-          </a>
+          <div className="min-w-0 space-y-0.5">
+            {splitSubmissionLinks(s.submission_link).map((url) => (
+              <a
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate text-[12px] text-terracotta hover:underline"
+              >
+                {url}
+              </a>
+            ))}
+          </div>
           <SubmissionBadge />
         </div>
       ))}

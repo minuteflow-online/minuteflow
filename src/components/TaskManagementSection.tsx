@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { normalizePosition } from "@/types/database";
+import { splitSubmissionLinks } from "@/lib/submissions";
+import { linkifyText } from "@/lib/linkify";
 
 /* ── Types ─────────────────────────────────────────────── */
 
@@ -1277,19 +1279,22 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                               {s.submission_link && (
                                 <div className="text-xs">
                                   <span className="text-stone font-medium">Link: </span>
-                                  <a
-                                    href={s.submission_link}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-600 underline hover:text-blue-800 break-all"
-                                  >
-                                    {s.submission_link}
-                                  </a>
+                                  {splitSubmissionLinks(s.submission_link).map((url) => (
+                                    <a
+                                      key={url}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="block text-blue-600 underline hover:text-blue-800 break-all"
+                                    >
+                                      {url}
+                                    </a>
+                                  ))}
                                 </div>
                               )}
                               {s.submission_comment && (
                                 <div className="text-xs text-espresso whitespace-pre-wrap">
-                                  {s.submission_comment}
+                                  {linkifyText(s.submission_comment, "text-blue-600 underline hover:text-blue-800 break-all")}
                                 </div>
                               )}
                               {s.submission_screenshot_url && (
