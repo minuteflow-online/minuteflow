@@ -7,6 +7,7 @@
 // device can't trigger and a reviewer might never notice to hover over.
 
 import type { TaskScreenshot } from "@/types/database";
+import { explainScreenshotReason } from "@/lib/screenshots";
 
 export default function ScreenshotMarkerModal({
   screenshot,
@@ -34,7 +35,10 @@ export default function ScreenshotMarkerModal({
           </div>
           <div>
             <h2 className="font-serif text-lg font-bold text-espresso">No screenshot for this slot</h2>
-            <p className="mt-1 text-sm text-stone">{screenshot.failure_reason || "No reason recorded."}</p>
+            {screenshot.failure_reason && (
+              <p className="mt-1.5 text-sm font-semibold text-walnut">{screenshot.failure_reason}</p>
+            )}
+            <p className="mt-1 text-sm text-stone">{explainScreenshotReason(screenshot.failure_reason)}</p>
           </div>
         </div>
         <div className="px-6 pb-6">

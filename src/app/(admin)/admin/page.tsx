@@ -51,6 +51,7 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
 import { applyCorrection } from "@/lib/applyCorrection";
 import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
+import { explainScreenshotReason } from "@/lib/screenshots";
 
 // Each of these renders behind its own `activeTab === "..."` check below, so
 // only one is ever visible at a time — but all 15 used to load eagerly on
@@ -7547,13 +7548,13 @@ function ScreenshotLightbox({
             // A marker has no image and never will, so waiting on one says
             // "Loading image…" forever. Arrow keys still walk onto these, so the
             // lightbox has to state the reason rather than sit blank.
-            <div className="flex h-96 flex-col items-center justify-center gap-2 text-center">
+            <div className="flex h-96 flex-col items-center justify-center gap-2 px-8 text-center">
               <span className="text-3xl text-stone">&#8709;</span>
               <span className="text-sm font-medium text-parchment">
                 {screenshot.failure_reason || "No screenshot was taken"}
               </span>
-              <span className="text-xs text-stone">
-                Nothing was captured for this slot.
+              <span className="max-w-sm text-xs text-stone">
+                {explainScreenshotReason(screenshot.failure_reason)}
               </span>
             </div>
           ) : url ? (
