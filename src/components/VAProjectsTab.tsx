@@ -1865,14 +1865,32 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           />
         )}
 
-        {/* Add Subtask form — toggled by the "+ Add Subtask" button in the
-            top-right button row; renders here at the very end when open.
+        {/* Add Subtask — toggled by the "+ Add Subtask" button in the
+            top-right button row; opens as a modal (same overlay pattern as
+            the viewOperation modal above) instead of expanding inline at the
+            bottom of the card, so it doesn't get buried under a long list.
             Landing (no selectedProject): TaskEditor gets no lockedProjectId,
             so it falls back to its own open project picker instead of one
             fixed objective — there's no single project to lock to here. */}
         {showAddSubtask && (
-          <div className="border-t border-sand pt-4 space-y-3">
-            <>
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
+            onClick={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
+          >
+            <div
+              className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl border border-sand bg-white p-5 shadow-lg space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-bold text-espresso">Add Subtask</h3>
+                <button
+                  onClick={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
+                  className="text-bark hover:text-espresso text-xl leading-none cursor-pointer shrink-0"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
               <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1 w-fit">
                 {([["time_based", "Time-based"], ["output_based", "Output-based"]] as const).map(([m, label]) => (
                   <button key={m} type="button" onClick={() => setAddSubtaskMode(m)}
@@ -1893,7 +1911,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 onCancel={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
                 onSaved={() => { handleSubtaskCreated(); setShowAddSubtask(false); setDashboardRefresh((k) => k + 1); }}
               />
-            </>
+            </div>
           </div>
         )}
         </>
