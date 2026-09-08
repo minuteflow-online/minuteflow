@@ -1610,14 +1610,24 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
           ? new Date(Math.min(...nonBreakLogs.map(l => new Date(l.start_time).getTime())))
           : null;
 
-        // Clock out: latest end_time of any log
-        const logsWithEnd = dayLogs.filter(l => l.end_time);
+        // Clock out: the Clock Out marker's own start_time when one exists —
+        // that's the moment they actually clicked Clock Out. Its end_time is
+        // not trustworthy for this: it's a zero-duration marker whose
+        // end_time can drift far from start_time (e.g. touched by a later
+        // cron/close pass) without duration_ms ever reflecting it, which is
+        // exactly what made this look like it "bled" into the next day.
+        // Falls back to the latest end_time among real (non-marker) logs for
+        // a day that has no Clock Out row at all — e.g. still in progress.
+        const clockOutMarker = dayLogs.find(l => l.category === "Clock Out");
+        const logsWithEnd = dayLogs.filter(l => l.end_time && l.category !== "Clock Out");
         const hasActiveLog = dayLogs.some(l => !l.end_time);
         const clockOut = hasActiveLog
           ? null // still active
-          : logsWithEnd.length > 0
-            ? new Date(Math.max(...logsWithEnd.map(l => new Date(l.end_time!).getTime())))
-            : null;
+          : clockOutMarker
+            ? new Date(clockOutMarker.start_time)
+            : logsWithEnd.length > 0
+              ? new Date(Math.max(...logsWithEnd.map(l => new Date(l.end_time!).getTime())))
+              : null;
 
         // Look up mood for this date
         const mood = userMoods[isoDate] || null;
@@ -2070,11 +2080,20 @@ function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]
         });
         const logDateStr = new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: timezone });
         const isNextDay = log.session_date && logDateStr !== log.session_date;
+        // A "Clock Out" row is a zero-duration marker by design — its
+        // end_time is a stamp of when the session closed, not a real
+        // work interval, and can legitimately sit far from start_time (e.g.
+        // set by a later cron/close pass touching an old marker). Falling
+        // back to end_time - start_time for it turned a handful of these
+        // into fake multi-hour entries that "bled" into the next day, even
+        // though duration_ms was correctly 0 the whole time.
         const duration = log.duration_ms > 0
           ? formatDuration(log.duration_ms)
-          : log.end_time
-            ? formatDuration(new Date(log.end_time).getTime() - new Date(log.start_time).getTime())
-            : "active";
+          : log.category === "Clock Out"
+            ? formatDuration(0)
+            : log.end_time
+              ? formatDuration(new Date(log.end_time).getTime() - new Date(log.start_time).getTime())
+              : "active";
         const isActive = !log.end_time;
         const progress = log.progress || (isActive ? "in_progress" : null);
         const pConfig = progress ? progressConfig[progress] : null;
