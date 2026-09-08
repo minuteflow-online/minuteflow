@@ -68,6 +68,21 @@ const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
   cancelled: 8,
 };
 
+/**
+ * Status group first (unchanged from before), then each VA's own manual
+ * order within that group — set by dragging tiles below. A task that's
+ * never been dragged has no sort_order yet and sorts after ones that have,
+ * which keeps freshly-assigned work from jumping ahead of a sequence someone
+ * already set up.
+ */
+function compareTasks(a: VAAssignedTask, b: VAAssignedTask): number {
+  const statusDiff = (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99);
+  if (statusDiff !== 0) return statusDiff;
+  const aOrder = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+  const bOrder = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+  return aOrder - bOrder;
+}
+
 function renderTextWithLinks(text: string) {
   const parts: React.JSX.Element[] = [];
   const urlRegex = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
@@ -125,6 +140,11 @@ export default function AssignedTasksWidget({
   // instant it's played even before a re-fetch confirms it server-side.
   const [playedTodoIds, setPlayedTodoIds] = useState<Set<number>>(new Set());
   const prevRefetchCountRef = useRef(refetchCount);
+  // Drag-to-reorder: draggedId is the assignee row (task.id) currently being
+  // dragged; dragOverId is whichever row the pointer is hovering, for the
+  // drop-target highlight.
+  const [draggedId, setDraggedId] = useState<number | null>(null);
+  const [dragOverId, setDragOverId] = useState<number | null>(null);
 
 
   const fetchTasks = useCallback(async () => {
@@ -149,9 +169,7 @@ export default function AssignedTasksWidget({
             due_date: t.assigned_tasks?.due_date,
             status: t.status,
           })
-        ).sort(
-          (a, b) => (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
-        );
+        ).sort(compareTasks);
         setTasks(visible);
         setOptimisticStatuses({});
       }
@@ -181,10 +199,7 @@ export default function AssignedTasksWidget({
       setTasks((prev) =>
         prev
           .map((t) => (t.id === id ? { ...t, status: newStatus } : t))
-          .sort(
-            (a, b) =>
-              (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
-          )
+          .sort(compareTasks)
       );
       setUpdatingIds((prev) => new Set(prev).add(id));
 
@@ -199,10 +214,7 @@ export default function AssignedTasksWidget({
           setTasks((prev) =>
             prev
               .map((t) => (t.id === id ? { ...t, status: task.status } : t))
-              .sort(
-                (a, b) =>
-                  (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
-              )
+              .sort(compareTasks)
           );
         }
         // No optimistic bump on the way out of revision_needed: revision_count
@@ -213,10 +225,7 @@ export default function AssignedTasksWidget({
         setTasks((prev) =>
           prev
             .map((t) => (t.id === id ? { ...t, status: task.status } : t))
-            .sort(
-              (a, b) =>
-                (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
-            )
+            .sort(compareTasks)
         );
       } finally {
         setUpdatingIds((prev) => {
@@ -284,6 +293,57 @@ export default function AssignedTasksWidget({
       }
     },
     [fetchTasks]
+  );
+
+  // Saves the dragged-to order. Scoped to the caller's own rows (va_id ===
+  // userId) — a collaborator's tile can appear in this list too, but its
+  // sort_order belongs to them, not you, and the endpoint would reject an id
+  // it isn't yours anyway.
+  const persistOrder = useCallback(
+    async (list: VAAssignedTask[]) => {
+      const orderedIds = list.filter((t) => t.va_id === userId).map((t) => t.id);
+      if (orderedIds.length === 0) return;
+      try {
+        await fetch("/api/assigned-tasks/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderedIds }),
+        });
+      } catch {
+        // non-critical widget; a failed save just means the order resets on the next fetch
+      }
+    },
+    [userId]
+  );
+
+  const handleDrop = useCallback(
+    (targetTask: VAAssignedTask) => {
+      const sourceId = draggedId;
+      setDraggedId(null);
+      setDragOverId(null);
+      if (sourceId == null || sourceId === targetTask.id) return;
+
+      setTasks((prev) => {
+        const source = prev.find((t) => t.id === sourceId);
+        // Only your own tiles reorder, and only within the same status
+        // group — a cross-group drop would just be undone by the
+        // status-first sort on the very next render, so it's rejected here
+        // instead of silently snapping back.
+        if (!source || source.va_id !== userId || targetTask.va_id !== userId) return prev;
+        if (source.status !== targetTask.status) return prev;
+
+        const fromIndex = prev.findIndex((t) => t.id === sourceId);
+        const toIndex = prev.findIndex((t) => t.id === targetTask.id);
+        if (fromIndex === -1 || toIndex === -1) return prev;
+
+        const next = [...prev];
+        const [moved] = next.splice(fromIndex, 1);
+        next.splice(toIndex, 0, moved);
+        void persistOrder(next);
+        return next;
+      });
+    },
+    [draggedId, userId, persistOrder]
   );
 
   const statusBadge = (status: AssignedTaskStatus) => {
@@ -412,35 +472,93 @@ export default function AssignedTasksWidget({
 
                 const rate = detail.fixed_pay_tasks?.rate;
                 const primaryText = detail.task_detail || detail.task_name;
+                const isOwn = task.va_id === userId;
+                const isDragTarget = dragOverId === task.id && draggedId !== null && draggedId !== task.id;
 
                 return (
                   <Fragment key={task.id}>
-                    <div className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
-                      {/* Top row: task name + expand toggle + status badge */}
+                    <div
+                      className={`flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border bg-white hover:bg-cream transition-colors ${
+                        isDragTarget ? "border-slate-blue bg-slate-blue-soft/40" : "border-sand"
+                      } ${draggedId === task.id ? "opacity-50" : ""}`}
+                      onDragOver={(e) => {
+                        if (draggedId == null || draggedId === task.id) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        if (dragOverId !== task.id) setDragOverId(task.id);
+                      }}
+                      onDragLeave={() => setDragOverId((cur) => (cur === task.id ? null : cur))}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        handleDrop(task);
+                      }}
+                    >
+                      {/* Top row: drag handle + expand toggle + status badge */}
                       <div className="flex items-start justify-between gap-2">
-                        <button
-                          onClick={() => toggleExpand(task)}
-                          className="flex items-start gap-1.5 flex-1 min-w-0 text-left cursor-pointer group"
-                        >
-                          <svg
-                            width="10"
-                            height="10"
-                            viewBox="0 0 12 12"
-                            className={`text-bark mt-[3px] shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                        <div className="flex items-start gap-1 flex-1 min-w-0">
+                          {/* Always reserve the handle's width, even when it's not
+                              draggable (a collaborator's tile) — otherwise the
+                              header text would sit at a different x-offset than
+                              its own detail rows below, which all use a fixed
+                              pl-[30px] tuned to this slot's width. */}
+                          <span
+                            draggable={isOwn}
+                            onDragStart={
+                              isOwn
+                                ? (e) => {
+                                    setDraggedId(task.id);
+                                    e.dataTransfer.effectAllowed = "move";
+                                  }
+                                : undefined
+                            }
+                            onDragEnd={
+                              isOwn
+                                ? () => {
+                                    setDraggedId(null);
+                                    setDragOverId(null);
+                                  }
+                                : undefined
+                            }
+                            title={isOwn ? "Drag to reorder" : undefined}
+                            className={`mt-[3px] shrink-0 w-[10px] h-[14px] flex items-center justify-center transition-colors ${
+                              isOwn ? "cursor-grab active:cursor-grabbing text-bark/40 hover:text-bark" : ""
+                            }`}
                           >
-                            <path
-                              d="M4 2l4 4-4 4"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                          <span className="text-[13px] font-semibold text-espresso leading-tight group-hover:text-terracotta transition-colors">
-                            {primaryText}
+                            {isOwn && (
+                              <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+                                <circle cx="2.5" cy="2" r="1.4" />
+                                <circle cx="7.5" cy="2" r="1.4" />
+                                <circle cx="2.5" cy="7" r="1.4" />
+                                <circle cx="7.5" cy="7" r="1.4" />
+                                <circle cx="2.5" cy="12" r="1.4" />
+                                <circle cx="7.5" cy="12" r="1.4" />
+                              </svg>
+                            )}
                           </span>
-                        </button>
+                          <button
+                            onClick={() => toggleExpand(task)}
+                            className="flex items-start gap-1.5 flex-1 min-w-0 text-left cursor-pointer group"
+                          >
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 12 12"
+                              className={`text-bark mt-[3px] shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                            >
+                              <path
+                                d="M4 2l4 4-4 4"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                            <span className="text-[13px] font-semibold text-espresso leading-tight group-hover:text-terracotta transition-colors">
+                              {primaryText}
+                            </span>
+                          </button>
+                        </div>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <RevisionBadge count={detail.revision_count ?? 0} />
                           <RecurringBadge
@@ -456,16 +574,16 @@ export default function AssignedTasksWidget({
                       </div>
 
                       {detail.task_detail && (
-                        <div className="pl-[18px] text-[11px] text-stone">{detail.task_name}</div>
+                        <div className="pl-[30px] text-[11px] text-stone">{detail.task_name}</div>
                       )}
 
                       {isExpanded && (
                         <>
                           {accountProject && (
-                            <div className="text-[11px] text-bark pl-[18px]">{accountProject}</div>
+                            <div className="text-[11px] text-bark pl-[30px]">{accountProject}</div>
                           )}
 
-                          <div className="pl-[18px] space-y-2 mt-0.5">
+                          <div className="pl-[30px] space-y-2 mt-0.5">
                             {detail.task_detail && (
                               <div>
                                 <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">Detail</p>
@@ -492,7 +610,7 @@ export default function AssignedTasksWidget({
                           </div>
 
                           {(effectiveStatus === "on_queue" || effectiveStatus === "in_progress") && (
-                            <div className="pl-[18px]">
+                            <div className="pl-[30px]">
                               {todosLoadingId === detail.id ? (
                                 <p className="text-[11px] text-stone/50">Loading to-dos...</p>
                               ) : (todosByTaskId[detail.id]?.length ?? 0) > 0 ? (
@@ -536,7 +654,7 @@ export default function AssignedTasksWidget({
                           )}
 
                           {due && (
-                            <div className={`text-[11px] font-medium pl-[18px] ${due.isOverdue ? "text-terracotta" : "text-stone"}`}>
+                            <div className={`text-[11px] font-medium pl-[30px] ${due.isOverdue ? "text-terracotta" : "text-stone"}`}>
                               {due.isOverdue && <span className="mr-1">!</span>}
                               {due.label}
                             </div>
@@ -545,7 +663,7 @@ export default function AssignedTasksWidget({
                       )}
 
                       {/* Action buttons */}
-                      <div className="flex items-center gap-2 mt-0.5 pl-[18px]">
+                      <div className="flex items-center gap-2 mt-0.5 pl-[30px]">
                         {effectiveStatus === "pending" && (
                           <button
                             onClick={() => updateStatus(task, "on_queue")}

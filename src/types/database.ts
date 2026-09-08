@@ -709,6 +709,14 @@ export interface AssignedTaskAssignee {
   accuracy_score: number;
   assigned_at: string;
   updated_at: string;
+  /** Personal display order on the VA's own dashboard — set by dragging a
+   *  task tile in AssignedTasksWidget. Purely cosmetic: nothing outside that
+   *  widget's sort reads this column, so reordering can't touch the
+   *  calendar, submissions, or payroll. Null until a VA reorders at least
+   *  once, at which point it sorts last (see AssignedTasksWidget's
+   *  compareTasks). Per-assignee-row, so a collaborator's own ordering is
+   *  independent of yours. */
+  sort_order?: number | null;
   profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>;
   assigned_tasks?: AssignedTask;
 }
