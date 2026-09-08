@@ -104,6 +104,42 @@ export function screenshotTileTitle(ss: TaskScreenshot): string {
   return `Screenshot ${ss.screenshot_type || "manual"}`;
 }
 
+/**
+ * The exhaustive set of failure_reason strings the extension actually
+ * produces (extension/background.js — queueMarker() call sites). A raw
+ * reason like "On MinuteFlow — not captured" is true but assumes the reader
+ * already knows why that happens; this is the plain-language version for
+ * surfaces where someone is actively trying to understand a blank slot, not
+ * just glancing at a tooltip. Requested by Toni after a review meeting,
+ * specifically about that one reason reading as unexplained.
+ */
+const SCREENSHOT_REASON_EXPLANATIONS: Record<string, string> = {
+  "On MinuteFlow — not captured":
+    "You were on a MinuteFlow page at that moment — the extension doesn't screenshot MinuteFlow itself, only your work elsewhere.",
+  "Screen locked": "Your screen was locked, so there was nothing to capture.",
+  "Computer idle": "No activity was detected on your computer at that moment.",
+  "Chrome was not open": "Chrome wasn't open at that moment.",
+  "No tab open in Chrome": "No browser tab was open at that moment.",
+  "On a browser settings page":
+    "You were on a browser settings page, which Chrome doesn't allow any extension to capture.",
+  "Chrome was minimised or another app was in front":
+    "Chrome was minimized, or a non-browser app was in front, at that moment.",
+  "Screen could not be captured": "The capture failed and the extension couldn't tell why.",
+  "Clocked in — no active task": "You were clocked in but hadn't started a task yet.",
+};
+
+/**
+ * Full explanation for a marker's reason, for a surface with room for one
+ * (a detail modal or lightbox) — not the short tile tooltip, which stays as
+ * screenshotTileTitle's raw reason. Falls back to the raw reason itself for
+ * anything not in the table above, so a new reason string added later still
+ * shows something instead of nothing.
+ */
+export function explainScreenshotReason(reason: string | null | undefined): string {
+  if (!reason) return "No reason was recorded for this slot.";
+  return SCREENSHOT_REASON_EXPLANATIONS[reason] ?? reason;
+}
+
 /** Group a flat screenshot list by log_id, the shape the log tables render from. */
 export function groupScreenshotsByLog(
   screenshots: TaskScreenshot[]
