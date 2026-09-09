@@ -144,11 +144,21 @@ export async function GET(request: Request) {
   // working unchanged.
   const projectIdList = projectId ? projectId.split(",").map((s) => s.trim()).filter(Boolean) : null;
 
+  // A request scoped to a project (the Output Based section of an
+  // Operation/Objective's Subtasks Checklist, in VAProjectsTab.tsx) is asking
+  // for that project's whole output-based list — the same team-wide
+  // visibility the time-based subtask list already has there — not the
+  // personal claim pool. Treat it like the permitted path below rather than
+  // narrowing to "my own claimed tasks", which otherwise left a VA looking
+  // at an empty "Output Based" section for work a teammate had claimed.
+  const scopedToProject = Boolean(projectIdList && projectIdList.length > 0);
+
   // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
   // RLS check (role stays "va"), so read via the service-role client once
   // the app-layer check above has already cleared the caller. No-op for
-  // real admins/managers.
-  const readClient = isPermitted ? makeAdminClient() : supabase;
+  // real admins/managers. A project-scoped read needs the same bypass, for
+  // the reason above.
+  const readClient = (isPermitted || scopedToProject) ? makeAdminClient() : supabase;
 
   let listQuery = readClient
     .from("fixed_pay_tasks")
@@ -182,7 +192,7 @@ export async function GET(request: Request) {
     rows = rows.map((t) => (statusByTaskId[t.id] ? { ...t, status: statusByTaskId[t.id] as FixedPayTaskWithClaimer["status"] } : t));
   }
 
-  if (!isPermitted) {
+  if (!isPermitted && !scopedToProject) {
     // Pool tasks (unclaimed) stay gated to "active" — a VA shouldn't be
     // offered an inactive/archived/trashed task to grab. But a VA's own
     // claimed tasks ("mine") must NOT be gated the same way: once a task
