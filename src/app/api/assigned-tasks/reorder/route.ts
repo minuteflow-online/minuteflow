@@ -23,10 +23,15 @@ export const dynamic = "force-dynamic";
  * applying, so a tampered payload can't move someone else's task around.
  */
 export async function POST(request: Request) {
-  const supabase = await createClient();
+  // Bearer-token fallback for the desktop app, same as PATCH
+  // /api/assigned-tasks/[id] — see that route's comment and
+  // src/lib/supabase/server.ts's createClient() doc for why. Additive: a web
+  // request never sends this header, so the cookie-based path is unaffected.
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json().catch(() => null);
