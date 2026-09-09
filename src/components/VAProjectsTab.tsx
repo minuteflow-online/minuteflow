@@ -353,9 +353,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [subtaskPage, setSubtaskPage] = useState(0);
   // List View filters: a single team member, or just my own subtasks.
   const [listMemberFilter, setListMemberFilter] = useState<string>("");
-  // Default to the viewer's own subtasks (matching the checklist and To-Do
-  // list); the "My Subtasks" toggle and member dropdown switch to all/one.
-  const [listMyOnly, setListMyOnly] = useState(true);
+  // Off by default — cleared/neutral until clicked. Defaulting this on used
+  // to leave anyone without a personal subtask here (an admin checking on
+  // the team, most often) looking at "No subtasks match this filter" with
+  // no visible indication why, since the toggle already read as active.
+  const [listMyOnly, setListMyOnly] = useState(false);
   // Batch-select subtasks in List View for one trash action.
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
@@ -1082,6 +1084,20 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     });
   }, [visibleSubtasks, listMyOnly, listMemberFilter, currentUserId]);
 
+  // Output Based subtasks in List View used to ignore My Subtasks/member
+  // filtering entirely — always showing every assignee's fixed-pay work
+  // regardless of the toggle above it. Same rule as the time-based list:
+  // one assignee per output task, so it's a plain equality check rather
+  // than the array-of-assignees search above.
+  const filteredOutputSubtasks = useMemo(() => {
+    if (!listMyOnly && !listMemberFilter) return outputSubtasks;
+    return outputSubtasks.filter((task) => {
+      if (listMyOnly && task.assigned_to !== currentUserId) return false;
+      if (listMemberFilter && task.assigned_to !== listMemberFilter) return false;
+      return true;
+    });
+  }, [outputSubtasks, listMyOnly, listMemberFilter, currentUserId]);
+
   // "Where they are" — per assigned VA, completed/total on the selected node's own
   // subtasks. Scoped to this node only (not nested sub-objectives): each sub-objective
   // is browsed as its own node with its own subtasks, so this already works per
@@ -1483,7 +1499,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           const slice = filteredListSubtasks.slice(page * SIZE, page * SIZE + SIZE);
           return (
           <>
-          {filteredListSubtasks.length === 0 && (
+          {filteredListSubtasks.length === 0 && filteredOutputSubtasks.length === 0 && (
             <p className="text-[12px] text-stone/70 px-1">No subtasks match this filter.</p>
           )}
           {(() => {
@@ -1759,10 +1775,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           );
         })()}
 
-        {subtaskView === "list" && outputSubtasks.length > 0 && (
+        {subtaskView === "list" && filteredOutputSubtasks.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Output Based</p>
-            {outputSubtasks.map((task) => {
+            {filteredOutputSubtasks.map((task) => {
               const isEditing = editingOutputId === task.id;
               const isViewing = viewingOutputId === task.id;
               const canEdit = isAdmin || task.assigned_to === currentUserId;
