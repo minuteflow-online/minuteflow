@@ -494,10 +494,17 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
  * Body: { va_id?: string, status?: AssignedTaskStatus, log_id?: number, notes?: string, account?: string | null, project?: string | null, task_name?: string, task_detail?: string | null, task_notes?: string | null, due_date?: string | null }
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
-  const supabase = await createClient();
+  // The desktop app has no browser cookies to present (it signs in directly
+  // against Supabase Auth — see desktop/src/lib/db.ts), so it authenticates
+  // this one route via bearer token instead. A web request never sends this
+  // header, so its cookie-based auth is completely unaffected. See the
+  // createClient() doc comment for why getUser() also needs the token passed
+  // explicitly. Used for the desktop app's Start button (setAssignedTaskStatus).
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data: profile } = await supabase
