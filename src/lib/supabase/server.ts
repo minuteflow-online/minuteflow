@@ -1,7 +1,18 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-export async function createClient() {
+/**
+ * @param bearerToken  Optional raw access token (no "Bearer " prefix). When
+ *   given, the returned client's `.from()`/`.storage` calls carry it as the
+ *   Authorization header, so they run under that user's RLS instead of the
+ *   cookie session. Route handlers that accept it should also pass it to
+ *   `supabase.auth.getUser(bearerToken)` — the auth client resolves the user
+ *   from its stored (cookie) session unless a token is passed explicitly, it
+ *   does NOT fall back to this header. This is for callers with no browser
+ *   cookies to present (e.g. the desktop app, which signs in directly against
+ *   Supabase Auth) — omitted, behavior is byte-for-byte the same as before.
+ */
+export async function createClient(bearerToken?: string) {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -24,6 +35,7 @@ export async function createClient() {
           }
         },
       },
+      ...(bearerToken ? { global: { headers: { Authorization: `Bearer ${bearerToken}` } } } : {}),
     }
   );
 }
