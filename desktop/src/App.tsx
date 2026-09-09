@@ -5,7 +5,7 @@ import TasksPanel from "./components/TasksPanel";
 import TodoPanel from "./components/TodoPanel";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
-import { fetchAssignedTasks, type VAAssignedTask } from "./lib/tasks";
+import { fetchAssignedTasks, reorderAssignedTasks, type VAAssignedTask } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 
@@ -176,6 +176,27 @@ export default function App() {
     [userId, profile, sessionRow, orgTimezone, startingId, loadTasks]
   );
 
+  // Drag-to-reorder — mirrors AssignedTasksWidget's handleDrop/persistOrder.
+  // App owns `tasks`, so the splice + optimistic update happens here; the
+  // drag gesture itself (draggedId/dragOverId) is local UI state in
+  // TasksPanel.
+  const handleReorder = useCallback((source: VAAssignedTask, target: VAAssignedTask) => {
+    setTasks((prev) => {
+      const fromIndex = prev.findIndex((t) => t.id === source.id);
+      const toIndex = prev.findIndex((t) => t.id === target.id);
+      if (fromIndex === -1 || toIndex === -1) return prev;
+
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+
+      const orderedIds = next.filter((t) => t.va_id === userIdRef.current).map((t) => t.id);
+      if (orderedIds.length > 0) void reorderAssignedTasks(orderedIds);
+
+      return next;
+    });
+  }, []);
+
   const activeLogId = sessionRow?.active_task?.logId ? Number(sessionRow.active_task.logId) : null;
 
   const handleCapture = useCallback(async () => {
@@ -263,6 +284,7 @@ export default function App() {
             onSelect={setSelectedTask}
             startingId={startingId}
             onStart={handleStart}
+            onReorder={handleReorder}
           />
         </div>
 
