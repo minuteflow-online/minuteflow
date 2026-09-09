@@ -1,0 +1,50 @@
+{
+  "name": "minuteflow-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MinuteFlow desktop companion — clock in/out, assigned tasks, and full-screen screenshot capture outside the browser.",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:vite": "vite",
+    "dev": "concurrently -k -n vite,electron -c blue,green \"npm:dev:vite\" \"node electron/wait-and-launch.js\"",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "start": "electron .",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^5",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "click.minuteflow.desktop",
+    "productName": "MinuteFlow",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "esbuild@0.25.12": true,
+    "electron-winstaller@5.4.0": true
+  }
+}
