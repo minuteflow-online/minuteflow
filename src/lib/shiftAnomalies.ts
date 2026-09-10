@@ -2,10 +2,13 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 import { entryDurationMs } from "@/lib/shiftSummary";
 
-// Same three checks used in the manual August time review: a Break entry that
+// The three checks from the manual August time review — a Break entry that
 // somehow ended up billable, a "Clock In" placeholder that never got handed
 // off to a real task, and two billable entries that substantially overlap
-// (double-counted time). Small task-switch jitter (a couple of seconds at a
+// (double-counted time) — plus a gap check added after Charinade's
+// 2026-09-09 shift: a task closed after 21 seconds while her screenshots kept
+// arriving against it for another 1h50m, so nothing in time_logs showed the
+// work ever happened. Small task-switch jitter (a couple of seconds at a
 // boundary) is normal and intentionally not flagged.
 //
 // How the message reads is in shiftAnomalyFormat.ts; this file only decides
@@ -17,8 +20,17 @@ const ORPHAN_CLOCK_IN_MINUTES = 20;
 /** Overlap below this is task-switch timestamp jitter, not a real double-count. */
 const OVERLAP_MINUTES = 2;
 
+/**
+ * A gap below this is normal: a real task switch closes the old log and opens
+ * the new one off the same "now", so back-to-back entries in this data are
+ * exactly contiguous. Anything longer means nothing was logged for that
+ * stretch at all — either a real unlogged break/absence, or a log closed too
+ * early while work actually continued (see silent_gap below).
+ */
+const GAP_MINUTES = 5;
+
 export interface ShiftAnomalyFinding {
-  type: "billed_break" | "orphaned_clock_in" | "overlap" | "break_overlap";
+  type: "billed_break" | "orphaned_clock_in" | "overlap" | "break_overlap" | "silent_gap" | "unlogged_gap";
   logId: number;
   /** Every log the finding implicates — two of them for an overlap. */
   logIds: number[];
@@ -165,6 +177,58 @@ export async function checkShiftAnomalies(
         });
       }
     }
+  }
+
+  // Gaps: a stretch between two logs where nothing at all was recorded.
+  // Skip pairs that straddle an actual clock-out/back-in — that time is
+  // legitimately off the clock, not lost — by excluding any pair where the
+  // earlier log is the "Clocked Out" marker or the later one is "Clock In".
+  for (let i = 0; i < rows.length - 1; i++) {
+    const cur = rows[i];
+    const next = rows[i + 1];
+    const curEnd = cur.end_time;
+    if (!curEnd) continue;
+    if (cur.category === "Clock Out" || next.task_name === "Clock In") continue;
+    // Break and Personal are already non-billable by design — a gap after one
+    // of these ends isn't missing billable time, whatever screenshots turn up
+    // during it. That question (did she come back late?) belongs to a
+    // different check, not this one.
+    if (isOwnTime(cur)) continue;
+
+    const gapMinutes = (new Date(next.start_time).getTime() - new Date(curEnd).getTime()) / 60000;
+    if (gapMinutes <= GAP_MINUTES) continue;
+
+    // Was work still actually happening? Real (non-"failed") screenshots
+    // filed against the log that just "ended" prove the task kept running
+    // even though nothing was recording it — the exact shape of Charinade's
+    // CRM task on 2026-09-09, closed after 21 seconds while captures kept
+    // arriving for another 1h50m. That distinction is the difference between
+    // "billable time is missing from the record" and "she was away without
+    // logging it" — very different things to tell Toni.
+    const { count: strandedShots } = await supabase
+      .from("task_screenshots")
+      .select("id", { count: "exact", head: true })
+      .eq("log_id", cur.id)
+      .is("failure_reason", null)
+      .gt("created_at", curEnd)
+      .lt("created_at", next.start_time);
+
+    const hasEvidence = (strandedShots ?? 0) > 0;
+
+    findings.push({
+      type: hasEvidence ? "silent_gap" : "unlogged_gap",
+      logId: cur.id,
+      logIds: [cur.id, next.id],
+      taskName: cur.task_name,
+      startTime: curEnd,
+      endTime: next.start_time,
+      windowStart: curEnd,
+      windowEnd: next.start_time,
+      minutes: gapMinutes,
+      detail: hasEvidence
+        ? `Nothing logged for ${gapMinutes.toFixed(0)} min after "${cur.task_name}" (log ${cur.id}) ended, but ${strandedShots} screenshot(s) kept arriving for it — the work itself didn't stop, only the record of it did`
+        : `Nothing logged for ${gapMinutes.toFixed(0)} min between "${cur.task_name}" (log ${cur.id}) ending and "${next.task_name}" (log ${next.id}) starting, with no screenshots either`,
+    });
   }
 
   return { clean: findings.length === 0, findings, logs: rows };

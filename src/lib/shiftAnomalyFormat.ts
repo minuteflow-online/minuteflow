@@ -24,6 +24,8 @@ const FINDING_TITLES: Record<ShiftAnomalyFinding["type"], string> = {
   orphaned_clock_in: "Clock In left running",
   overlap: "Two tasks counted at once",
   break_overlap: "Break didn't actually close",
+  silent_gap: "Worked time went unrecorded",
+  unlogged_gap: "Unexplained gap in the day",
 };
 
 /** Entries shown either side of a flagged one. */
