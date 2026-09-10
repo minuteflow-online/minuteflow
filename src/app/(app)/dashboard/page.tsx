@@ -120,6 +120,23 @@ function getCorrectSessionDate(
 // path only runs for VAs without the extension installed.
 const CAPTURE_INTERVAL_MS = 5 * 60 * 1000;
 
+// A "close ALL open logs" sweep (clockIn, startTask, doStartBreak,
+// resumePreBreakTask) is meant to close what an EARLIER action left running —
+// never a log some OTHER concurrent action just created a moment ago. Two tabs
+// of the dashboard open at once (or one tab's session-mutating call landing
+// late after the VA already moved on in another) each run their own sweep
+// with no idea the other exists, and neither is protected by the in-memory
+// isStartingTaskRef/sessionActionPendingRef guards, which are per-tab.
+//
+// This is what actually happened to Charinade on 2026-09-09: a task closed
+// 21 seconds after it started while her screenshots kept arriving against it
+// for another 1h50m, proving the work itself never stopped — only a second,
+// unrelated sweep closed the log out from under the tab still using it. The
+// page-load version of this sweep already learned this lesson on 2026-08-10
+// (see the comment above the mount effect below); every other sweep in this
+// file gets the same floor here, for the same reason.
+const SWITCH_MIN_AGE_MS = 30 * 1000;
+
 const ACTIVITY_LOOKBACK_DAYS = 14;
 function activityLogFloorIso(): string {
   return new Date(Date.now() - ACTIVITY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -1135,7 +1152,7 @@ export default function DashboardPage() {
     try {
       const now = new Date().toISOString();
 
-      await closeOpenLogs(now);
+      await closeOpenLogs(now, undefined, SWITCH_MIN_AGE_MS);
 
       // Create a "Planning" time_log entry so clock-in registers in activity log
       const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
@@ -1602,8 +1619,9 @@ export default function DashboardPage() {
       // a Clock In Planning log whose insert returned null).
       // closeOpenLogs caps an overnight-stale one at end-of-day
       // instead of billing the whole gap until now — this used to be a
-      // separate, uncapped copy of that same close.
-      await closeOpenLogs(now);
+      // separate, uncapped copy of that same close. The age floor keeps it
+      // from closing a log some OTHER tab/action just created a moment ago.
+      await closeOpenLogs(now, undefined, SWITCH_MIN_AGE_MS);
 
       // Create a break time log
       const { data: logData, error: breakLogError } = await supabase
@@ -1700,13 +1718,20 @@ export default function DashboardPage() {
     // exactly what let a break sit open for over an hour alongside a resumed
     // task on 2026-09-04 (Flordeliz). This re-checks the database directly
     // rather than trusting that the earlier close actually landed.
+    //
+    // Excludes anything younger than SWITCH_MIN_AGE_MS — a log some OTHER
+    // tab or action just created is not what this is here to catch, and
+    // closing it out from under that tab is exactly what happened to
+    // Charinade on 2026-09-09 (see SWITCH_MIN_AGE_MS's own comment).
     {
+      const gapCutoff = new Date(new Date(now).getTime() - SWITCH_MIN_AGE_MS).toISOString();
       const { data: openLogs } = await supabase
         .from("time_logs")
         .select("id, start_time")
         .eq("user_id", userId)
         .is("end_time", null)
-        .neq("category", "Clock Out");
+        .neq("category", "Clock Out")
+        .lt("start_time", gapCutoff);
 
       if (openLogs && openLogs.length > 0) {
         const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now)]));
@@ -2392,13 +2417,20 @@ export default function DashboardPage() {
         // wizard; either way it's still "an activity," and it used to be
         // carved out of this query, which let a wizard-started Break run
         // forever alongside whatever was started next.
+        //
+        // Excludes anything younger than SWITCH_MIN_AGE_MS — a log some OTHER
+        // tab or action just created is not what this is here to catch, and
+        // closing it out from under that tab is exactly what happened to
+        // Charinade on 2026-09-09 (see SWITCH_MIN_AGE_MS's own comment).
         {
+          const gapCutoff = new Date(new Date(now).getTime() - SWITCH_MIN_AGE_MS).toISOString();
           const { data: openLogs } = await supabase
             .from("time_logs")
             .select("id, start_time")
             .eq("user_id", userId)
             .is("end_time", null)
-            .neq("category", "Clock Out");
+            .neq("category", "Clock Out")
+            .lt("start_time", gapCutoff);
 
           if (openLogs && openLogs.length > 0) {
             // A log stale from a previous calendar date (an overnight "Clock
