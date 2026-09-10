@@ -341,8 +341,18 @@ export default function ActivityLog({
     async (screenshotId: number) => {
       if (!isAdminOrManager) return;
       if (!confirm("Delete this screenshot? This cannot be undone.")) return;
-      const supabase = createClient();
-      await supabase.from("task_screenshots").delete().eq("id", screenshotId);
+      // task_screenshots has no authenticated grants — a direct client delete
+      // here was silently rejected (42501) every time, so the screenshot
+      // never actually left the database even though the UI removed it.
+      const res = await fetch("/api/task-screenshots/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: screenshotId }),
+      });
+      if (!res.ok) {
+        alert("Couldn't delete this screenshot: " + (await res.text()));
+        return;
+      }
       setSignedUrls((current) => {
         const next = { ...current };
         delete next[screenshotId];
@@ -1161,8 +1171,20 @@ export default function ActivityLog({
                             <button
                               onClick={async () => {
                                 if (!confirm(`Delete "${log.task_name}" entry?`)) return;
+                                // task_screenshots has no authenticated grants — this
+                                // delete was silently rejected (42501) every time,
+                                // leaving its screenshots orphaned once the time_log
+                                // below was actually deleted out from under them.
+                                const res = await fetch("/api/task-screenshots/delete", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ logId: log.id }),
+                                });
+                                if (!res.ok) {
+                                  alert("Couldn't delete this entry's screenshots: " + (await res.text()));
+                                  return;
+                                }
                                 const sb = createClient();
-                                await sb.from("task_screenshots").delete().eq("log_id", log.id);
                                 await sb.from("time_logs").delete().eq("id", log.id);
                                 if (onRefresh) onRefresh();
                               }}
