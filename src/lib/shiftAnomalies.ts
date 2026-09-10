@@ -189,6 +189,11 @@ export async function checkShiftAnomalies(
     const curEnd = cur.end_time;
     if (!curEnd) continue;
     if (cur.category === "Clock Out" || next.task_name === "Clock In") continue;
+    // Break and Personal are already non-billable by design — a gap after one
+    // of these ends isn't missing billable time, whatever screenshots turn up
+    // during it. That question (did she come back late?) belongs to a
+    // different check, not this one.
+    if (isOwnTime(cur)) continue;
 
     const gapMinutes = (new Date(next.start_time).getTime() - new Date(curEnd).getTime()) / 60000;
     if (gapMinutes <= GAP_MINUTES) continue;

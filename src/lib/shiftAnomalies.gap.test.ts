@@ -107,6 +107,24 @@ describe("checkShiftAnomalies — gaps", () => {
     expect(result.findings[0].detail).not.toContain("screenshot(s) kept arriving");
   });
 
+  it("does not flag a gap after a Break, even with trailing screenshots", async () => {
+    // Break is non-billable by design — a gap after it ends isn't missing
+    // billable time, whatever screenshots turn up during it.
+    const rows = [
+      row({
+        id: 1,
+        task_name: "Break",
+        category: "Break",
+        billable: false,
+        start_time: "2026-09-09T17:50:08.000Z",
+        end_time: "2026-09-09T18:48:07.000Z",
+      }),
+      row({ id: 2, start_time: "2026-09-09T19:00:00.000Z", end_time: "2026-09-09T19:30:00.000Z" }),
+    ];
+    const result = await checkShiftAnomalies(fakeSupabase(rows, { 1: 5 }), "u1", "2026-09-09");
+    expect(result.clean).toBe(true);
+  });
+
   it("does not flag the gap between clocking out and clocking back in", async () => {
     const rows = [
       row({ id: 1, start_time: "2026-09-09T14:42:00.000Z", end_time: "2026-09-09T15:00:00.000Z" }),
