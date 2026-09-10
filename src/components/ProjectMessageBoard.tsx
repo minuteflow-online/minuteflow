@@ -6,6 +6,7 @@
 // its creator, and admins. See docs/operations-basecamp-feature.md Phase 3.
 
 import { useCallback, useEffect, useState } from "react";
+import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachment } from "@/components/AttachmentComposer";
 
 type Author = { id: string; full_name: string; username: string; avatar_url: string | null } | null;
 
@@ -16,6 +17,7 @@ interface Comment {
   body: string;
   created_at: string;
   author: Author;
+  attachments?: Attachment[];
 }
 
 interface Message {
@@ -30,6 +32,7 @@ interface Message {
   updated_at: string;
   author: Author;
   project_message_comments: Comment[];
+  attachments?: Attachment[];
 }
 
 interface ProjectMessageBoardProps {
@@ -102,6 +105,11 @@ export default function ProjectMessageBoard({
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const postComposer = useAttachmentComposer();
+  // One instance covers every thread — only one is ever open at a time (see
+  // activeMessageId), same as the reply box itself.
+  const replyComposer = useAttachmentComposer();
+  const [postingComment, setPostingComment] = useState(false);
   // activeMessageId itself is a controlled prop now (see interface comment
   // above) — null = list view; a message id = that post's own thread page.
 
@@ -134,7 +142,9 @@ export default function ProjectMessageBoard({
   }, [fetchMessages]);
 
   const handlePost = async () => {
-    if (!title.trim() || !body.trim()) {
+    // A link or a file is content on its own — a post attaching a flyer with
+    // no write-up shouldn't be blocked for lacking one.
+    if (!title.trim() || (!body.trim() && !postComposer.hasAttachment)) {
       setError("Title and message are required.");
       return;
     }
@@ -144,12 +154,18 @@ export default function ProjectMessageBoard({
       const res = await fetch("/api/project-messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: projectId, title: title.trim(), body: body.trim() }),
+        body: JSON.stringify({
+          project_id: projectId,
+          title: title.trim(),
+          body: body.trim() || postComposer.fallbackBody,
+        }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || `HTTP ${res.status}`);
       }
+      const d = await res.json().catch(() => ({}));
+      if (d.message?.id) await postComposer.flush("project_message", d.message.id);
       setTitle("");
       setBody("");
       setShowCompose(false);
@@ -259,18 +275,23 @@ export default function ProjectMessageBoard({
 
   const handlePostComment = async (messageId: string) => {
     const draft = (commentDrafts[messageId] ?? "").trim();
-    if (!draft) return;
+    if (!draft && !replyComposer.hasAttachment) return;
+    setPostingComment(true);
     try {
       const res = await fetch(`/api/project-messages/${messageId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: draft }),
+        body: JSON.stringify({ body: draft || replyComposer.fallbackBody }),
       });
       if (!res.ok) throw new Error();
+      const d = await res.json().catch(() => ({}));
+      if (d.comment?.id) await replyComposer.flush("project_message_comment", d.comment.id);
       setCommentDrafts((prev) => ({ ...prev, [messageId]: "" }));
       void fetchMessages();
     } catch {
       // leave the draft in place so the VA can retry
+    } finally {
+      setPostingComment(false);
     }
   };
 
@@ -360,6 +381,7 @@ export default function ProjectMessageBoard({
                     </div>
                   )}
                 </div>
+                <AttachmentList attachments={comment.attachments} />
                 <div className="mt-1 flex items-center gap-1.5">
                   <AuthorAvatar author={comment.author} size={16} />
                   <p className="text-[10px] text-stone/80">
@@ -371,6 +393,7 @@ export default function ProjectMessageBoard({
           </div>
         );
       })}
+      <AttachmentPicker composer={replyComposer} disabled={postingComment} />
       <div className="flex gap-1.5">
         <input
           value={commentDrafts[message.id] ?? ""}
@@ -384,9 +407,10 @@ export default function ProjectMessageBoard({
         <button
           type="button"
           onClick={() => void handlePostComment(message.id)}
-          className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+          disabled={postingComment || (!(commentDrafts[message.id] ?? "").trim() && !replyComposer.hasAttachment)}
+          className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-50"
         >
-          Reply
+          {postingComment ? "Posting…" : "Reply"}
         </button>
       </div>
     </div>
@@ -481,6 +505,7 @@ export default function ProjectMessageBoard({
                 )}
               </div>
               <p className="whitespace-pre-wrap text-[13px] text-espresso leading-snug">{activeMessage.body}</p>
+              <AttachmentList attachments={activeMessage.attachments} />
               <div className="flex items-center gap-1.5">
                 <AuthorAvatar author={activeMessage.author} size={22} />
                 <p className="text-[10px] text-stone/80">
@@ -525,11 +550,12 @@ export default function ProjectMessageBoard({
             rows={3}
             className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white resize-none"
           />
+          <AttachmentPicker composer={postComposer} disabled={posting} />
           {error && <p className="text-[11px] text-terracotta">{error}</p>}
           <button
             type="button"
             onClick={() => void handlePost()}
-            disabled={posting}
+            disabled={posting || (!title.trim() || (!body.trim() && !postComposer.hasAttachment))}
             className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
           >
             {posting ? "Posting…" : "Post"}
