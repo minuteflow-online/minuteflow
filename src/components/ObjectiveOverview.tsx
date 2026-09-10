@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Project } from "@/types/database";
 import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachment } from "@/components/AttachmentComposer";
+import { linkifyText } from "@/lib/linkify";
 
 type Stats = Record<string, { total: number; done: number }>;
 // Sentinel title marking the one project_messages row that holds a page's
@@ -191,6 +192,13 @@ function withMentions(text: string, names: string[]): React.ReactNode {
   }
   if (last < text.length) out.push(text.slice(last));
   return out;
+}
+
+/** withMentions, then linkifyText over whatever it left as plain text — mention spans it already built pass through untouched. */
+function withMentionsAndLinks(text: string, names: string[]): React.ReactNode {
+  const mentioned = withMentions(text, names);
+  const parts = Array.isArray(mentioned) ? mentioned : [mentioned];
+  return parts.map((part, i) => (typeof part === "string" ? <span key={`lk-${i}`}>{linkifyText(part)}</span> : part));
 }
 
 /** "@ Tag" button that appends @Name to a target when a member is picked. */
@@ -731,13 +739,13 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               )}
               <div className="rounded-lg border border-sand bg-cream/40 p-3">
                 <p className="text-[13px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
-                {activeThread.body && <p className="mt-1 text-[12px] text-espresso whitespace-pre-wrap">{withMentions(activeThread.body, memberNames)}</p>}
+                {activeThread.body && <p className="mt-1 text-[12px] text-espresso whitespace-pre-wrap">{withMentionsAndLinks(activeThread.body, memberNames)}</p>}
                 <AttachmentList attachments={activeThread.attachments} />
                 <p className="mt-1 text-[10px] text-bark">{formatDate(activeThread.created_at)}</p>
               </div>
               {activeThread.comments.map((c) => (
                 <div key={c.id} className="rounded-lg border border-sand bg-white px-3 py-2">
-                  <p className="text-[12px] text-espresso whitespace-pre-wrap">{withMentions(c.body, memberNames)}</p>
+                  <p className="text-[12px] text-espresso whitespace-pre-wrap">{withMentionsAndLinks(c.body, memberNames)}</p>
                   <AttachmentList attachments={c.attachments} />
                   <p className="mt-1 text-[10px] text-bark">{c.author} · {formatDate(c.created_at)}</p>
                 </div>

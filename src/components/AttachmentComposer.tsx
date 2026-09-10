@@ -37,7 +37,12 @@ export function AttachmentList({ attachments }: { attachments?: Attachment[] }) 
   const list = attachments ?? [];
   if (list.length === 0) return null;
   return (
-    <div className="mt-1 flex flex-wrap gap-1.5">
+    // items-start matters here: without it, a short link pill sitting next
+    // to a tall image thumbnail stretches to match the image's height
+    // (flexbox's default align-items: stretch) — a text-sized pill with
+    // border-radius:9999px stretched to ~160px tall renders as a giant
+    // circle instead of a chip.
+    <div className="mt-1 flex flex-wrap items-start gap-1.5">
       {list.map((a) => {
         if (a.kind === "file" && a.mime_type?.startsWith("image/") && a.signedUrl) {
           return (
