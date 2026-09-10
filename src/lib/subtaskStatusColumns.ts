@@ -81,3 +81,18 @@ export const BOARD_COLUMNS: BoardColumn[] = [
 export function columnForStatus(status: string): BoardColumn | undefined {
   return BOARD_COLUMNS.find((col) => (col.statuses as string[]).includes(status));
 }
+
+/**
+ * Column header accent, so the four columns read apart at a glance instead of
+ * differing only by label text. Same text colors StatusBadge already puts on
+ * a card's own badge (VAProjectsTab's STATUS_CLASSES) for that column's
+ * dropStatus — no new colors, just carrying an existing one up to the header.
+ */
+export const COLUMN_ACCENT_TEXT: Record<string, string> = {
+  pending: "text-stone",
+  in_progress: "text-amber-500",
+  submitted: "text-sky-600",
+  reviewed: "text-amber-600",
+  approved: "text-emerald-600",
+  completed: "text-sage",
+};
