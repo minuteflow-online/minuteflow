@@ -2097,18 +2097,37 @@ export default function DashboardPage() {
     [userId]
   );
 
-  /** Log a screenshot failure to task_screenshots (no file, just a record of what went wrong) */
+  /**
+   * Log a screenshot failure to task_screenshots (no file, just a record of
+   * what went wrong) — through /api/screenshot-marker, not a direct insert.
+   * task_screenshots intentionally has no anon/authenticated grants (every
+   * write goes through a service-role route), so a direct insert here was
+   * rejected with 42501 every single time, forever — the exact bug the
+   * extension already hit and fixed for its own marker path. This call site
+   * just never got the same fix.
+   */
   const logCaptureFailure = useCallback(
     async (logId: number, reason: string) => {
       if (!userId) return;
-      await supabase.from("task_screenshots").insert({
-        user_id: userId,
-        log_id: logId,
-        screenshot_type: "failed",
-        failure_reason: reason,
-      });
+      try {
+        const res = await fetch("/api/screenshot-marker", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            logId,
+            failureReason: reason,
+            capturedAt: new Date().toISOString(),
+          }),
+        });
+        if (!res.ok) {
+          console.error("[logCaptureFailure] marker insert failed:", await res.text());
+        }
+      } catch (err) {
+        console.error("[logCaptureFailure] marker request failed:", err);
+      }
     },
-    [userId, supabase]
+    [userId]
   );
 
   /** Capture a frame silently from the persistent stream. Returns true if captured. */
