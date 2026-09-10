@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { fetchAttachmentsByTargets } from "@/lib/messageAttachments";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,7 @@ export async function GET(request: Request) {
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   type RawComment = { id: number; body: string; created_at: string; edited_at?: string | null; author_id: string | null; author?: { full_name?: string; username?: string } | null };
-  const messages = (data ?? []).map((m) => {
+  const withComments = (data ?? []).map((m) => {
     const raw = (Array.isArray(m.project_message_comments) ? m.project_message_comments : []) as RawComment[];
     const comments = raw
       .slice()
@@ -69,6 +70,21 @@ export async function GET(request: Request) {
       comments,
     };
   });
+
+  // Attachments, batched (one query per target type) rather than one per
+  // topic/comment — same reasoning as /api/project-messages's own GET.
+  const messageIds = withComments.map((m) => m.id);
+  const commentIds = withComments.flatMap((m) => m.comments.map((c) => c.id));
+  const [attachmentsByMessage, attachmentsByComment] = await Promise.all([
+    fetchAttachmentsByTargets(supabase, "project_message", messageIds),
+    fetchAttachmentsByTargets(supabase, "project_message_comment", commentIds),
+  ]);
+
+  const messages = withComments.map((m) => ({
+    ...m,
+    attachments: attachmentsByMessage.get(String(m.id)) ?? [],
+    comments: m.comments.map((c) => ({ ...c, attachments: attachmentsByComment.get(String(c.id)) ?? [] })),
+  }));
 
   return Response.json({ messages });
 }

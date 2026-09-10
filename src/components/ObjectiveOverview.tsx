@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Project } from "@/types/database";
+import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachment } from "@/components/AttachmentComposer";
 
 type Stats = Record<string, { total: number; done: number }>;
 // Sentinel title marking the one project_messages row that holds a page's
@@ -10,8 +11,8 @@ const PAGE_OBJECTIVE_TITLE = "__page_objective__";
 
 type FileRow = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string | null };
 type SubmittedFileRow = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string };
-type CommentRow = { id: number; body: string; created_at: string; author: string; author_id: string | null };
-type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
+type CommentRow = { id: number; body: string; created_at: string; author: string; author_id: string | null; attachments?: Attachment[] };
+type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[]; attachments?: Attachment[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
 type Todo = { id: number; text: string; sort_order: number; completed: boolean };
 type TaskRider = { key: string; name: string; avatar_url: string | null; glow: "yellow" | "green" | ""; count: number };
@@ -253,6 +254,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [cBody, setCBody] = useState("");
   const [cTarget, setCTarget] = useState("");
   const [posting, setPosting] = useState(false);
+  const postComposer = useAttachmentComposer();
   // Page-objective composer (the "+ Objective" banner).
   const [objComposing, setObjComposing] = useState(false);
   const [objText, setObjText] = useState("");
@@ -261,6 +263,8 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
   const [reply, setReply] = useState("");
   const [replying, setReplying] = useState(false);
+  // One instance covers every thread — only one is ever open at a time.
+  const replyComposer = useAttachmentComposer();
   const [members, setMembers] = useState<Member[]>([]);
   // Groups start OPEN (per Toni). The set tracks the groups that have been
   // COLLAPSED, so absence = expanded; each group still pages internally so an
@@ -396,14 +400,23 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
 
   const submitPost = async () => {
     const projectId = scopeId ?? cTarget;
-    if (!projectId || !cTitle.trim()) return;
+    // A link or a file is content on its own — a post attaching a flyer with
+    // no write-up shouldn't be blocked for lacking one.
+    if (!projectId || !cTitle.trim() || (!cBody.trim() && !postComposer.hasAttachment)) return;
     setPosting(true);
     try {
-      await fetch("/api/project-messages", {
+      const res = await fetch("/api/project-messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: projectId, title: cTitle.trim(), body: cBody.trim(), category: cObjective.trim() || null }),
+        body: JSON.stringify({
+          project_id: projectId,
+          title: cTitle.trim(),
+          body: cBody.trim() || postComposer.fallbackBody,
+          category: cObjective.trim() || null,
+        }),
       });
+      const d = await res.json().catch(() => ({}));
+      if (d.message?.id) await postComposer.flush("project_message", d.message.id);
       setCTitle(""); setCObjective(""); setCBody(""); setCTarget(""); setComposing(false);
       setReloadKey((k) => k + 1);
     } finally {
@@ -440,14 +453,16 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   };
 
   const submitReply = async () => {
-    if (activeThreadId == null || !reply.trim()) return;
+    if (activeThreadId == null || (!reply.trim() && !replyComposer.hasAttachment)) return;
     setReplying(true);
     try {
-      await fetch(`/api/project-messages/${activeThreadId}/comments`, {
+      const res = await fetch(`/api/project-messages/${activeThreadId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: reply.trim() }),
+        body: JSON.stringify({ body: reply.trim() || replyComposer.fallbackBody }),
       });
+      const d = await res.json().catch(() => ({}));
+      if (d.comment?.id) await replyComposer.flush("project_message_comment", d.comment.id);
       setReply("");
       setReloadKey((k) => k + 1);
     } finally {
@@ -717,11 +732,13 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               <div className="rounded-lg border border-sand bg-cream/40 p-3">
                 <p className="text-[13px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
                 {activeThread.body && <p className="mt-1 text-[12px] text-espresso whitespace-pre-wrap">{withMentions(activeThread.body, memberNames)}</p>}
+                <AttachmentList attachments={activeThread.attachments} />
                 <p className="mt-1 text-[10px] text-bark">{formatDate(activeThread.created_at)}</p>
               </div>
               {activeThread.comments.map((c) => (
                 <div key={c.id} className="rounded-lg border border-sand bg-white px-3 py-2">
                   <p className="text-[12px] text-espresso whitespace-pre-wrap">{withMentions(c.body, memberNames)}</p>
+                  <AttachmentList attachments={c.attachments} />
                   <p className="mt-1 text-[10px] text-bark">{c.author} · {formatDate(c.created_at)}</p>
                 </div>
               ))}
@@ -729,6 +746,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             </div>
             <div className="pt-1 space-y-1">
               <MentionPicker members={members} onPick={(n) => setReply((r) => `${r}${r && !r.endsWith(" ") ? " " : ""}@${n} `)} />
+              <AttachmentPicker composer={replyComposer} disabled={replying} />
               <div className="flex items-end gap-2">
                 <textarea
                   value={reply}
@@ -740,7 +758,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                 <button
                   type="button"
                   onClick={() => void submitReply()}
-                  disabled={replying || !reply.trim()}
+                  disabled={replying || (!reply.trim() && !replyComposer.hasAttachment)}
                   className="px-3 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 shrink-0"
                 >
                   {replying ? "…" : "Reply"}
@@ -841,12 +859,13 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               rows={3}
               className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white resize-none"
             />
+            <AttachmentPicker composer={postComposer} disabled={posting} />
             <div className="flex justify-between items-center gap-2">
               <MentionPicker members={members} onPick={(n) => setCBody((b) => `${b}${b && !b.endsWith(" ") ? " " : ""}@${n} `)} />
               <button
                 type="button"
                 onClick={() => void submitPost()}
-                disabled={posting || !cTitle.trim() || (!scopeId && !cTarget)}
+                disabled={posting || !cTitle.trim() || (!scopeId && !cTarget) || (!cBody.trim() && !postComposer.hasAttachment)}
                 className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
               >
                 {posting ? "Posting…" : "Post"}
