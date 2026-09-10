@@ -9,10 +9,21 @@
 // cancelled placement.
 
 import { useMemo, useState } from "react";
-import { BOARD_COLUMNS, columnForStatus } from "@/lib/subtaskStatusColumns";
+import { BOARD_COLUMNS, columnForStatus, COLUMN_ACCENT_TEXT } from "@/lib/subtaskStatusColumns";
 import { assigneeNames } from "@/lib/subtaskDisplay";
+import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 import type { Profile } from "@/types/database";
 import type { SubtaskRow } from "@/components/VAProjectsTab";
+
+// A card counts as overdue once its due date has passed and it hasn't
+// actually been accepted yet — matches ObjectiveOverview's own
+// subtaskTitleColor: once something is approved/completed/paid, a due date
+// in the past isn't a problem anymore, so it stops being flagged.
+const RESOLVED_STATUSES = new Set(["completed", "paid", "approved"]);
+function isOverdue(sub: SubtaskRow, today: string): boolean {
+  if (!sub.due_date || RESOLVED_STATUSES.has(sub.status)) return false;
+  return sub.due_date < today;
+}
 
 interface SubtaskBoardViewProps {
   subtasks: SubtaskRow[];
@@ -50,7 +61,16 @@ export default function SubtaskBoardView({
   const [pageByCol, setPageByCol] = useState<Record<string, number>>({});
   const [dragging, setDragging] = useState<{ id: number; status: string } | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
+  // Collapsed by default — Toni's read on the always-open 560px reference
+  // list was that it ate too much space for what it's worth next to the
+  // columns, which already show every card. Same ▼/▶ toggle already used for
+  // the project groups in ObjectiveOverview's own Subtasks list.
+  const [referenceListOpen, setReferenceListOpen] = useState(false);
   const canComplete = Boolean(onMoveStatus) && dragging?.status === DRAG_FROM_STATUS;
+  const today = useMemo(
+    () => new Date().toLocaleDateString("en-CA", { timeZone: ORG_TIMEZONE }),
+    []
+  );
 
   // One pass over `subtasks` builds both the column grouping and the
   // reference list.
@@ -79,33 +99,44 @@ export default function SubtaskBoardView({
 
   return (
     <div className="flex gap-4 items-start">
-      {/* ── Persistent Subtasks reference list ──────────────────────────────── */}
-      <div className="w-56 shrink-0 space-y-2">
-        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Subtasks</p>
-        <div className="space-y-1.5 max-h-[560px] overflow-y-auto pr-1">
-          {boardSubtasks.length === 0 && hiddenCount === 0 && (
-            <p className="text-[11px] text-stone/70">No subtasks yet.</p>
-          )}
-          {hiddenCount > 0 && (
-            <p className="text-[11px] text-stone/70">
-              {hiddenCount} hidden (paid/cancelled) — see List View
-            </p>
-          )}
-          {boardSubtasks.map((sub) => (
-            <button
-              key={sub.id}
-              onClick={() => onOpenEdit(sub)}
-              className={`flex flex-col gap-1 w-full text-left py-2 px-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors cursor-pointer ${
-                editingSubId === sub.id ? "bg-parchment" : ""
-              }`}
-            >
-              <span className="text-[12px] font-semibold text-espresso leading-tight truncate">
-                {sub.task_name}
-              </span>
-              <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
-            </button>
-          ))}
-        </div>
+      {/* ── Subtasks reference list — collapsed by default, see referenceListOpen ── */}
+      <div className={`shrink-0 space-y-2 ${referenceListOpen ? "w-56" : ""}`}>
+        <button
+          type="button"
+          onClick={() => setReferenceListOpen((v) => !v)}
+          className="flex items-center gap-1.5 cursor-pointer"
+        >
+          <span className="text-bark text-[9px] w-2 shrink-0">{referenceListOpen ? "▼" : "▶"}</span>
+          <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
+            Subtasks{!referenceListOpen && boardSubtasks.length > 0 ? ` (${boardSubtasks.length})` : ""}
+          </p>
+        </button>
+        {referenceListOpen && (
+          <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+            {boardSubtasks.length === 0 && hiddenCount === 0 && (
+              <p className="text-[11px] text-stone/70">No subtasks yet.</p>
+            )}
+            {hiddenCount > 0 && (
+              <p className="text-[11px] text-stone/70">
+                {hiddenCount} hidden (paid/cancelled) — see List View
+              </p>
+            )}
+            {boardSubtasks.map((sub) => (
+              <button
+                key={sub.id}
+                onClick={() => onOpenEdit(sub)}
+                className={`flex flex-col gap-1 w-full text-left py-2 px-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors cursor-pointer ${
+                  editingSubId === sub.id ? "bg-parchment" : ""
+                }`}
+              >
+                <span className="text-[12px] font-semibold text-espresso leading-tight truncate">
+                  {sub.task_name}
+                </span>
+                <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Kanban columns ───────────────────────────────────────────────────── */}
@@ -141,13 +172,18 @@ export default function SubtaskBoardView({
                 }`}
               >
                 <div className="flex items-center justify-between px-0.5">
-                  <p className="text-[11px] font-semibold text-walnut tracking-wide uppercase">{col.label}</p>
+                  <p className={`text-[11px] font-semibold tracking-wide uppercase ${COLUMN_ACCENT_TEXT[col.key] ?? "text-walnut"}`}>
+                    {col.label}
+                  </p>
                   <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">
                     {total}
                   </span>
                 </div>
 
                 <div className="space-y-1.5 min-h-[40px]">
+                  {total === 0 && (
+                    <p className="text-[11px] text-stone/60 italic px-1 py-2">Nothing here</p>
+                  )}
                   {pageSubtasks.map((sub) => {
                     const isDraggable = Boolean(onMoveStatus) && sub.status === DRAG_FROM_STATUS;
                     return (
@@ -175,7 +211,11 @@ export default function SubtaskBoardView({
                             not one OR the other, so this card can't show less than List View
                             does for the same subtask. */}
                         <span>{[sub.account, sub.project ?? sub.category].filter(Boolean).join(" · ")}</span>
-                        {sub.due_date && <span>Due: {formatDate(sub.due_date)}</span>}
+                        {sub.due_date && (
+                          <span className={isOverdue(sub, today) ? "font-semibold text-terracotta" : undefined}>
+                            Due: {formatDate(sub.due_date)}
+                          </span>
+                        )}
                       </div>
                     </div>
                     );
