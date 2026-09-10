@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 // One form, two report types. Both live in the same `bug_reports` table with a
 // `report_type` discriminator — a feature request is just a report that isn't a
@@ -93,6 +93,80 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // Dragging over the modal, so the "Drop to attach" cue can show while the
+  // pointer is anywhere over it — not just over the file-picker button.
+  const [dragActive, setDragActive] = useState(false);
+  const dragCounter = useRef(0);
+  // Non-image files slip past the file picker's `accept="image/*"` when
+  // dragged or pasted in — and the upload route hardcodes every upload as a
+  // `.png` to Drive, so a stray PDF would land there mislabeled and unopenable.
+  // Filtering here, in the one place all three input paths funnel through,
+  // keeps that from happening regardless of how the file arrived.
+  const [skippedNotice, setSkippedNotice] = useState<string | null>(null);
+
+  const appendFiles = useCallback((picked: File[]) => {
+    if (picked.length === 0) return;
+    const images = picked.filter((f) => f.type.startsWith("image/"));
+    const skipped = picked.length - images.length;
+    setSkippedNotice(
+      skipped > 0 ? `Skipped ${skipped} file${skipped !== 1 ? "s" : ""} — screenshots only.` : null
+    );
+    if (images.length === 0) return;
+    setFiles((prev) => [...prev, ...images]);
+  }, []);
+
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Counted enter/leave rather than a plain boolean — dragging over a child
+  // element fires leave-then-enter on the parent, which would otherwise
+  // flicker the highlight off mid-drag.
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragActive(true);
+  }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragActive(false);
+    }
+  }, []);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setDragActive(false);
+      if (submitting) return;
+      appendFiles(Array.from(e.dataTransfer.files ?? []));
+    },
+    [submitting, appendFiles]
+  );
+
+  // Pasted files (a screenshot copied to the clipboard, most often). Only
+  // intercepted when the clipboard actually carries a file — a plain text
+  // paste into the title or description box is left alone.
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (submitting) return;
+      const fromFiles = Array.from(e.clipboardData?.files ?? []);
+      const fromItems = Array.from(e.clipboardData?.items ?? [])
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((f): f is File => f !== null);
+      const picked = fromFiles.length > 0 ? fromFiles : fromItems;
+      if (picked.length === 0) return;
+      e.preventDefault();
+      appendFiles(picked);
+    },
+    [submitting, appendFiles]
+  );
 
   const handleSubmit = useCallback(async () => {
     if (!title.trim() || !description.trim()) return;
@@ -100,6 +174,10 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
     setError(null);
 
     // Screenshots go to Google Drive via the upload route — never Supabase.
+    // A failed upload used to be swallowed silently (only successes were
+    // pushed to driveFileIds) and the report would submit anyway, missing
+    // evidence with no indication why. Stop and surface it instead, same as
+    // SubmitWorkModal — nothing gets sent half-attached.
     const driveFileIds: string[] = [];
     for (const file of files) {
       const fd = new FormData();
@@ -108,6 +186,15 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
       if (up.ok) {
         const d = await up.json();
         if (d.drive_file_id) driveFileIds.push(d.drive_file_id);
+      } else {
+        const e = await up.json().catch(() => ({}));
+        setError(
+          e.error
+            ? `Couldn't upload ${file.name}: ${e.error}. Nothing was sent.`
+            : `Couldn't upload ${file.name}. Nothing was sent.`
+        );
+        setSubmitting(false);
+        return;
       }
     }
 
@@ -139,7 +226,21 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-lg rounded-xl border border-sand bg-white shadow-xl">
+      <div
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        onPaste={handlePaste}
+        className={`relative w-full max-w-lg rounded-xl border bg-white shadow-xl transition-colors ${
+          dragActive ? "border-terracotta" : "border-sand"
+        }`}
+      >
+        {dragActive && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-terracotta bg-terracotta-soft/40">
+            <p className="text-[12px] font-semibold text-terracotta">Drop to attach</p>
+          </div>
+        )}
         <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
           <h3 className="text-sm font-bold text-espresso">Report a Bug or Request a Feature</h3>
           <button
@@ -299,13 +400,33 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
               type="file"
               multiple
               accept="image/*"
-              onChange={(e) => setFiles(Array.from(e.target.files || []))}
-              className="text-xs text-stone"
+              onChange={(e) => {
+                appendFiles(Array.from(e.target.files || []));
+                e.target.value = "";
+              }}
+              className="block w-full text-xs text-stone file:mr-2 file:rounded-lg file:border-0 file:bg-parchment file:px-3 file:py-1 file:text-[11px] file:font-semibold file:text-espresso hover:file:bg-sand"
             />
+            <p className="mt-1 text-[10px] text-stone/70">or drag files onto this window, or paste (Ctrl/Cmd+V)</p>
+            {skippedNotice && <p className="mt-1 text-[10px] font-medium text-amber-600">{skippedNotice}</p>}
             {files.length > 0 && (
-              <p className="mt-1 text-[11px] text-stone">
-                {files.length} file{files.length !== 1 ? "s" : ""} selected
-              </p>
+              <div className="mt-2 space-y-1">
+                {files.map((file, i) => (
+                  <div
+                    key={`${file.name}-${i}`}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-1"
+                  >
+                    <span className="truncate text-[11px] text-espresso">{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(i)}
+                      disabled={submitting}
+                      className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
