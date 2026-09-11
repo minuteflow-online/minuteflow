@@ -14,6 +14,9 @@
 import { useEffect, useState } from "react";
 import type { TaskEditorInitialTask } from "@/components/TaskEditor";
 import { timeOfDay, formatMinutesInput, formatDueTime, statusLabel } from "@/lib/taskSchedule";
+import type { RecurringScope } from "@/lib/recurringScope";
+import ConfirmModal from "@/components/ConfirmModal";
+import RecurringScopeDialog from "@/components/ui/RecurringScopeDialog";
 
 const RECURRENCE_LABEL: Record<string, string> = {
   daily: "Daily",
@@ -29,11 +32,26 @@ const dayLabel = (d: unknown) => (typeof d === "number" ? (DAY_ABBR[d] ?? String
 export default function TaskDetailsView({
   task,
   onEdit,
+  onDelete,
+  deleting = false,
   extraRows = [],
   people = [],
 }: {
   task: TaskEditorInitialTask;
   onEdit: () => void;
+  /** Deletes this task. Omit to leave the Delete button off entirely — not
+   *  every caller of this shared view has a delete path wired up (yet). The
+   *  confirmation step lives here — ConfirmModal for a one-off task,
+   *  RecurringScopeDialog (this occurrence vs. this and future) for one that
+   *  belongs to a series — the callback only fires once that's actually
+   *  confirmed, with `scope` set only for the recurring case. The caller owns
+   *  the request itself (soft vs. hard delete, refreshing its own list, error
+   *  handling). */
+  onDelete?: (scope?: RecurringScope) => void;
+  /** True while the delete request from a previous confirm is in flight —
+   *  keeps the confirm dialog's button in a busy state instead of letting a
+   *  second click fire the request twice. */
+  deleting?: boolean;
   /** Anything this view still cannot work out for itself. Appended in order,
    *  and shown with -- when blank like every other row. */
   extraRows?: Array<[string, string | null | undefined]>;
@@ -41,6 +59,8 @@ export default function TaskDetailsView({
    *  rows fall back to whatever the task already carries. */
   people?: Array<{ id: string; full_name?: string | null; username?: string | null }>;
 }) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [askingDeleteScope, setAskingDeleteScope] = useState(false);
   const str = (k: string) => {
     const v = task[k];
     if (v === null || v === undefined) return null;
@@ -189,7 +209,39 @@ export default function TaskDetailsView({
         >
           Edit Task
         </button>
+        {onDelete && (
+          <button
+            type="button"
+            // A recurring task asks which occurrences first — same question
+            // TaskEditor already asks before an edit. A one-off skips
+            // straight to the plain confirm; there's nothing to choose.
+            onClick={() => (templateId != null ? setAskingDeleteScope(true) : setConfirmingDelete(true))}
+            className="px-4 py-2 rounded-lg bg-terracotta-soft text-terracotta text-[13px] font-semibold hover:bg-terracotta/20 transition-colors cursor-pointer"
+          >
+            Delete
+          </button>
+        )}
       </div>
+
+      {confirmingDelete && onDelete && (
+        <ConfirmModal
+          title="Delete this task?"
+          message={`"${str("task_name") ?? "This task"}" will be removed from the calendar. An admin can restore it from Trash if this was a mistake.`}
+          confirmLabel="Delete Task"
+          confirming={deleting}
+          onConfirm={() => onDelete()}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
+
+      {askingDeleteScope && onDelete && (
+        <RecurringScopeDialog
+          action="delete"
+          taskName={str("task_name") ?? "This task"}
+          onChoose={(scope) => { setAskingDeleteScope(false); onDelete(scope); }}
+          onCancel={() => setAskingDeleteScope(false)}
+        />
+      )}
     </div>
   );
 }
