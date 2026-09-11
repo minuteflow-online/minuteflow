@@ -119,6 +119,55 @@ export default function TopNav({ user }: TopNavProps) {
   const pathname = usePathname();
   const supabase = createClient();
 
+  // Whether this person is currently clocked in — tracked independently of
+  // SessionProvider (TopNav renders outside it, see (app)/layout.tsx) so the
+  // tab-close warning below works from any page, including the admin panel.
+  // Kept live via realtime rather than a one-time fetch, since clocking
+  // in/out happens on the dashboard without a full page reload.
+  const [isClockedIn, setIsClockedIn] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    (async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser || cancelled) return;
+      const { data } = await supabase.from("sessions").select("clocked_in").eq("user_id", authUser.id).maybeSingle();
+      if (!cancelled) setIsClockedIn(Boolean(data?.clocked_in));
+      channel = supabase
+        .channel(`topnav-session-${authUser.id}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "sessions", filter: `user_id=eq.${authUser.id}` },
+          (payload) => {
+            const row = payload.new as { clocked_in?: boolean } | null;
+            setIsClockedIn(Boolean(row?.clocked_in));
+          }
+        )
+        .subscribe();
+    })();
+    return () => {
+      cancelled = true;
+      if (channel) void supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Closing the tab/window (or navigating away entirely) while clocked in
+  // leaves the timer running with nobody around to notice — same problem as
+  // the silent Log Out, just via the browser's own close button instead of
+  // ours. Browsers show their own generic "Leave site?" wording regardless
+  // of what's set on returnValue; the important part is triggering it at all.
+  useEffect(() => {
+    if (!isClockedIn) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isClockedIn]);
+
   // Close-task-before-logout modal state
   const [showCloseTaskModal, setShowCloseTaskModal] = useState(false);
   const [activeTaskName, setActiveTaskName] = useState("");
