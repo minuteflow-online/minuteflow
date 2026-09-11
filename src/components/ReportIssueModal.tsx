@@ -13,6 +13,35 @@ export const REPORT_TYPE_LABEL: Record<ReportType, string> = {
   feature: "Feature Request",
 };
 
+// How soon this needs attention — the filer's own call, separate from
+// status. Shared with BugReportsAdminTab and the portal's own list so a
+// report reads the same urgency everywhere it appears.
+export type ReportUrgency = "nice_to_have" | "important" | "urgent";
+
+export const REPORT_URGENCY_LABEL: Record<ReportUrgency, string> = {
+  nice_to_have: "Nice to Have",
+  important: "Important",
+  urgent: "Urgent",
+};
+
+export const REPORT_URGENCY_ORDER: ReportUrgency[] = ["urgent", "important", "nice_to_have"];
+
+// Soft badge — for showing an existing report's urgency at a glance
+// (BugReportsAdminTab, the portal list).
+export const REPORT_URGENCY_STYLES: Record<ReportUrgency, string> = {
+  nice_to_have: "bg-stone/10 text-stone border-stone/20",
+  important: "bg-amber-soft text-amber border-amber-200",
+  urgent: "bg-terracotta-soft text-terracotta border-terracotta/20",
+};
+
+// Solid — for the selected state of the urgency picker below, same treatment
+// as the bug/feature type toggle's selected state.
+const REPORT_URGENCY_SELECTED_STYLES: Record<ReportUrgency, string> = {
+  nice_to_have: "border-stone bg-stone text-white",
+  important: "border-amber bg-amber text-white",
+  urgent: "border-terracotta bg-terracotta text-white",
+};
+
 // Statuses are shared across both types (submitted → testing → fixed) so
 // filtering and the admin control stay single-path. Only the wording differs.
 export const REPORT_STATUS_LABEL: Record<ReportType, Record<string, string>> = {
@@ -84,6 +113,9 @@ export default function ReportIssueModal({ open, ...rest }: Props) {
 
 function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "open">) {
   const [reportType, setReportType] = useState<ReportType>(defaultType);
+  // Middle of the three tiers by default — neither buried as an afterthought
+  // nor defaulting to Urgent, which would make every report read as a fire.
+  const [urgency, setUrgency] = useState<ReportUrgency>("important");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [reportDate, setReportDate] = useState(new Date().toISOString().split("T")[0]);
@@ -203,6 +235,7 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         report_type: reportType,
+        urgency,
         title: title.trim(),
         description: description.trim(),
         report_date: reportDate,
@@ -220,7 +253,7 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
       const e = await res.json().catch(() => ({}));
       setError(e.error || "Failed to submit");
     }
-  }, [reportType, title, description, reportDate, files, tags, onSubmitted, onClose]);
+  }, [reportType, urgency, title, description, reportDate, files, tags, onSubmitted, onClose]);
 
   const ph = PLACEHOLDERS[reportType];
 
@@ -281,6 +314,32 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
                   <span className={`text-[10px] ${reportType === value ? "text-white/80" : "text-stone"}`}>
                     {hint}
                   </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Urgency — separate from status: this is when it's needed by, not
+              how far along it is. */}
+          <div>
+            <p className="mb-2 text-[11px] font-semibold tracking-wide text-walnut">
+              How urgent is this? <span className="text-terracotta">*</span>
+            </p>
+            <div className="flex gap-2">
+              {/* Least-to-most urgent, left to right — REPORT_URGENCY_ORDER is
+                  sorted the other way (most urgent first) for triage lists. */}
+              {(["nice_to_have", "important", "urgent"] as ReportUrgency[]).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setUrgency(value)}
+                  className={`flex-1 cursor-pointer rounded-lg border px-3 py-2 text-center text-[11px] font-semibold transition-all ${
+                    urgency === value
+                      ? REPORT_URGENCY_SELECTED_STYLES[value]
+                      : "border-sand bg-white text-bark hover:border-terracotta"
+                  }`}
+                >
+                  {REPORT_URGENCY_LABEL[value]}
                 </button>
               ))}
             </div>

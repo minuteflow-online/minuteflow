@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BugReportNotes, { type BugReportNotesHandle } from "@/components/BugReportNotes";
 import BugReportTagEditor from "@/components/BugReportTagEditor";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import {
+  REPORT_URGENCY_LABEL,
+  REPORT_URGENCY_ORDER,
+  REPORT_URGENCY_STYLES,
+  type ReportUrgency,
+} from "@/components/ReportIssueModal";
 
 /**
  * Bugs and feature requests in the admin panel.
@@ -23,6 +29,7 @@ interface BugReport {
   username: string;
   full_name: string;
   report_type: ReportType | null;
+  urgency: ReportUrgency | null;
   title: string;
   description: string;
   report_date: string;
@@ -70,6 +77,7 @@ export default function BugReportsAdminTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<"all" | ReportType>("all");
+  const [urgencyFilter, setUrgencyFilter] = useState<"all" | ReportUrgency>("all");
   const [statusFilter, setStatusFilter] = useState<StatusChoice>("submitted");
   const [reporterFilter, setReporterFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -159,6 +167,27 @@ export default function BugReportsAdminTab({
     return ok;
   }, []);
 
+  const updateUrgency = useCallback(async (id: number, urgency: ReportUrgency) => {
+    setUpdating((u) => ({ ...u, [id]: true }));
+    setError(null);
+    try {
+      const res = await fetch(`/api/bug-reports?id=${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urgency }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || "Could not update urgency");
+      }
+      setReports((rs) => rs.map((r) => (r.id === id ? { ...r, urgency } : r)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update urgency");
+    } finally {
+      setUpdating((u) => ({ ...u, [id]: false }));
+    }
+  }, []);
+
   const setArchived = useCallback(async (id: number, archived: boolean) => {
     setUpdating((u) => ({ ...u, [id]: true }));
     setError(null);
@@ -202,17 +231,27 @@ export default function BugReportsAdminTab({
   const scoped = reports.filter(
     (r) =>
       (typeFilter === "all" || (r.report_type || "bug") === typeFilter) &&
+      (urgencyFilter === "all" || (r.urgency || "important") === urgencyFilter) &&
       (reporterFilter === "all" || r.user_id === reporterFilter) &&
       (tagFilter === "all" || (r.tags ?? []).includes(tagFilter))
   );
   // The archive is a separate shelf: everything else is the working list, so a
-  // status view never mixes archived reports back in.
-  const baseVisible =
+  // status view never mixes archived reports back in. Within that, most
+  // urgent first — this is the list a reviewer opens to decide what to work
+  // on next, so it should already read in that order rather than making them
+  // filter to find the fires.
+  const baseVisible = (
     statusFilter === "archived"
       ? scoped.filter((r) => r.archived_at)
       : scoped.filter(
           (r) => !r.archived_at && (statusFilter === "all" || r.status === statusFilter)
-        );
+        )
+  )
+    .slice()
+    .sort((a, b) => {
+      const rank = REPORT_URGENCY_ORDER.indexOf(a.urgency || "important") - REPORT_URGENCY_ORDER.indexOf(b.urgency || "important");
+      return rank !== 0 ? rank : b.created_at.localeCompare(a.created_at);
+    });
   // Pin the report just acted on back into view if the status/archive change
   // pushed it out of the current filter — see keepVisibleId above.
   const keptReport = keepVisibleId != null ? scoped.find((r) => r.id === keepVisibleId) : undefined;
@@ -258,6 +297,18 @@ export default function BugReportsAdminTab({
             <option value="all">All types</option>
             <option value="bug">Bugs</option>
             <option value="feature">Features</option>
+          </select>
+          <select
+            value={urgencyFilter}
+            onChange={(e) => { setUrgencyFilter(e.target.value as "all" | ReportUrgency); setPage(1); setKeepVisibleId(null); setPendingStatus(null); }}
+            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+          >
+            <option value="all">Any urgency</option>
+            {REPORT_URGENCY_ORDER.map((u) => (
+              <option key={u} value={u}>
+                {REPORT_URGENCY_LABEL[u]}
+              </option>
+            ))}
           </select>
           <select
             value={reporterFilter}
@@ -336,6 +387,11 @@ export default function BugReportsAdminTab({
                     >
                       {type}
                     </span>
+                    <span
+                      className={`rounded-full border px-2 py-[1px] text-[9px] font-semibold ${REPORT_URGENCY_STYLES[report.urgency || "important"]}`}
+                    >
+                      {REPORT_URGENCY_LABEL[report.urgency || "important"]}
+                    </span>
                     <span className="text-[13px] font-semibold text-espresso">{report.title}</span>
                     {(report.tags ?? []).map((tag) => (
                       <span
@@ -412,6 +468,26 @@ export default function BugReportsAdminTab({
                           )
                         }
                       />
+
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                          Urgency
+                        </span>
+                        {REPORT_URGENCY_ORDER.map((u) => (
+                          <button
+                            key={u}
+                            disabled={updating[report.id] || (report.urgency || "important") === u}
+                            onClick={() => updateUrgency(report.id, u)}
+                            className={`rounded-lg px-3 py-1 text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                              (report.urgency || "important") === u
+                                ? "bg-sage text-white"
+                                : "bg-stone/10 text-stone hover:bg-stone/20"
+                            }`}
+                          >
+                            {REPORT_URGENCY_LABEL[u]}
+                          </button>
+                        ))}
+                      </div>
 
                       <BugReportNotes
                         ref={(el) => { noteRefs.current[report.id] = el; }}

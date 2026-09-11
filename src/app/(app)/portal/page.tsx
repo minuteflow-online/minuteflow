@@ -12,7 +12,10 @@ import ReportIssueModal, {
   BugIcon,
   REPORT_STATUS_LABEL,
   REPORT_TYPE_LABEL,
+  REPORT_URGENCY_LABEL,
+  REPORT_URGENCY_STYLES,
   type ReportType,
+  type ReportUrgency,
 } from "@/components/ReportIssueModal";
 import BugReportNotes from "@/components/BugReportNotes";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -2255,6 +2258,7 @@ interface BugReport {
   username: string;
   full_name: string;
   report_type: ReportType;
+  urgency: ReportUrgency | null;
   title: string;
   description: string;
   report_date: string;
@@ -2555,6 +2559,9 @@ function BugReportTab({
                 >
                   <span className={`shrink-0 text-[9px] font-semibold px-1.5 py-[1px] rounded-full ${typeStyle.bg} ${typeStyle.text} border ${typeStyle.border}`}>
                     {reportType === "bug" ? "Bug" : "Feature"}
+                  </span>
+                  <span className={`shrink-0 text-[9px] font-semibold px-1.5 py-[1px] rounded-full border ${REPORT_URGENCY_STYLES[report.urgency || "important"]}`}>
+                    {REPORT_URGENCY_LABEL[report.urgency || "important"]}
                   </span>
                   <span className="text-[13px] font-medium text-espresso truncate">{report.title}</span>
                   {(report.tags ?? []).map((tag) => (
