@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 
 /**
@@ -21,18 +21,32 @@ interface BugReportNote {
   created_at: string;
 }
 
-export default function BugReportNotes({
-  reportId,
-  currentUserId,
-  timezone,
-  canDelete = false,
-}: {
-  reportId: number;
-  currentUserId?: string;
-  timezone: string;
-  /** Notes can only be removed while the report is still Submitted. */
-  canDelete?: boolean;
-}) {
+/**
+ * Lets a parent that also drives status changes (BugReportsAdminTab) flush an
+ * in-progress note before moving a report to Fixed/Testing/Dismissed — a
+ * screenshot attached as proof of the fix is otherwise just sitting in this
+ * component's local state, invisible to the status buttons next to it, and
+ * changing status was leaving it behind unsaved.
+ */
+export type BugReportNotesHandle = {
+  /** True when there's unsaved text or a pending attachment in the composer. */
+  hasDraft: () => boolean;
+  /** Submits the draft, same as clicking "Add note". No-op (returns true) if
+   *  there's nothing to save. Returns false if the save failed, so the caller
+   *  can hold off on the status change rather than lose it. */
+  flush: () => Promise<boolean>;
+};
+
+const BugReportNotes = forwardRef<
+  BugReportNotesHandle,
+  {
+    reportId: number;
+    currentUserId?: string;
+    timezone: string;
+    /** Notes can only be removed while the report is still Submitted. */
+    canDelete?: boolean;
+  }
+>(function BugReportNotes({ reportId, currentUserId, timezone, canDelete = false }, ref) {
   const [notes, setNotes] = useState<BugReportNote[]>([]);
   const [loading, setLoading] = useState(true);
   // Set when the notes table isn't there yet — the section hides itself rather
@@ -84,10 +98,10 @@ export default function BugReportNotes({
     [reportId]
   );
 
-  const addNote = useCallback(async () => {
+  const addNote = useCallback(async (): Promise<boolean> => {
     const body = draft.trim();
     // An image on its own is a valid note — "here's what I mean" needs no caption.
-    if (!body && files.length === 0) return;
+    if (!body && files.length === 0) return true;
     setSaving(true);
     setError(null);
     try {
@@ -114,12 +128,23 @@ export default function BugReportNotes({
       setNotes((n) => [...n, data.note]);
       setDraft("");
       setFiles([]);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add note");
+      return false;
     } finally {
       setSaving(false);
     }
   }, [draft, files, reportId]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      hasDraft: () => draft.trim().length > 0 || files.length > 0,
+      flush: addNote,
+    }),
+    [draft, files, addNote]
+  );
 
   if (loading || unavailable) return null;
 
@@ -265,4 +290,6 @@ export default function BugReportNotes({
       )}
     </div>
   );
-}
+});
+
+export default BugReportNotes;
