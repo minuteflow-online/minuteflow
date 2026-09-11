@@ -7,6 +7,15 @@ import { sendDriveFilesToTelegram } from "@/lib/driveFetch";
 
 export const dynamic = "force-dynamic";
 
+const VALID_URGENCY = new Set(["nice_to_have", "important", "urgent"]);
+
+/** Falls back to "important" for anything missing or unrecognized, same as
+ *  the DB column's own default — never rejects a report over a bad urgency
+ *  value, just normalizes it. */
+function normalizeUrgency(value: unknown): string {
+  return typeof value === "string" && VALID_URGENCY.has(value) ? value : "important";
+}
+
 /**
  * Tags are free text, so they are lowercased and de-duplicated on the way in —
  * otherwise "Invoices", "invoices" and " invoices" become three separate topics
@@ -62,7 +71,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   const body = await request.json();
-  const { title, description, report_date, drive_file_ids, report_type, tags } = body;
+  const { title, description, report_date, drive_file_ids, report_type, tags, urgency } = body;
 
   if (!title?.trim() || !description?.trim()) {
     return Response.json({ error: "title and description are required" }, { status: 400 });
@@ -71,6 +80,7 @@ export async function POST(request: NextRequest) {
   // One endpoint serves both — anything that isn't an explicit feature request
   // is a bug, which keeps older clients posting bugs exactly as before.
   const reportType = report_type === "feature" ? "feature" : "bug";
+  const reportUrgency = normalizeUrgency(urgency);
 
   const { data, error } = await supabase
     .from("bug_reports")
@@ -79,6 +89,7 @@ export async function POST(request: NextRequest) {
       username: profile?.username || "",
       full_name: profile?.full_name || "",
       report_type: reportType,
+      urgency: reportUrgency,
       title: title.trim(),
       description: description.trim(),
       report_date: report_date || new Date().toISOString().split("T")[0],
@@ -91,17 +102,23 @@ export async function POST(request: NextRequest) {
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
+  const URGENCY_EMOJI: Record<string, string> = { urgent: "🔴", important: "🟡", nice_to_have: "⚪" };
+  const URGENCY_LABEL: Record<string, string> = { urgent: "Urgent", important: "Important", nice_to_have: "Nice to have" };
+
   // Role-based routing: bugs and ideas notify IT (Neil) and the Founder (Toni),
   // in-app (bell) + Telegram DM. Best-effort; the report is already saved.
   {
     const label = reportType === "feature" ? "idea" : "bug";
     const emoji = reportType === "feature" ? "💡" : "🐞";
     const from = profile?.full_name || profile?.username || "Someone";
+    // Only called out inline when it's actually urgent — otherwise the
+    // notification text stays exactly as it read before this existed.
+    const urgencyNote = reportUrgency === "urgent" ? " (urgent)" : "";
     await notifyRecipients({
       roles: ["founder"],
       departments: ["IT"],
       actorId: user.id,
-      content: `${from} submitted a ${label}: ${title.trim()}`,
+      content: `${from} submitted a ${label}${urgencyNote}: ${title.trim()}`,
       telegramMessage: `${emoji} <b>New ${label}</b> from ${esc(from)}\n\n${esc(title.trim())}`,
       topic: "bugs",
     });
@@ -117,6 +134,7 @@ export async function POST(request: NextRequest) {
       "bugs",
       [
         `${heading} from ${mention(who, profile?.telegram_chat_id)}`,
+        `${URGENCY_EMOJI[reportUrgency]} ${esc(URGENCY_LABEL[reportUrgency])}`,
         esc(title.trim()),
         "",
         esc(desc.length > 400 ? desc.slice(0, 400) + "…" : desc),
@@ -203,6 +221,7 @@ export async function PATCH(request: NextRequest) {
     description,
     drive_file_ids,
     tags,
+    urgency,
     dismiss_reason,
   } = body;
 
@@ -252,6 +271,21 @@ export async function PATCH(request: NextRequest) {
       );
     }
     updates.tags = normalizeTags(tags);
+  }
+
+  // Urgency is the filer's own call about how soon they need it, so it
+  // follows the same edit window as tags — a reviewer can reassess it any
+  // time during triage, and the filer can adjust it themselves only while
+  // nobody has started work yet.
+  if (urgency !== undefined) {
+    const canSetUrgency = isReviewer || (isOwner && existing.status === "submitted");
+    if (!canSetUrgency) {
+      return Response.json(
+        { error: "This report can no longer be edited. Add a note instead." },
+        { status: 409 }
+      );
+    }
+    updates.urgency = normalizeUrgency(urgency);
   }
 
   // Status, reviewer notes and archiving stay reviewer-only, whether or not the
