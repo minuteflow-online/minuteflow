@@ -119,6 +119,59 @@ export default function TopNav({ user }: TopNavProps) {
   const pathname = usePathname();
   const supabase = createClient();
 
+  // Whether this person is currently clocked in — tracked independently of
+  // SessionProvider (TopNav renders outside it, see (app)/layout.tsx) so the
+  // "still clocked in" warnings below work from any page, including the
+  // admin panel. Kept live via realtime rather than a one-time fetch, since
+  // clocking in/out happens on the dashboard without a full page reload.
+  const [isClockedIn, setIsClockedIn] = useState(false);
+  // The "you're still clocked in" confirmation shown on Log out when there's
+  // no active task to close (see handleLogoutClick) — VAs were logging out
+  // this way with nothing forcing them to notice they never clocked out.
+  const [showStillClockedInModal, setShowStillClockedInModal] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    (async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser || cancelled) return;
+      const { data } = await supabase.from("sessions").select("clocked_in").eq("user_id", authUser.id).maybeSingle();
+      if (!cancelled) setIsClockedIn(Boolean(data?.clocked_in));
+      channel = supabase
+        .channel(`topnav-session-${authUser.id}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "sessions", filter: `user_id=eq.${authUser.id}` },
+          (payload) => {
+            const row = payload.new as { clocked_in?: boolean } | null;
+            setIsClockedIn(Boolean(row?.clocked_in));
+          }
+        )
+        .subscribe();
+    })();
+    return () => {
+      cancelled = true;
+      if (channel) void supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Closing the tab/window (or navigating away entirely) while clocked in
+  // leaves the timer running with nobody around to notice — same problem as
+  // the silent Log Out, just via the browser's own close button instead of
+  // ours. Browsers show their own generic "Leave site?" wording regardless
+  // of what's set on returnValue; the important part is triggering it at all.
+  useEffect(() => {
+    if (!isClockedIn) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isClockedIn]);
+
   // Close-task-before-logout modal state
   const [showCloseTaskModal, setShowCloseTaskModal] = useState(false);
   const [activeTaskName, setActiveTaskName] = useState("");
@@ -175,11 +228,22 @@ export default function TopNav({ user }: TopNavProps) {
       setActiveLogId(task.logId ? parseInt(task.logId, 10) : null);
       setActiveTaskStartTime(task.start_time || null);
       setShowCloseTaskModal(true);
+    } else if (sessionData?.clocked_in) {
+      // Clocked in with no active task (between tasks, or on a break) — this
+      // was the silent path: Log out went straight to signOut() with nothing
+      // clocking them out first, so the timer kept running unnoticed. Warn
+      // instead of signing out immediately.
+      setShowStillClockedInModal(true);
     } else {
-      // No active task — sign out immediately
+      // Not clocked in at all — nothing to warn about.
       await signOut();
     }
   }, [supabase]);
+
+  const confirmLogoutStillClockedIn = useCallback(async () => {
+    setShowStillClockedInModal(false);
+    await signOut();
+  }, []);
 
   const handleCloseTaskAndLogout = useCallback(async () => {
     if (!logoutTaskStatus || (!logoutClientMemo.trim() && !logoutInternalMemo.trim())) return;
@@ -679,6 +743,37 @@ export default function TopNav({ user }: TopNavProps) {
                   className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loggingOut ? "Closing & signing out..." : "Close Task & Sign Out"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Still Clocked In Warning (Log out, no active task) ─── */}
+      {showStillClockedInModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md mx-4">
+            <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
+              <h3 className="text-sm font-bold text-espresso">You&apos;re still clocked in</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-[13px] text-espresso leading-relaxed">
+                Logging out now won&apos;t clock you out — your timer keeps running until someone
+                does. Go back and clock out first, or log out anyway?
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowStillClockedInModal(false)}
+                  className="flex-1 py-2.5 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
+                >
+                  Go Back
+                </button>
+                <button
+                  onClick={() => void confirmLogoutStillClockedIn()}
+                  className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840]"
+                >
+                  Log Out Anyway
                 </button>
               </div>
             </div>
