@@ -50,7 +50,7 @@ import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
 import { applyCorrection } from "@/lib/applyCorrection";
-import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
+import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, hasModerationAccess, canGrantRoles } from "@/lib/financialAccess";
 import { explainScreenshotReason } from "@/lib/screenshots";
 
 // Each of these renders behind its own `activeTab === "..."` check below, so
@@ -73,6 +73,7 @@ const VaBroadcastsAdminTab = dynamic(() => import("@/components/VaBroadcastsAdmi
 const EmailStatusTab = dynamic(() => import("@/components/EmailStatusTab"), { loading: tabLoading });
 const TaskAssignmentsAdminTab = dynamic(() => import("@/components/TaskAssignmentsAdminTab"), { loading: tabLoading });
 const FixedPayTasksTab = dynamic(() => import("@/components/FixedPayTasksTab"), { loading: tabLoading });
+const AdminConversationsTab = dynamic(() => import("@/components/AdminConversationsTab"), { loading: tabLoading });
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -184,7 +185,7 @@ type ScreenshotPersonDay = {
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password" | "conversations";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -343,6 +344,15 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "conversations",
+    label: "Private Messages",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+      </svg>
+    ),
+  },
+  {
     id: "va_resources",
     label: "VA Resources",
     icon: (
@@ -461,7 +471,7 @@ const ADMIN_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "activity",
     label: "Activity",
-    tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections", "conversations"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "billing",
@@ -502,6 +512,13 @@ const ADMIN_ONLY_TABS: AdminTab[] = ["invoices", "financial", "paystubs", "email
 // hasAccountsClientsAccess in financialAccess.ts.
 const ACCOUNTS_CLIENTS_TABS: AdminTab[] = ["accounts", "clients"];
 
+// Reading people's private conversations is a bigger step than the rest of
+// the broad admin tier grants — restricted to the same moderation tier
+// (Admin, Manager, CEO/Founder) that already moderates Requests/Feedback/
+// Reviews. Coordinator and Specialist, who otherwise get broad access, are
+// deliberately excluded. See hasModerationAccess in financialAccess.ts.
+const MODERATION_TABS: AdminTab[] = ["conversations"];
+
 // Which admin tabs each admin_permissions bundle (see adminPermissions.ts)
 // unlocks for a plain "va" role account. Kept here rather than in the shared
 // helper since it's a page-rendering concern, not a permission-checking one.
@@ -513,7 +530,8 @@ function filterGroupsForRole(
   groups: SidebarGroup[],
   isFullAdmin: boolean,
   allowedTabs: Set<AdminTab> | null,
-  canSeeAccountsClients: boolean
+  canSeeAccountsClients: boolean,
+  canSeeConversations: boolean
 ): SidebarGroup[] {
   let result = groups;
   if (!isFullAdmin) {
@@ -524,6 +542,11 @@ function filterGroupsForRole(
   if (!canSeeAccountsClients) {
     result = result
       .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !ACCOUNTS_CLIENTS_TABS.includes(t.id)) }))
+      .filter((g) => g.tabs.length > 0);
+  }
+  if (!canSeeConversations) {
+    result = result
+      .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !MODERATION_TABS.includes(t.id)) }))
       .filter((g) => g.tabs.length > 0);
   }
   if (allowedTabs) {
@@ -590,6 +613,10 @@ export default function AdminPage() {
   // not this). See hasAdminPanelAccess in financialAccess.ts.
   const hasBroadAccess = hasAdminPanelAccess(currentUserProfile);
   const canSeeAccountsClients = hasAccountsClientsAccess(currentUserProfile);
+  // Private-messages oversight is moderation-tier only — narrower than
+  // hasBroadAdminAccess (Coordinator/Specialist excluded). See
+  // hasModerationAccess in financialAccess.ts.
+  const canSeeConversations = hasModerationAccess(currentUserProfile) && !previewAsIT;
 
   // A plain "va" role account only reaches /admin at all if the layout gate
   // let them in via admin_permissions (see (admin)/layout.tsx) — restrict
@@ -622,10 +649,14 @@ export default function AdminPage() {
       setActiveTab("overview");
       return;
     }
+    if (!canSeeConversations && MODERATION_TABS.includes(activeTab)) {
+      setActiveTab("overview");
+      return;
+    }
     if (restrictedTabs && !restrictedTabs.has(activeTab)) {
       setActiveTab("overview");
     }
-  }, [loading, isFullAdmin, activeTab, restrictedTabs, canSeeAccountsClients, setActiveTab]);
+  }, [loading, isFullAdmin, activeTab, restrictedTabs, canSeeAccountsClients, canSeeConversations, setActiveTab]);
 
   // Screenshot viewer state
   const [selectedScreenshot, setSelectedScreenshot] = useState<TaskScreenshot | null>(null);
@@ -1526,7 +1557,7 @@ export default function AdminPage() {
           </div>
         </div>
         <nav className="flex-1 py-2 px-2 overflow-y-auto">
-          {filterGroupsForRole(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS, isFullAdmin, restrictedTabs, canSeeAccountsClients).map((group) => {
+          {filterGroupsForRole(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS, isFullAdmin, restrictedTabs, canSeeAccountsClients, canSeeConversations).map((group) => {
             if (!group.label) {
               // Pinned tabs (Overview) — no group header
               return group.tabs.map((tab) => {
@@ -1664,6 +1695,7 @@ export default function AdminPage() {
                 {activeTab === "sorting" && "Review sorting task entries and assign billing"}
                 {activeTab === "password" && "Update your admin password"}
                 {activeTab === "alerts" && "Track screen capture drops and VA responses"}
+                {activeTab === "conversations" && "Review private conversations between team members"}
                 {activeTab === "va_resources" && "Manage onboarding, SOPs, coaching, and job postings for VAs"}
                 {activeTab === "va_feedback" && "Review feedback submitted by your team"}
                 {activeTab === "va_requests" && "Approve or deny time off, schedule change, and other VA requests"}
@@ -1769,6 +1801,10 @@ export default function AdminPage() {
 
           {activeTab === "alerts" && (
             <CaptureAlertsTab orgTimezone={orgTimezone} />
+          )}
+
+          {activeTab === "conversations" && canSeeConversations && (
+            <AdminConversationsTab />
           )}
 
           {activeTab === "organization" && (
