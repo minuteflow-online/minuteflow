@@ -616,12 +616,7 @@ export default function AdminPage() {
   // Private-messages oversight is moderation-tier only — narrower than
   // hasBroadAdminAccess (Coordinator/Specialist excluded). See
   // hasModerationAccess in financialAccess.ts.
-  // TEMP FOR TESTING (2026-09-11, requested by Neil in chat): widened to the
-  // full admin-panel tier so a Specialist/IT account can see and test the
-  // tab before it ships. Revert to `hasModerationAccess(currentUserProfile)`
-  // once confirmed working — see matching TEMP comments in
-  // src/app/api/admin/conversations/route.ts and .../[id]/messages/route.ts.
-  const canSeeConversations = hasAdminPanelAccess(currentUserProfile) && !previewAsIT;
+  const canSeeConversations = hasModerationAccess(currentUserProfile) && !previewAsIT;
 
   // A plain "va" role account only reaches /admin at all if the layout gate
   // let them in via admin_permissions (see (admin)/layout.tsx) — restrict

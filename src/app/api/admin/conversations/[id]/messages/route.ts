@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
-import { hasAdminPanelAccess } from "@/lib/financialAccess";
+import { hasModerationAccess } from "@/lib/financialAccess";
 import { fetchAttachmentsByTargets } from "@/lib/messageAttachments";
 
 export const dynamic = "force-dynamic";
@@ -14,12 +14,7 @@ async function requireModerator() {
   } = await supabase.auth.getUser();
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
-  // TEMP FOR TESTING (2026-09-11, requested by Neil in chat): widened from
-  // hasModerationAccess to hasAdminPanelAccess so a Specialist/IT account
-  // can see and test this before it ships. Revert to hasModerationAccess
-  // once confirmed working — matching TEMP comment in
-  // src/app/(admin)/admin/page.tsx and ../route.ts.
-  if (!hasAdminPanelAccess(profile)) return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
+  if (!hasModerationAccess(profile)) return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
   return { user };
 }
 
