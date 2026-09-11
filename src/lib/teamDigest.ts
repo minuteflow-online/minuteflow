@@ -37,6 +37,13 @@ function orgDate(offsetDays = 0): string {
   return d.toLocaleDateString("en-CA", { timeZone: ORG_TIMEZONE });
 }
 
+/** Whole days from one YYYY-MM-DD to another, positive when `to` is later. */
+function daysBetweenDates(from: string, to: string): number {
+  const a = new Date(from + "T00:00:00Z");
+  const b = new Date(to + "T00:00:00Z");
+  return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+}
+
 function longDate(iso: string): string {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", {
     timeZone: ORG_TIMEZONE,
@@ -390,15 +397,24 @@ export async function buildMeetingReminder(
 
   const { data } = await supabase
     .from("assigned_tasks")
-    .select("task_name, due_time, status")
+    .select("task_name, due_time, status, updated_at")
     .eq("due_date", date)
     .ilike("task_name", "%meeting%")
     .is("deleted_at", null)
     .is("archived_at", null);
 
-  const live = (data ?? []).filter(
-    (t) => !["approved", "completed", "cancelled"].includes(String(t.status ?? ""))
-  );
+  // A handful of future weeks all sit in the task list at once, so a bulk
+  // "complete" click is one row-off from landing on next month's meeting
+  // instead of today's. That already happened once and ate a reminder with
+  // no error anywhere. A completion recorded more than a day before the
+  // meeting is even due reads as that mistake, not an early wrap-up, so it
+  // still counts as live rather than silently dropping the reminder.
+  const live = (data ?? []).filter((t) => {
+    if (!["approved", "completed", "cancelled"].includes(String(t.status ?? ""))) return true;
+    const completedDate = t.updated_at ? String(t.updated_at).slice(0, 10) : null;
+    if (!completedDate) return false;
+    return daysBetweenDates(completedDate, date) > 1;
+  });
   if (live.length === 0) return null;
 
   const lines: string[] = [];
