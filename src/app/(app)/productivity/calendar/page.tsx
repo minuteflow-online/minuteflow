@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import TaskEditor, { type TaskEditorHandle, type TaskEditorInitialTask } from "@/components/TaskEditor";
 import TaskDetailsView from "@/components/TaskDetailsView";
+import type { RecurringScope } from "@/lib/recurringScope";
 import Section from "@/components/ui/Section";
 import {
   type RawTask,
@@ -1058,6 +1059,38 @@ export default function ProductivityCalendarPage() {
     },
     [refreshAfterScheduleChange, fetchCompareSchedules]
   );
+
+  // Delete, from the Details tab's Delete button. Soft — the same deleted_at
+  // flag the Trash view elsewhere already reads and can restore from — not
+  // the permanent admin-only DELETE endpoint. Confirmation (and, for a
+  // recurring task, the this/future choice) happens inside TaskDetailsView;
+  // this only runs once that's actually confirmed. Same scope param the
+  // Task Assignments admin tab's own trash action already sends — the API
+  // only removes later occurrences when it's explicitly "future" (see
+  // src/app/api/assigned-tasks/[id]/route.ts's trash branch).
+  const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
+  const deleteTask = useCallback(async (taskId: number, scope?: RecurringScope) => {
+    setDeletingTaskId(taskId);
+    try {
+      const res = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deleted_at: new Date().toISOString(), ...(scope ? { scope } : {}) }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || `HTTP ${res.status}`);
+      }
+      setShowForm(false);
+      setEditingBlockId(null);
+      setEditingTaskFull(null);
+      await refreshAfterScheduleChange();
+    } catch (err) {
+      alert(`Couldn't delete this task: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setDeletingTaskId(null);
+    }
+  }, [refreshAfterScheduleChange]);
 
   const renderQueueButton = (task: RawTask, vaId: string | null) =>
     task.status === "pending" && (
@@ -4022,7 +4055,13 @@ export default function ProductivityCalendarPage() {
               )}
 
               {editingBlockId && editingTaskFull && modalTab === "details" ? (
-                <TaskDetailsView task={editingTaskFull} people={teamMembers} onEdit={() => setModalTab("edit")} />
+                <TaskDetailsView
+                  task={editingTaskFull}
+                  people={teamMembers}
+                  onEdit={() => setModalTab("edit")}
+                  onDelete={(scope) => void deleteTask(editingTaskFull.id as number, scope)}
+                  deleting={deletingTaskId === editingTaskFull.id}
+                />
               ) : (
               <>
               {!editingBlockId && (() => {
