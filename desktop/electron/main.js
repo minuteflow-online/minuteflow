@@ -7,13 +7,24 @@
 //   2. Encrypted-at-rest storage of the Supabase refresh token, via
 //      safeStorage (OS keychain / DPAPI), so a login survives an app
 //      restart without the token sitting around as plain text.
-const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session } = require("electron");
+const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { SUPABASE_URL, API_BASE } = require("./config");
 
 const isDev = !app.isPackaged;
 const AUTH_FILE = path.join(app.getPath("userData"), "auth.dat");
+
+// Mirrors the web app's TopNav beforeunload warning (src/components/TopNav.tsx)
+// for the same underlying complaint — quitting while still clocked in leaves
+// time silently untracked. The renderer pushes this via
+// window.mfDesktop.setClockedIn() whenever sessionRow.clocked_in changes
+// (App.tsx); the main process can't read React state directly, and the
+// close handler below needs an answer before the window is gone.
+let isClockedIn = false;
+ipcMain.on("mf:set-clocked-in", (_event, value) => {
+  isClockedIn = Boolean(value);
+});
 
 // ── Single instance ──────────────────────────────────────────────────────
 // Two launches sharing one userData dir (same OS user, e.g. the app opened
@@ -85,6 +96,33 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  // Intercept the close (X button, Alt+F4, etc.) rather than the app quitting
+  // silently mid-shift. `confirmedQuit` short-circuits the dialog on the
+  // second pass once the user has actually said yes — win.destroy() would
+  // also skip re-firing 'close', but destroy() bypasses the renderer's own
+  // cleanup (e.g. saving in-flight state), so this asks the window to close
+  // normally instead.
+  let confirmedQuit = false;
+  win.on("close", (e) => {
+    if (confirmedQuit || !isClockedIn) return;
+    e.preventDefault();
+
+    const choice = dialog.showMessageBoxSync(win, {
+      type: "warning",
+      buttons: ["Quit Anyway", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      title: "Still clocked in",
+      message: "You're still clocked in.",
+      detail: "Quitting now stops time tracking without clocking out. Quit anyway?",
+    });
+
+    if (choice === 0) {
+      confirmedQuit = true;
+      win.close();
+    }
+  });
 }
 
 if (gotSingleInstanceLock) {
