@@ -25,7 +25,7 @@ import { fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshot
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
 import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
-import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { hasBroadAdminAccess, hasModerationAccess } from "@/lib/financialAccess";
 import { useAccountsAndClients } from "@/hooks/useAccountsAndClients";
 import type {
   Profile,
@@ -3691,7 +3691,7 @@ export default function DashboardPage() {
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
             {/* Left: Messages, where conversation lives rather than buried under
                 the task widgets on the right. */}
-            {userId && <DashboardMessagePanel currentUserId={userId} />}
+            {userId && <DashboardMessagePanel currentUserId={userId} canModerate={hasModerationAccess(profile)} />}
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
               <TaskWidgetsTabs

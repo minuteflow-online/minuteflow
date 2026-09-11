@@ -1,11 +1,17 @@
 "use client";
 
-// The dashboard's message inbox (under Quick Pick). Three tabs:
+// The dashboard's message inbox (under Quick Pick). Three tabs, four for a
+// moderator:
 //  • General  — objective + operation message boards, merged. Start a topic,
 //               search and filter them, read, reply, and bin one here.
 //  • Personal — direct messages and group chats (conversations + direct_messages).
 //  • Comments — the in-app notification feed (the `messages` table the bell reads):
 //               submission comments, @mentions, job orders, and new DMs.
+//  • Admin    — moderation tier only (see canModerate prop): every private
+//               conversation in the system, read-only. Same
+//               /api/admin/conversations endpoints as AdminConversationsTab
+//               on the admin panel's Private Messages tab — this is a second
+//               place to reach the same oversight, not a different feature.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -20,7 +26,23 @@ type Member = { id: string; full_name?: string | null; username?: string | null;
 type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string };
 type DM = { id: number; body: string; created_at: string; edited_at?: string | null; mine: boolean; sender_name: string; sender_id?: string | null; attachments?: Attachment[] };
 
-type Tab = "general" | "personal" | "comments";
+// ── Admin (moderator-only oversight of everyone's Personal conversations) ──
+type AdminConvListItem = {
+  id: string;
+  is_group: boolean;
+  title: string;
+  members: { id: string; name: string }[];
+  message_count: number;
+  last_message: { body: string; created_at: string } | null;
+  updated_at: string;
+};
+type AdminMsg = { id: number; body: string; created_at: string; edited_at?: string | null; sender_id: string; sender_name: string; attachments?: Attachment[] };
+type AdminConvDetail = {
+  conversation: { id: string; is_group: boolean; title: string | null; members: { id: string; name: string; avatar_url: string | null }[] };
+  messages: AdminMsg[];
+};
+
+type Tab = "general" | "personal" | "comments" | "admin";
 
 const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
 // A URL glued straight into the sentence ("check this out: https://x.com/y.")
@@ -56,6 +78,9 @@ function ago(iso: string) {
   return `${Math.floor(s / 86400)}d`;
 }
 const nameOf = (m: Member) => m.full_name || m.username || "?";
+// The admin endpoints return {id, name, avatar_url} rather than a full
+// profile — this adapts one into the shape Avatar/nameOf already expect.
+const asMember = (id: string, name: string, avatar_url: string | null): Member => ({ id, full_name: name, avatar_url });
 
 /**
  * A person, small. Their photo when they have one, otherwise the initials
@@ -88,7 +113,7 @@ function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; s
   );
 }
 
-export default function DashboardMessagePanel({ currentUserId }: { currentUserId: string }) {
+export default function DashboardMessagePanel({ currentUserId, canModerate = false }: { currentUserId: string; canModerate?: boolean }) {
   const [tab, setTab] = useState<Tab>("general");
   // Expanded moves this exact panel into an overlay rather than rendering a
   // second copy, so whatever you were reading or typing survives the switch.
@@ -158,6 +183,14 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
   // Editing one of your own DMs in place — same shape as editing a comment.
   const [editingDm, setEditingDm] = useState<number | null>(null);
   const [editDmText, setEditDmText] = useState("");
+
+  // ── Admin (moderator-only, read-only) ───────────────────────────────────────
+  const [adminConvs, setAdminConvs] = useState<AdminConvListItem[]>([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminSearch, setAdminSearch] = useState("");
+  const [activeAdminConv, setActiveAdminConv] = useState<AdminConvListItem | null>(null);
+  const [adminDetail, setAdminDetail] = useState<AdminConvDetail | null>(null);
+  const [adminDetailLoading, setAdminDetailLoading] = useState(false);
 
   useEffect(() => {
     try {
@@ -468,6 +501,49 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
       .catch(() => {});
   }, [currentUserId]);
 
+  // Admin: every conversation in the system, moderator-only. Loaded lazily —
+  // only once the Admin tab is actually opened, and only for someone who can
+  // see it at all — so a non-moderator's dashboard never makes this call.
+  useEffect(() => {
+    if (tab !== "admin" || !canModerate) return;
+    let cancelled = false;
+    setAdminLoading(true);
+    fetch("/api/admin/conversations", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setAdminConvs((d.conversations ?? []) as AdminConvListItem[]); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setAdminLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, canModerate, reloadKey]);
+
+  const openAdminConv = useCallback(async (c: AdminConvListItem) => {
+    setActiveAdminConv(c);
+    setAdminDetail(null);
+    setAdminDetailLoading(true);
+    try {
+      const d = await fetch(`/api/admin/conversations/${c.id}/messages`, { cache: "no-store" }).then((r) => r.json()).catch(() => ({}));
+      if (d.conversation) setAdminDetail(d as AdminConvDetail);
+    } finally {
+      setAdminDetailLoading(false);
+    }
+  }, []);
+
+  const visibleAdminConvs = useMemo(() => {
+    const q = adminSearch.trim().toLowerCase();
+    if (!q) return adminConvs;
+    return adminConvs.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        c.members.some((m) => m.name.toLowerCase().includes(q)) ||
+        (c.last_message?.body ?? "").toLowerCase().includes(q)
+    );
+  }, [adminConvs, adminSearch]);
+
+  const adminMemberById = useMemo(
+    () => new Map((adminDetail?.conversation.members ?? []).map((m) => [m.id, m])),
+    [adminDetail]
+  );
+
   const openConv = useCallback(async (c: Conversation) => {
     setActiveConv(c);
     const d = await fetch(`/api/conversations/${c.id}/messages`, { cache: "no-store" }).then((r) => r.json()).catch(() => ({}));
@@ -605,8 +681,13 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
         </button>
       </div>
       <div className="flex items-center gap-1 px-2 pt-2">
-        {([["general", "General"], ["personal", "Personal"], ["comments", "Comments"]] as [Tab, string][]).map(([k, label]) => (
-          <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setComposingChat(false); }}
+        {([
+          ["general", "General"],
+          ["personal", "Personal"],
+          ["comments", "Comments"],
+          ...(canModerate ? ([["admin", "Admin"]] as [Tab, string][]) : []),
+        ] as [Tab, string][]).map(([k, label]) => (
+          <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setActiveAdminConv(null); setComposingChat(false); }}
             className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
             {label}
             {k === "general" && newGeneralCount > 0 && <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-terracotta text-white text-[8px] align-middle animate-pulse">{newGeneralCount}</span>}
@@ -926,6 +1007,76 @@ export default function DashboardMessagePanel({ currentUserId }: { currentUserId
                     </span>
                     {t.body && <span className="block text-[11px] text-walnut truncate">{t.body}</span>}
                     <span className="block text-[10px] text-bark truncate">{projectName.get(t.project_id) ?? "Project"} · {ago(t.created_at)} ago</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )
+        ) : tab === "admin" ? (
+          /* ── Admin: read-only oversight of every private conversation ── */
+          activeAdminConv ? (
+            <div className="flex flex-col gap-2 h-full">
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setActiveAdminConv(null)} className="text-[10px] font-semibold text-slate-blue hover:underline">← Back</button>
+                <span className="flex items-center gap-1.5 min-w-0 text-[12px] font-bold text-espresso truncate">
+                  {activeAdminConv.is_group && "👥 "}{activeAdminConv.title}
+                </span>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-0.5">
+                {adminDetailLoading ? (
+                  <p className="text-[11px] text-stone">Loading…</p>
+                ) : !adminDetail || adminDetail.messages.length === 0 ? (
+                  <p className="text-[11px] text-walnut">No messages yet.</p>
+                ) : (
+                  adminDetail.messages.map((m) => (
+                    <div key={m.id} className="flex items-start gap-1.5">
+                      <Avatar member={asMember(m.sender_id, m.sender_name, adminMemberById.get(m.sender_id)?.avatar_url ?? null)} size={20} />
+                      <div className="max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] bg-parchment text-espresso">
+                        <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>
+                        <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
+                        <AttachmentList attachments={m.attachments} />
+                        <p className="mt-0.5 text-[9px] text-bark">
+                          {ago(m.created_at)} ago
+                          {m.edited_at && <span className="italic text-stone"> · edited</span>}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] text-amber-600">
+                Private conversations between team members. Opening one doesn&apos;t mark it read
+                for the people in it, and nothing is posted on your behalf.
+              </div>
+              <input
+                value={adminSearch}
+                onChange={(e) => setAdminSearch(e.target.value)}
+                placeholder="Search people or messages…"
+                className={`${input} w-full`}
+              />
+              {adminLoading ? (
+                <p className="text-[12px] text-stone px-1">Loading…</p>
+              ) : visibleAdminConvs.length === 0 ? (
+                <p className="text-[12px] text-walnut px-1">{adminConvs.length === 0 ? "No conversations yet." : "Nothing matches that."}</p>
+              ) : (
+                visibleAdminConvs.map((c) => (
+                  <button key={c.id} type="button" onClick={() => void openAdminConv(c)} className="w-full text-left rounded-lg border border-sand bg-white px-2.5 py-2 hover:bg-cream transition-colors">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="flex -space-x-1 shrink-0">
+                          {c.members.slice(0, 3).map((m) => (
+                            <Avatar key={m.id} member={asMember(m.id, m.name, null)} size={18} />
+                          ))}
+                        </span>
+                        <span className="text-[12px] font-semibold text-espresso truncate">{c.is_group ? "👥 " : ""}{c.title}</span>
+                      </span>
+                      {c.message_count > 0 && <span className="text-[10px] text-stone shrink-0">{c.message_count}</span>}
+                    </span>
+                    {c.last_message && <span className="block text-[11px] text-walnut truncate">{c.last_message.body}</span>}
+                    <span className="block text-[10px] text-bark truncate">{c.last_message ? `${ago(c.last_message.created_at)} ago` : "no messages"}</span>
                   </button>
                 ))
               )}
