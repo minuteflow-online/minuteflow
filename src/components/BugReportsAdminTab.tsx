@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import BugReportNotes from "@/components/BugReportNotes";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BugReportNotes, { type BugReportNotesHandle } from "@/components/BugReportNotes";
 import BugReportTagEditor from "@/components/BugReportTagEditor";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 
@@ -80,6 +80,11 @@ export default function BugReportsAdminTab({
   // Which report is mid-dismissal, and the reason being typed for it.
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [dismissReason, setDismissReason] = useState("");
+  // Set when a status button is clicked while that report's note composer has
+  // an unsaved draft — the status doesn't apply until "Save & Mark as ___" is
+  // clicked, so attaching a screenshot as proof of a fix is a deliberate,
+  // visible step rather than something that happens straight away.
+  const [pendingStatus, setPendingStatus] = useState<{ id: number; status: ReportStatus } | null>(null);
   // A status/archive change made from an open report's own panel must not pull
   // that report out of the filtered list it's sitting in — the current filter
   // is almost always "match my current status", so acting on a report is
@@ -88,6 +93,10 @@ export default function BugReportsAdminTab({
   // the report visible until you deliberately move on (change filters, or
   // open a different report).
   const [keepVisibleId, setKeepVisibleId] = useState<number | null>(null);
+  // One note composer per report, so a status button can flush whatever's
+  // sitting unsaved in it before the status actually changes — see
+  // BugReportNotesHandle for why that matters.
+  const noteRefs = useRef<Record<number, BugReportNotesHandle | null>>({});
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -135,6 +144,19 @@ export default function BugReportsAdminTab({
     } finally {
       setUpdating((u) => ({ ...u, [id]: false }));
     }
+  }, []);
+
+  // Saves whatever's sitting in that report's note composer, if anything, so
+  // a screenshot attached "as proof" right before hitting Fixed doesn't get
+  // silently left behind. Returns false only when there was a draft AND it
+  // failed to save — callers should stop and not change status in that case.
+  const flushNoteDraft = useCallback(async (id: number) => {
+    const handle = noteRefs.current[id];
+    if (!handle?.hasDraft()) return true;
+    setUpdating((u) => ({ ...u, [id]: true }));
+    const ok = await handle.flush();
+    if (!ok) setUpdating((u) => ({ ...u, [id]: false }));
+    return ok;
   }, []);
 
   const setArchived = useCallback(async (id: number, archived: boolean) => {
@@ -230,7 +252,7 @@ export default function BugReportsAdminTab({
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={typeFilter}
-            onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); setKeepVisibleId(null); }}
+            onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); setKeepVisibleId(null); setPendingStatus(null); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">All types</option>
@@ -239,7 +261,7 @@ export default function BugReportsAdminTab({
           </select>
           <select
             value={reporterFilter}
-            onChange={(e) => { setReporterFilter(e.target.value); setPage(1); setKeepVisibleId(null); }}
+            onChange={(e) => { setReporterFilter(e.target.value); setPage(1); setKeepVisibleId(null); setPendingStatus(null); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">Everyone</option>
@@ -252,7 +274,7 @@ export default function BugReportsAdminTab({
           {allTags.length > 0 && (
             <select
               value={tagFilter}
-              onChange={(e) => { setTagFilter(e.target.value); setPage(1); setKeepVisibleId(null); }}
+              onChange={(e) => { setTagFilter(e.target.value); setPage(1); setKeepVisibleId(null); setPendingStatus(null); }}
               className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
             >
               <option value="all">All topics</option>
@@ -267,7 +289,7 @@ export default function BugReportsAdminTab({
               reporter selects wrapped onto a second row at normal widths. */}
           <select
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value as StatusChoice); setPage(1); setKeepVisibleId(null); }}
+            onChange={(e) => { setStatusFilter(e.target.value as StatusChoice); setPage(1); setKeepVisibleId(null); setPendingStatus(null); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">All statuses ({countFor("all")})</option>
@@ -306,7 +328,7 @@ export default function BugReportsAdminTab({
               return (
                 <div key={report.id} className="rounded-lg border border-sand bg-white">
                   <button
-                    onClick={() => { setExpandedId(isOpen ? null : report.id); setKeepVisibleId(null); }}
+                    onClick={() => { setExpandedId(isOpen ? null : report.id); setKeepVisibleId(null); setPendingStatus(null); }}
                     className="flex w-full flex-wrap items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-cream"
                   >
                     <span
@@ -392,6 +414,7 @@ export default function BugReportsAdminTab({
                       />
 
                       <BugReportNotes
+                        ref={(el) => { noteRefs.current[report.id] = el; }}
                         reportId={report.id}
                         currentUserId={currentUserId}
                         timezone={orgTimezone}
@@ -411,6 +434,16 @@ export default function BugReportsAdminTab({
                               if (status === "dismissed") {
                                 setDismissReason("");
                                 setDismissingId(report.id);
+                                return;
+                              }
+                              // A note/screenshot left in the composer is what
+                              // "proof of fix" looks like — hold the status
+                              // change for an explicit "Save & Mark as ___"
+                              // instead of applying it straight away, so it's
+                              // never unclear whether that attachment went out.
+                              const handle = noteRefs.current[report.id];
+                              if (handle?.hasDraft()) {
+                                setPendingStatus({ id: report.id, status });
                                 return;
                               }
                               updateStatus(report.id, status);
@@ -434,6 +467,36 @@ export default function BugReportsAdminTab({
                         </button>
                       </div>
 
+                      {pendingStatus?.id === report.id && (
+                        <div className="mt-2 rounded-lg border border-sand bg-cream p-2">
+                          <p className="text-[11px] text-espresso">
+                            Save the note and screenshot above as proof, then mark this{" "}
+                            <span className="font-semibold capitalize">{pendingStatus.status}</span>?
+                          </p>
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <button
+                              disabled={updating[report.id]}
+                              onClick={async () => {
+                                const { id, status } = pendingStatus;
+                                if (!(await flushNoteDraft(id))) return;
+                                await updateStatus(id, status);
+                                setPendingStatus(null);
+                              }}
+                              className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white hover:bg-sage/90 disabled:opacity-50"
+                            >
+                              Save &amp; Mark as{" "}
+                              {pendingStatus.status.charAt(0).toUpperCase() + pendingStatus.status.slice(1)}
+                            </button>
+                            <button
+                              onClick={() => setPendingStatus(null)}
+                              className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone hover:bg-stone/20"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       {dismissingId === report.id && (
                         <div className="mt-2 rounded-lg border border-sand bg-cream p-2">
                           <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
@@ -451,6 +514,7 @@ export default function BugReportsAdminTab({
                             <button
                               disabled={!dismissReason.trim() || updating[report.id]}
                               onClick={async () => {
+                                if (!(await flushNoteDraft(report.id))) return;
                                 await updateStatus(report.id, "dismissed", dismissReason.trim());
                                 setDismissingId(null);
                                 setDismissReason("");
