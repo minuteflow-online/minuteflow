@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
-import { hasAdminPanelAccess } from "@/lib/financialAccess";
+import { hasModerationAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -28,12 +28,7 @@ async function loadCaller() {
     .select("role, department")
     .eq("id", user.id)
     .single();
-  // TEMP FOR TESTING (2026-09-11, requested by Neil in chat): widened from
-  // hasModerationAccess to hasAdminPanelAccess so a Specialist/IT account
-  // can see and test the dashboard's new Admin tab before it ships. Revert
-  // to hasModerationAccess once confirmed working — matching TEMP comments
-  // in src/app/(app)/dashboard/page.tsx and ./[id]/messages/route.ts.
-  return { user, isModerator: hasAdminPanelAccess(profile) };
+  return { user, isModerator: hasModerationAccess(profile) };
 }
 
 /** GET — every conversation in the system, newest activity first. Moderation-tier only. */
