@@ -88,6 +88,14 @@ export default function App() {
     };
   }, [userId, loadTasks]);
 
+  // Tells the main process whether to warn before quitting — see
+  // electron/main.js's close handler. Also clears the flag on sign-out
+  // (userId null), so a signed-out app never warns on a stale clocked-in
+  // state it can no longer act on.
+  useEffect(() => {
+    window.mfDesktop.setClockedIn(Boolean(userId && sessionRow?.clocked_in));
+  }, [userId, sessionRow?.clocked_in]);
+
   const handleLogin = useCallback(
     async (email: string, password: string) => {
       const session = await auth.signIn(email, password);

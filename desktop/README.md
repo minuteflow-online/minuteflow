@@ -21,14 +21,23 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `startTask()` in the web dashboard for the standard (non-fixed-pay) case;
   see `src/lib/startTask.ts`. Fixed-pay tasks aren't supported yet (Start is
   disabled for them — their web flow is a different instant one-shot log with
-  no timer). No task-switch wizard (no memo prompt for whatever was running
-  before), no Accept/Submit, no to-do editing yet.
+  no timer). **Drag-to-reorder** within a status group, same as the web
+  widget (grip handle, same `/api/assigned-tasks/reorder` endpoint) — see
+  `src/lib/tasks.ts`'s `compareTasks`/`reorderAssignedTasks`. No task-switch
+  wizard (no memo prompt for whatever was running before), no Accept/Submit,
+  no to-do editing yet.
 - **Capture Now** — grabs the entire primary display via Electron's
   `desktopCapturer` + `getUserMedia` (main process → preload → renderer) and
   uploads it to `/api/upload-screenshot`. **Screenshots go to Google Drive
   only** — same endpoint, same rule as everywhere else in this app (see
   CLAUDE.md's screenshot rule). There is no Supabase Storage path here, and
   none should ever be added.
+- **Warns before quitting while clocked in** — closing the window (X, Alt+F4)
+  shows a native "You're still clocked in" dialog with Quit Anyway / Cancel,
+  the desktop equivalent of the web app's `beforeunload` warning in
+  `TopNav.tsx`. The renderer reports clocked-in state to the main process via
+  `window.mfDesktop.setClockedIn()` (App.tsx) since main can't read React
+  state directly; see `electron/main.js`'s `close` handler.
 
 ## What it deliberately does NOT do yet
 

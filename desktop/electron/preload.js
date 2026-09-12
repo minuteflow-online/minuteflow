@@ -10,4 +10,7 @@ contextBridge.exposeInMainWorld("mfDesktop", {
     load: () => ipcRenderer.invoke("mf:auth-load"),
     clear: () => ipcRenderer.invoke("mf:auth-clear"),
   },
+  // One-way — the main process just needs the latest value to decide whether
+  // to warn on quit, no response expected.
+  setClockedIn: (value) => ipcRenderer.send("mf:set-clocked-in", value),
 });

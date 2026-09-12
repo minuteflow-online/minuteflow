@@ -11,6 +11,7 @@ export interface MfDesktopApi {
     load: () => Promise<unknown | null>;
     clear: () => Promise<void>;
   };
+  setClockedIn: (value: boolean) => void;
 }
 
 declare global {
