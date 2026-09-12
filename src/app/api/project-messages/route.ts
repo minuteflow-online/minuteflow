@@ -11,7 +11,10 @@ async function requireUser() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+  // full_name/username are only for the @mention notification text below
+  // (see POST) — canAccessProject/hasBroadAdminAccess elsewhere in this file
+  // only ever look at .role, so adding these is additive and safe.
+  const { data: profile } = await supabase.from("profiles").select("role, full_name, username").eq("id", user.id).single();
   return { user, profile };
 }
 

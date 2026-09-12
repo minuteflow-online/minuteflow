@@ -12,12 +12,19 @@ function serviceClient() {
 
 function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
+// @everyone or @all — either word broadcasts to the whole active team rather
+// than one named person. Checked as a whole word so "@allison" or an
+// "@everyone-else" typo never fires it by accident.
+const EVERYONE_RE = /@(everyone|all)\b/i;
+
 /**
  * Parse @mentions of active team members out of `text` and notify each one,
  * both in-app (a row in `messages`, which drives the top-nav bell) and via a
- * private Telegram DM (when they have a linked chat). The sender is never
- * notified about their own mention. Failures are swallowed so a post/reply
- * never fails just because a notification could not be delivered.
+ * private Telegram DM (when they have a linked chat). @everyone/@all notifies
+ * every active team member instead of one named person — same delivery, just
+ * a wider match. The sender is never notified about their own mention (named
+ * or broadcast). Failures are swallowed so a post/reply never fails just
+ * because a notification could not be delivered.
  */
 export async function notifyMentions(opts: {
   text: string;
@@ -36,21 +43,27 @@ export async function notifyMentions(opts: {
   const members = (profiles ?? []) as Array<{ id: string; full_name: string | null; username: string | null; telegram_chat_id: number | string | null }>;
   if (members.length === 0) return;
 
+  const mentioned = new Map<string, (typeof members)[number]>();
+  if (EVERYONE_RE.test(text)) {
+    for (const p of members) {
+      if (p.id !== senderId) mentioned.set(p.id, p);
+    }
+  }
+
   const byName = new Map<string, (typeof members)[number]>();
   const names: string[] = [];
   for (const p of members) {
     if (p.full_name) { byName.set(p.full_name.toLowerCase(), p); names.push(p.full_name); }
     if (p.username) { byName.set(p.username.toLowerCase(), p); names.push(p.username); }
   }
-  if (names.length === 0) return;
-
-  const pattern = names.slice().sort((a, b) => b.length - a.length).map(escapeRegex).join("|");
-  const re = new RegExp(`@(${pattern})`, "gi");
-  const mentioned = new Map<string, (typeof members)[number]>();
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const prof = byName.get(m[1].toLowerCase());
-    if (prof && prof.id !== senderId) mentioned.set(prof.id, prof);
+  if (names.length > 0) {
+    const pattern = names.slice().sort((a, b) => b.length - a.length).map(escapeRegex).join("|");
+    const re = new RegExp(`@(${pattern})`, "gi");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const prof = byName.get(m[1].toLowerCase());
+      if (prof && prof.id !== senderId) mentioned.set(prof.id, prof);
+    }
   }
   if (mentioned.size === 0) return;
 
