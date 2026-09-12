@@ -773,6 +773,33 @@ export default function DashboardPage() {
     [supabase]
   );
 
+  // Each toast dismisses itself the same way the × button does — marked read,
+  // not just hidden — so it doesn't reappear on the next 10s poll. One timer
+  // per message id, scheduled exactly once (a ref survives the poll re-running
+  // fetchMessages and rebuilding the array); cleared early if the message is
+  // gone from the list before it fires (× clicked, or read from elsewhere).
+  const autoDismissTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    for (const m of messages) {
+      if (autoDismissTimers.current.has(m.id)) continue;
+      const timer = setTimeout(() => {
+        autoDismissTimers.current.delete(m.id);
+        void dismissMessage(m.id);
+      }, 8000);
+      autoDismissTimers.current.set(m.id, timer);
+    }
+    for (const [id, timer] of autoDismissTimers.current) {
+      if (!messages.some((m) => m.id === id)) {
+        clearTimeout(timer);
+        autoDismissTimers.current.delete(id);
+      }
+    }
+  }, [messages, dismissMessage]);
+  useEffect(() => {
+    const timers = autoDismissTimers.current;
+    return () => { for (const t of timers.values()) clearTimeout(t); };
+  }, []);
+
   // ─── Capture Requests (admin "Capture Now") ───────────────
   useEffect(() => {
     if (!userId) return;

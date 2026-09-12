@@ -44,6 +44,11 @@ type AdminConvDetail = {
 
 type Tab = "general" | "personal" | "comments" | "admin";
 
+// A synthetic pick in the @mention list, not a real teammate — @everyone (or
+// @all, both work — see notifyMentions.ts) notifies every active team member
+// on General, same delivery (bell + Telegram) as naming someone by hand.
+const EVERYONE_MENTION: Member = { id: "__everyone__", full_name: "Everyone" };
+
 const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
 // A URL glued straight into the sentence ("check this out: https://x.com/y.")
 // tends to drag trailing punctuation along with it — split that back off so
@@ -378,7 +383,12 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
   const mentionMatches = useMemo(() => {
     const q = mentionQuery.trim().toLowerCase();
     const list = q ? team.filter((m) => nameOf(m).toLowerCase().includes(q)) : team;
-    return list.slice(0, 6);
+    // Offered whenever what's typed so far could still be heading toward
+    // "everyone" or "all" — "@ev", "@a", "@everyone" all surface it — but not
+    // once it's clearly become someone's actual name, so it doesn't sit atop
+    // every ordinary mention.
+    const towardEveryone = !q || "everyone".startsWith(q) || "all".startsWith(q);
+    return (towardEveryone ? [EVERYONE_MENTION, ...list] : list).slice(0, 6);
   }, [team, mentionQuery]);
 
   const createTopic = useCallback(async () => {
@@ -670,22 +680,38 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
             </span>
           )}
         </h3>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          title={expanded ? "Close" : "Expand"}
-          aria-label={expanded ? "Close expanded messages" : "Expand messages"}
-          className="text-[12px] leading-none text-bark hover:text-espresso transition-colors px-1"
-        >
-          {expanded ? "\u2715" : "\u2922"}
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Admin lives up here rather than in the row below \u2014 that row
+              already holds three tabs at a width sized for three, and a
+              fourth just for moderators made every one of them cramped for
+              everyone else. It's still one click away, just not competing
+              for the same space. */}
+          {canModerate && (
+            <button
+              type="button"
+              onClick={() => { setTab("admin"); setActiveThread(null); setActiveConv(null); setActiveAdminConv(null); setComposingChat(false); }}
+              title="Admin \u2014 review private conversations"
+              className={`rounded-md px-2 py-1 text-[10px] font-semibold transition-colors ${tab === "admin" ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"}`}
+            >
+              Admin
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? "Close" : "Expand"}
+            aria-label={expanded ? "Close expanded messages" : "Expand messages"}
+            className="text-[12px] leading-none text-bark hover:text-espresso transition-colors px-1"
+          >
+            {expanded ? "\u2715" : "\u2922"}
+          </button>
+        </div>
       </div>
       <div className="flex items-center gap-1 px-2 pt-2">
         {([
           ["general", "General"],
           ["personal", "Personal"],
           ["comments", "Comments"],
-          ...(canModerate ? ([["admin", "Admin"]] as [Tab, string][]) : []),
         ] as [Tab, string][]).map(([k, label]) => (
           <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setActiveAdminConv(null); setComposingChat(false); }}
             className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
