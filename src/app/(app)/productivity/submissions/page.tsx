@@ -59,6 +59,16 @@ type FeedItem = {
 /** Every submission for one task, oldest first — the original plus its resubmissions. */
 type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
 
+/** A file already uploaded to `task-attachments` via the signed-slot route,
+ *  waiting to be hung off the submission row it's posted with. Mirrors what
+ *  SubmitWorkModal sends. */
+type PendingAttachment = {
+  path: string;
+  filename: string;
+  size: number;
+  mime_type: string | null;
+};
+
 type TeamMember = { id: string; full_name: string; username: string };
 
 /** The client behind an account — only its name is shown on a card. */
@@ -595,7 +605,13 @@ export default function SubmissionsPage() {
   // Approve / Request revision append a row to the same thread, then move the
   // task's status through the app's single status path.
   const review = useCallback(
-    async (item: FeedItem, outcome: ReviewOutcome, note?: string, dueAt?: string) => {
+    async (
+      item: FeedItem,
+      outcome: ReviewOutcome,
+      note?: string,
+      dueAt?: string,
+      attachments?: PendingAttachment[]
+    ) => {
       if (!item.task) return;
       setBusyId(item.id);
       try {
@@ -606,6 +622,7 @@ export default function SubmissionsPage() {
             message_type: outcome,
             message: note?.trim() || REVIEW_DEFAULT_NOTE[outcome],
             due_at: dueAt || null,
+            attachments,
           }),
         });
         if (!res.ok) {
@@ -792,14 +809,14 @@ This cannot be undone.`
 
   /** Appends a note to a task's thread. Never edits — that's the whole point. */
   const addNote = useCallback(
-    async (item: FeedItem, note: string) => {
+    async (item: FeedItem, note: string, attachments?: PendingAttachment[]) => {
       if (!item.task) return;
       setBusyId(item.id);
       try {
         const res = await fetch(`/api/assigned-tasks/${item.task.id}/submissions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message_type: "comment", message: note }),
+          body: JSON.stringify({ message_type: "comment", message: note, attachments }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -1616,36 +1633,90 @@ function SubmissionEntry({
   });
 
   // Reviews and notes are events between rounds, not work turned in — they read
-  // as a single line so the submissions stay the backbone of the thread.
+  // as a single line so the submissions stay the backbone of the thread. A
+  // note or revision request can still carry a screenshot or file though, so
+  // that gets its own row underneath rather than being dropped.
   if (item.message_type !== "submission") {
     const type = item.message_type as SubmissionMessageType;
+    const images = item.attachments.filter(
+      (f) => (f.mime_type ?? "").startsWith("image/") && f.url
+    );
+    const others = item.attachments.filter((f) => !images.includes(f));
     return (
-      <div className="flex items-start gap-1.5 pt-1.5">
-        <span
-          className={`shrink-0 rounded-full border px-2 py-[2px] text-[10px] font-semibold ${
-            SUBMISSION_TYPE_BADGE[type] ?? SUBMISSION_TYPE_BADGE.comment
-          }`}
-        >
-          {SUBMISSION_TYPE_LABELS[type] ?? "Note"}
-        </span>
-        <span className="min-w-0 text-[11px] leading-snug text-espresso">
-          {item.submission_comment?.trim() || item.content}
-          <span className="ml-1 text-[10px] text-stone/80">
-            — {who} · {time}
-          </span>
-        </span>
-
-        {/* A reversal clicked by mistake shouldn't mark the record forever.
-            Cancelling trashes the entry, so the row survives with deleted_at
-            while the thread reads as though it never happened. */}
-        {canCancel && type === "approval_reversed" && (
-          <button
-            onClick={() => onCancelReversal(item)}
-            className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
-            title="Cancel this reversal and restore the approval"
+      <div className="pt-1.5">
+        <div className="flex items-start gap-1.5">
+          <span
+            className={`shrink-0 rounded-full border px-2 py-[2px] text-[10px] font-semibold ${
+              SUBMISSION_TYPE_BADGE[type] ?? SUBMISSION_TYPE_BADGE.comment
+            }`}
           >
-            Cancel
-          </button>
+            {SUBMISSION_TYPE_LABELS[type] ?? "Note"}
+          </span>
+          <span className="min-w-0 text-[11px] leading-snug text-espresso">
+            {item.submission_comment?.trim() || item.content}
+            <span className="ml-1 text-[10px] text-stone/80">
+              — {who} · {time}
+            </span>
+          </span>
+
+          {/* A reversal clicked by mistake shouldn't mark the record forever.
+              Cancelling trashes the entry, so the row survives with deleted_at
+              while the thread reads as though it never happened. */}
+          {canCancel && type === "approval_reversed" && (
+            <button
+              onClick={() => onCancelReversal(item)}
+              className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
+              title="Cancel this reversal and restore the approval"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+
+        {item.attachments.length > 0 && (
+          <div className="mt-1 space-y-1.5 pl-1">
+            {images.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {images.map((file, i) => (
+                  <button
+                    key={file.id}
+                    type="button"
+                    onClick={() =>
+                      setLightbox({
+                        urls: images.map((f) => f.url as string),
+                        index: i,
+                      })
+                    }
+                    title={file.filename}
+                    className="shrink-0 overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={file.url as string}
+                      alt={file.filename}
+                      loading="lazy"
+                      className="h-[72px] w-[96px] object-cover"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+            {others.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {others.map((file) => (
+                  <a
+                    key={file.id}
+                    href={file.url ?? "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
+                  >
+                    {file.filename}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
     );
@@ -1821,8 +1892,14 @@ function ThreadCard({
   thread: Thread;
   canReview: boolean;
   busy: boolean;
-  onReview: (item: FeedItem, outcome: ReviewOutcome, note?: string, dueAt?: string) => void;
-  onAddNote: (item: FeedItem, note: string) => void;
+  onReview: (
+    item: FeedItem,
+    outcome: ReviewOutcome,
+    note?: string,
+    dueAt?: string,
+    attachments?: PendingAttachment[]
+  ) => void;
+  onAddNote: (item: FeedItem, note: string, attachments?: PendingAttachment[]) => void;
   /** round index -> ms logged during that round. */
   rounds: Record<string, number>;
   /** "awaiting" | "revision_requested" | "approved" */
@@ -1912,6 +1989,125 @@ function ThreadCard({
   const [noteDraft, setNoteDraft] = useState("");
   const [noteMode, setNoteMode] = useState<null | "revision" | "note">(null);
   const [revisionDue, setRevisionDue] = useState("");
+
+  // Attach-by-paste/drag/upload on a note or revision request, same flow
+  // SubmitWorkModal uses: files go straight to storage via a signed slot, and
+  // only their paths ride along in the JSON body that posts the note.
+  const [noteFiles, setNoteFiles] = useState<File[]>([]);
+  const [noteUploading, setNoteUploading] = useState(false);
+  const [noteUploadError, setNoteUploadError] = useState("");
+  const [noteProgress, setNoteProgress] = useState("");
+  const [noteDragActive, setNoteDragActive] = useState(false);
+  const noteDragCounter = useRef(0);
+  const noteSupabase = useMemo(() => createClient(), []);
+
+  const appendNoteFiles = (picked: File[]) => {
+    if (picked.length === 0) return;
+    setNoteFiles((prev) => [...prev, ...picked]);
+  };
+  const addNoteFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    appendNoteFiles(Array.from(list));
+  };
+  const removeNoteFile = (index: number) => {
+    setNoteFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+  const handleNoteDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    noteDragCounter.current += 1;
+    setNoteDragActive(true);
+  };
+  const handleNoteDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    noteDragCounter.current -= 1;
+    if (noteDragCounter.current <= 0) {
+      noteDragCounter.current = 0;
+      setNoteDragActive(false);
+    }
+  };
+  const handleNoteDragOver = (e: React.DragEvent) => e.preventDefault();
+  const handleNoteDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    noteDragCounter.current = 0;
+    setNoteDragActive(false);
+    if (busy || noteUploading) return;
+    appendNoteFiles(Array.from(e.dataTransfer.files ?? []));
+  };
+  // Only intercepted when the clipboard actually carries a file (a screenshot
+  // copied in) — a plain text paste into the textarea is left alone.
+  const handleNotePaste = (e: React.ClipboardEvent) => {
+    if (busy || noteUploading) return;
+    const fromFiles = Array.from(e.clipboardData?.files ?? []);
+    const fromItems = Array.from(e.clipboardData?.items ?? [])
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    const picked = fromFiles.length > 0 ? fromFiles : fromItems;
+    if (picked.length === 0) return;
+    e.preventDefault();
+    appendNoteFiles(picked);
+  };
+
+  /** Uploads any attached files, then posts the note or revision request. */
+  const submitNote = async () => {
+    const note = noteDraft.trim();
+    const taskId = latest.task?.id;
+    if (!taskId) return;
+    if (noteMode === "revision" ? !note : !note && noteFiles.length === 0) return;
+
+    setNoteUploadError("");
+    setNoteUploading(true);
+    try {
+      const attachments: PendingAttachment[] = [];
+      for (const [index, file] of noteFiles.entries()) {
+        setNoteProgress(`Uploading ${index + 1} of ${noteFiles.length}...`);
+        const slotRes = await fetch(`/api/assigned-tasks/${taskId}/submissions/upload-url`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, size: file.size }),
+        });
+        if (!slotRes.ok) {
+          const body = await slotRes.json().catch(() => ({}));
+          setNoteUploadError(body.error ?? `Couldn't upload ${file.name}.`);
+          return;
+        }
+        const { path, token } = await slotRes.json();
+        const { error: uploadError } = await noteSupabase.storage
+          .from("task-attachments")
+          .uploadToSignedUrl(path, token, file);
+        if (uploadError) {
+          setNoteUploadError(`Couldn't upload ${file.name}: ${uploadError.message}`);
+          return;
+        }
+        attachments.push({
+          path,
+          filename: file.name,
+          size: file.size,
+          mime_type: file.type || null,
+        });
+      }
+      setNoteProgress("");
+
+      if (noteMode === "revision") {
+        onReview(
+          latest,
+          "revision",
+          note,
+          revisionDue ? new Date(revisionDue).toISOString() : undefined,
+          attachments.length > 0 ? attachments : undefined
+        );
+      } else {
+        onAddNote(latest, note, attachments.length > 0 ? attachments : undefined);
+      }
+      setNoteDraft("");
+      setRevisionDue("");
+      setNoteFiles([]);
+      setNoteMode(null);
+    } finally {
+      setNoteProgress("");
+      setNoteUploading(false);
+    }
+  };
 
   // Whole-task effort: every round summed. Grows with each resubmission, while
   // each entry below keeps its own round's figure.
@@ -2084,13 +2280,27 @@ function ThreadCard({
           })}
 
           {noteMode ? (
-            <div className="mt-2 rounded-lg border border-sand bg-cream/40 p-2">
+            <div
+              onDragEnter={handleNoteDragEnter}
+              onDragLeave={handleNoteDragLeave}
+              onDragOver={handleNoteDragOver}
+              onDrop={handleNoteDrop}
+              className={`relative mt-2 rounded-lg border bg-cream/40 p-2 transition-colors ${
+                noteDragActive ? "border-terracotta" : "border-sand"
+              }`}
+            >
+              {noteDragActive && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-terracotta bg-terracotta-soft/40">
+                  <p className="text-[11px] font-semibold text-terracotta">Drop to attach</p>
+                </div>
+              )}
               <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
                 {noteMode === "revision" ? "What needs changing?" : "Add a note"}
               </label>
               <textarea
                 value={noteDraft}
                 onChange={(e) => setNoteDraft(e.target.value)}
+                onPaste={handleNotePaste}
                 rows={2}
                 autoFocus
                 placeholder={
@@ -2100,6 +2310,45 @@ function ThreadCard({
                 }
                 className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
               />
+
+              <div className="mt-1.5">
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                  Attachment
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  onChange={(e) => {
+                    addNoteFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                  disabled={noteUploading}
+                  className="block w-full text-[10px] text-stone file:mr-2 file:rounded-lg file:border-0 file:bg-parchment file:px-2 file:py-1 file:text-[10px] file:font-semibold file:text-espresso hover:file:bg-sand disabled:opacity-50"
+                />
+                <p className="mt-0.5 text-[10px] text-stone/70">
+                  or drag a file onto this box, or paste a screenshot (Ctrl/Cmd+V)
+                </p>
+                {noteFiles.length > 0 && (
+                  <div className="mt-1 space-y-1">
+                    {noteFiles.map((file, i) => (
+                      <div
+                        key={`${file.name}-${i}`}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-2 py-1"
+                      >
+                        <span className="truncate text-[11px] text-espresso">{file.name}</span>
+                        <button
+                          onClick={() => removeNoteFile(i)}
+                          disabled={noteUploading}
+                          className="shrink-0 text-[10px] font-semibold text-terracotta hover:underline disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {noteMode === "revision" && (
                 <div className="mt-1.5">
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
@@ -2118,34 +2367,39 @@ function ThreadCard({
                 </div>
               )}
 
+              {noteProgress && !noteUploadError && (
+                <p className="mt-1.5 text-[10px] text-stone">{noteProgress}</p>
+              )}
+              {noteUploadError && (
+                <p className="mt-1.5 text-[10px] text-terracotta">{noteUploadError}</p>
+              )}
+
               <div className="mt-1.5 flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    const note = noteDraft.trim();
-                    if (!note) return;
-                    if (noteMode === "revision") {
-                      onReview(
-                        latest,
-                        "revision",
-                        note,
-                        revisionDue ? new Date(revisionDue).toISOString() : undefined
-                      );
-                    } else onAddNote(latest, note);
-                    setNoteDraft("");
-                    setRevisionDue("");
-                    setNoteMode(null);
-                  }}
-                  disabled={busy || !noteDraft.trim()}
+                  onClick={submitNote}
+                  disabled={
+                    busy ||
+                    noteUploading ||
+                    (noteMode === "revision"
+                      ? !noteDraft.trim()
+                      : !noteDraft.trim() && noteFiles.length === 0)
+                  }
                   className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
                 >
-                  {noteMode === "revision" ? "Request Revision" : "Add Note"}
+                  {noteUploading
+                    ? "Saving..."
+                    : noteMode === "revision"
+                      ? "Request Revision"
+                      : "Add Note"}
                 </button>
                 <button
                   onClick={() => {
                     setNoteMode(null);
                     setNoteDraft("");
+                    setNoteFiles([]);
+                    setNoteUploadError("");
                   }}
-                  disabled={busy}
+                  disabled={busy || noteUploading}
                   className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
                 >
                   Cancel
@@ -2190,8 +2444,14 @@ function TimelineView({
   orgTimezone: string;
   canReview: boolean;
   busyId: number | null;
-  onReview: (item: FeedItem, outcome: ReviewOutcome, note?: string) => void;
-  onAddNote: (item: FeedItem, note: string) => void;
+  onReview: (
+    item: FeedItem,
+    outcome: ReviewOutcome,
+    note?: string,
+    dueAt?: string,
+    attachments?: PendingAttachment[]
+  ) => void;
+  onAddNote: (item: FeedItem, note: string, attachments?: PendingAttachment[]) => void;
   loading: boolean;
   roundDurations: Record<string, Record<string, number>>;
   reviewState: Record<string, string>;

@@ -306,8 +306,11 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 
-  if (messageType !== "submission" && !message && !link) {
-    return Response.json({ error: "A message is required" }, { status: 400 });
+  // A screenshot or file is evidence on its own — a note attaching one
+  // shouldn't also demand typed text to go with it.
+  const noteFileCount = files.length + pendingAttachments.length;
+  if (messageType !== "submission" && !message && !link && noteFileCount === 0) {
+    return Response.json({ error: "A message or an attachment is required" }, { status: 400 });
   }
 
   const admin = adminClient();
