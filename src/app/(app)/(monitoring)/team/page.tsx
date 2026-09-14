@@ -52,6 +52,15 @@ type SubmissionSummary = {
   reviewMs: number;
 };
 
+/**
+ * Zero here almost always means output-based work, which is paid per
+ * deliverable and never clocked — "0m" would read as "worked no time on it"
+ * rather than "this kind of work carries no time".
+ */
+function formatSubmissionTime(ms: number): string {
+  return ms > 0 ? formatDuration(ms) : "—";
+}
+
 function summarizeSubmissions(list: SubmissionStat[]): SubmissionSummary {
   return list.reduce<SubmissionSummary>(
     (acc, s) => {
@@ -1923,7 +1932,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                   <span className="w-2 h-2 rounded-full bg-sky-500" />
                   <span className="text-[11px] font-semibold text-espresso">Submissions</span>
                   <span className="text-[11px] font-bold text-espresso">{submissionSummary.count}</span>
-                  <span className="text-[11px] text-bark">{formatDuration(submissionSummary.ms)}</span>
+                  <span className="text-[11px] text-bark">{formatSubmissionTime(submissionSummary.ms)}</span>
                   <svg
                     width="8"
                     height="8"
@@ -1942,12 +1951,12 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                   <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 border border-sand">
                     <span className="text-[11px] font-semibold text-espresso">Review required</span>
                     <span className="text-[11px] font-bold text-espresso">{submissionSummary.reviewCount}</span>
-                    <span className="text-[11px] text-bark">{formatDuration(submissionSummary.reviewMs)}</span>
+                    <span className="text-[11px] text-bark">{formatSubmissionTime(submissionSummary.reviewMs)}</span>
                   </span>
                   <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 border border-sand">
                     <span className="text-[11px] font-semibold text-espresso">Auto approved</span>
                     <span className="text-[11px] font-bold text-espresso">{submissionSummary.autoCount}</span>
-                    <span className="text-[11px] text-bark">{formatDuration(submissionSummary.autoMs)}</span>
+                    <span className="text-[11px] text-bark">{formatSubmissionTime(submissionSummary.autoMs)}</span>
                   </span>
                 </div>
                 <div className="divide-y divide-sand/70 border-t border-sand/70">
@@ -2011,7 +2020,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                         <span className="text-bark">
                           <span className="font-bold text-espresso">{acctSubs.count} submitted</span>
                           <span className="text-bark/40"> &middot; </span>
-                          {formatDuration(acctSubs.ms)}
+                          {formatSubmissionTime(acctSubs.ms)}
                         </span>
                       </div>
                     )}
@@ -2029,15 +2038,15 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                 </span>
                 <span className="text-[11px] text-bark">
                   <span className="text-sky-600 font-semibold">
-                    {submissionSummary.reviewCount} review {formatDuration(submissionSummary.reviewMs)}
+                    {submissionSummary.reviewCount} review {formatSubmissionTime(submissionSummary.reviewMs)}
                   </span>
                   <span className="text-bark/40"> &middot; </span>
                   <span className="text-sage font-semibold">
-                    {submissionSummary.autoCount} auto {formatDuration(submissionSummary.autoMs)}
+                    {submissionSummary.autoCount} auto {formatSubmissionTime(submissionSummary.autoMs)}
                   </span>
                   <span className="text-bark/40"> &middot; </span>
                   <span className="font-bold text-espresso">
-                    {submissionSummary.count} total {formatDuration(submissionSummary.ms)}
+                    {submissionSummary.count} total {formatSubmissionTime(submissionSummary.ms)}
                   </span>
                 </span>
               </div>
@@ -2163,7 +2172,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                             <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
                             {daySubs.count} submitted
                             <span className="text-sky-600/60">&middot;</span>
-                            {formatDuration(daySubs.ms)}
+                            {formatSubmissionTime(daySubs.ms)}
                           </span>
                           <span className="text-[10px] text-bark">
                             {daySubs.reviewCount > 0 && (
@@ -2335,7 +2344,7 @@ function DaySubmissionList({ submissions, timezone }: { submissions: SubmissionS
         >
           <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        {summary.count} submitted &middot; {formatDuration(summary.ms)}
+        {summary.count} submitted &middot; {formatSubmissionTime(summary.ms)}
         <span className="font-normal normal-case text-stone">
           ({summary.reviewCount} review, {summary.autoCount} auto)
         </span>
