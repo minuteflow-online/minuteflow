@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
 import { isPayrollEligible, sumPayrollMs } from "@/lib/payrollHours";
+import { computeTransitionMs } from "@/lib/transitionTime";
 import AddRateModal from "@/components/AddRateModal";
 import {
   formatDuration,
@@ -1592,6 +1593,11 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
 
   const submissionSummary = useMemo(() => summarizeSubmissions(submissions), [submissions]);
 
+  // Time between finishing one entry and starting the next, wizard time
+  // already subtracted. member.todayLogs still carries its Clock Out rows, so
+  // the function reads the markers straight out of it.
+  const transitionMs = useMemo(() => computeTransitionMs(member.todayLogs), [member.todayLogs]);
+
   /** account -> its submissions, so the per-account rows can carry them too. */
   const submissionsByAccount = useMemo(() => {
     const map = new Map<string, SubmissionStat[]>();
@@ -1761,8 +1767,12 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
     if (totalCollabMs > 0) cats.push({ label: "Collaboration", ms: totalCollabMs, color: "bg-sky-400" });
     if (member.messageMs > 0) cats.push({ label: "Communication", ms: member.messageMs, color: "bg-blue-400" });
     if (member.personalMs > 0) cats.push({ label: "Personal", ms: member.personalMs, color: "bg-clay-rose" });
+    // The dead stretch between handing one piece in and starting the next.
+    // Same definition as Reports — both call computeTransitionMs, so the two
+    // pages can never quote different numbers for it.
+    if (transitionMs > 0) cats.push({ label: "Transition", ms: transitionMs, color: "bg-bark" });
     return cats;
-  }, [member]);
+  }, [member, transitionMs]);
 
   // Output-based (per-task) items, unpaid, split by whether they were
   // touched during the selected period or carried over from before it.

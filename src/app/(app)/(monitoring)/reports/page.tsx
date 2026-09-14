@@ -15,6 +15,7 @@ import {
   getMonthBoundsInTimezone,
   getYearBoundsInTimezone,
 } from "@/lib/utils";
+import { computeTransitionMs } from "@/lib/transitionTime";
 import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ProgressBar } from "@/components/VAPerformanceMetrics";
@@ -900,42 +901,13 @@ export default function ReportsPage() {
   // form_fill_ms is subtracted — that part is already reported as Wizard Time.
 
   const transitionMs = useMemo(() => {
-    const byUserDay = new Map<string, TimeLog[]>();
-    filteredLogs.forEach((l) => {
-      if (!l.start_time || !l.end_time) return;
-      const key = `${l.user_id}|${l.session_date ?? l.start_time.slice(0, 10)}`;
-      if (!byUserDay.has(key)) byUserDay.set(key, []);
-      byUserDay.get(key)!.push(l);
-    });
-
     // Clock Out markers are zero-duration rows that filteredLogs strips out, so
-    // a gap that swallows one is really "went home and came back", not someone
-    // sitting on the wizard. Those are read off the unfiltered logs (keyed by
-    // user only — clock-outs carry no account, so the account/client filters
-    // would drop them) and any gap containing one is skipped.
-    const clockOutsByUser = new Map<string, number[]>();
-    logs.forEach((l) => {
-      if (l.category !== "Clock Out" || !l.start_time) return;
-      if (selectedVA !== "all" && l.user_id !== selectedVA) return;
-      if (!clockOutsByUser.has(l.user_id)) clockOutsByUser.set(l.user_id, []);
-      clockOutsByUser.get(l.user_id)!.push(new Date(l.start_time).getTime());
-    });
-
-    let total = 0;
-    byUserDay.forEach((dayLogs) => {
-      const ordered = [...dayLogs].sort((a, b) => a.start_time.localeCompare(b.start_time));
-      const clockOuts = clockOutsByUser.get(ordered[0].user_id) ?? [];
-      for (let i = 0; i < ordered.length - 1; i++) {
-        const prev = ordered[i];
-        const next = ordered[i + 1];
-        const gapStart = new Date(prev.end_time!).getTime();
-        const gapEnd = new Date(next.start_time).getTime();
-        if (gapEnd <= gapStart) continue; // overlapping or back-to-back entries
-        if (clockOuts.some((t) => t > gapStart && t < gapEnd)) continue;
-        total += Math.max(0, gapEnd - gapStart - (prev.form_fill_ms || 0));
-      }
-    });
-    return total;
+    // they are read off the unfiltered logs (keyed by user only — clock-outs
+    // carry no account, so the account/client filters would drop them).
+    const clockOuts = logs.filter(
+      (l) => l.category === "Clock Out" && (selectedVA === "all" || l.user_id === selectedVA)
+    );
+    return computeTransitionMs(filteredLogs, clockOuts);
   }, [filteredLogs, logs, selectedVA]);
 
   /* ── By person ───────────────────────────────────────────── */
