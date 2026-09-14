@@ -2242,6 +2242,26 @@ function ThreadCard({
                 {pill.label}
               </span>
             )}
+            {/* An auto-approved task was never actually looked at — Undo alone
+                just puts it back in the queue, so a reviewer who already knows
+                it needs rework would have to Undo, then find Revise, then
+                write the same note in two trips. Flag does both in one: undo
+                the auto-approval and open the same revision-request form used
+                everywhere else, appended the same way. */}
+            {canReview && latest.task && autoApproved && (
+              <button
+                onClick={() => {
+                  onReview(latest, "approval_reversed");
+                  setNoteMode("revision");
+                  setExpanded(true);
+                }}
+                disabled={busy}
+                className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                title="Undo the auto-approval and request changes"
+              >
+                Flag
+              </button>
+            )}
             {/* Approving by mistake shouldn't be a dead end. The reversal is
                 appended, so the original approval stays in the record. */}
             {canReview && latest.task && state === "approved" && (
