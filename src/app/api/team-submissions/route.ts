@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
-import { formatDateLocalTZ } from "@/lib/utils";
+import { computeSubmissionRounds } from "@/lib/submissionRounds";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -41,8 +41,10 @@ type SubmissionStat = {
   submittedAt: string;
   /** Local date (org timezone) the work for this round started. */
   workStartDate: string;
-  /** Milliseconds logged in this round. */
+  /** Milliseconds worked in this round. */
   durationMs: number;
+  /** Where that figure came from — see computeSubmissionRounds. */
+  timeSource: "logged" | "scheduled" | "none" | "counted";
 };
 
 export async function GET(request: Request) {
@@ -107,7 +109,9 @@ export async function GET(request: Request) {
   const [taskRes, logRes] = await Promise.all([
     admin
       .from("assigned_tasks")
-      .select("id, task_name, task_detail, account, review_required")
+      .select(
+        "id, task_name, task_detail, account, review_required, fixed_pay_task_id, start_time, end_time, planned_minutes"
+      )
       .in("id", taskIds)
       .limit(20000),
     // Logs name the task they were worked under, so the hours for a round are
@@ -127,6 +131,10 @@ export async function GET(request: Request) {
     task_detail: string | null;
     account: string | null;
     review_required: boolean | null;
+    fixed_pay_task_id: number | null;
+    start_time: string | null;
+    end_time: string | null;
+    planned_minutes: number | null;
   };
   const tasks = new Map<number, TaskRow>(
     ((taskRes.data ?? []) as TaskRow[]).map((t) => [t.id, t])
@@ -155,49 +163,64 @@ export async function GET(request: Request) {
   }
   for (const list of revisionsByTask.values()) list.sort();
 
-  const byUser: Record<string, SubmissionStat[]> = {};
-
+  // Grouped by task, because a round's hours are decided across all of that
+  // task's submissions at once — two hand-ins inside one round must not each
+  // claim the same time.
+  const submissionsByTask = new Map<number, Entry[]>();
   for (const row of rows) {
     if (row.message_type !== "submission") continue;
-    if (!seesEveryone && row.user_id !== user.id) continue;
-
-    const task = tasks.get(row.assigned_task_id);
-    const revisions = revisionsByTask.get(row.assigned_task_id) ?? [];
-    const round = revisions.filter((t) => t < row.created_at).length;
-
-    // Logs of this round: the same rule the R badge uses, so the hours and
-    // the round label can never disagree.
-    const roundLogs = (logsByTask.get(row.assigned_task_id) ?? []).filter(
-      (log) => revisions.filter((t) => t < log.start_time!).length === round
+    submissionsByTask.set(
+      row.assigned_task_id,
+      (submissionsByTask.get(row.assigned_task_id) ?? []).concat(row)
     );
+  }
 
-    const durationMs = roundLogs.reduce((sum, l) => sum + Number(l.duration_ms ?? 0), 0);
-    const firstStart = roundLogs.reduce<string | null>(
-      (earliest, l) => (!earliest || l.start_time! < earliest ? l.start_time! : earliest),
-      null
-    );
+  const byUser: Record<string, SubmissionStat[]> = {};
 
-    // No time logged against it — the submission date is all we have, and a
-    // submission that exists has to land somewhere.
-    const workStartDate = formatDateLocalTZ(firstStart ?? row.created_at, timezone);
-
-    if (from && workStartDate < from) continue;
-    if (to && workStartDate > to) continue;
-
-    const list = byUser[row.user_id] ?? [];
-    list.push({
-      id: row.id,
-      taskId: row.assigned_task_id,
-      taskName: task?.task_name ?? null,
-      taskDetail: task?.task_detail ?? null,
-      account: task?.account ?? null,
-      autoApproved: task?.review_required === false,
-      round,
-      submittedAt: row.created_at,
-      workStartDate,
-      durationMs,
+  for (const [taskId, taskSubmissions] of submissionsByTask) {
+    const task = tasks.get(taskId);
+    const results = computeSubmissionRounds({
+      submissions: taskSubmissions.map((s) => ({ id: s.id, created_at: s.created_at })),
+      revisions: (revisionsByTask.get(taskId) ?? []).map((created_at) => ({ created_at })),
+      logs: (logsByTask.get(taskId) ?? []).map((l) => ({
+        start_time: l.start_time!,
+        duration_ms: l.duration_ms,
+      })),
+      task: {
+        isOutputBased: task?.fixed_pay_task_id != null,
+        scheduledStart: task?.start_time ?? null,
+        scheduledEnd: task?.end_time ?? null,
+        plannedMinutes: task?.planned_minutes ?? null,
+      },
+      timezone,
     });
-    byUser[row.user_id] = list;
+
+    const submittedBy = new Map(taskSubmissions.map((s) => [s.id, s.user_id]));
+
+    for (const result of results) {
+      const userId = submittedBy.get(result.submissionId);
+      if (!userId) continue;
+      if (!seesEveryone && userId !== user.id) continue;
+      if (from && result.workStartDate < from) continue;
+      if (to && result.workStartDate > to) continue;
+
+      const entry = taskSubmissions.find((s) => s.id === result.submissionId)!;
+      const list = byUser[userId] ?? [];
+      list.push({
+        id: result.submissionId,
+        taskId,
+        taskName: task?.task_name ?? null,
+        taskDetail: task?.task_detail ?? null,
+        account: task?.account ?? null,
+        autoApproved: task?.review_required === false,
+        round: result.round,
+        submittedAt: entry.created_at,
+        workStartDate: result.workStartDate,
+        durationMs: result.durationMs,
+        timeSource: result.timeSource,
+      });
+      byUser[userId] = list;
+    }
   }
 
   return Response.json({ byUser, timezone });

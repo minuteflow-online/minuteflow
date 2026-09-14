@@ -39,6 +39,7 @@ type SubmissionStat = {
   submittedAt: string;
   workStartDate: string;
   durationMs: number;
+  timeSource: "logged" | "scheduled" | "none" | "counted";
 };
 
 /** Counts and hours for a set of submissions, split by who reviews them. */
@@ -1949,33 +1950,27 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                     <span className="text-[11px] text-bark">{formatDuration(submissionSummary.autoMs)}</span>
                   </span>
                 </div>
-                <div className="space-y-1">
+                <div className="divide-y divide-sand/70 border-t border-sand/70">
                   {[...submissions]
                     .sort((a, b) => b.workStartDate.localeCompare(a.workStartDate))
                     .map((s) => (
-                      <div
-                        key={s.id}
-                        className="flex items-center justify-between gap-2 rounded-lg bg-white border border-sand px-3 py-1.5"
-                      >
+                      <div key={s.id} className="flex items-center justify-between gap-2 py-1.5">
                         <div className="min-w-0 flex items-center gap-1.5">
-                          <span className="text-[11px] font-semibold text-espresso truncate">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.autoApproved ? "bg-sage" : "bg-sky-500"}`}
+                            title={s.autoApproved ? "Auto approved" : "Review required"}
+                          />
+                          <span className="text-[11px] text-espresso truncate">
                             {s.taskDetail?.trim() || s.taskName || "Task"}
                           </span>
                           <RevisionBadge count={s.round} />
                         </div>
-                        <div className="shrink-0 flex items-center gap-2">
-                          <span
-                            className={`text-[9px] font-semibold px-2 py-[2px] rounded-full border ${
-                              s.autoApproved
-                                ? "bg-sage-soft text-sage border-sage/20"
-                                : "bg-sky-50 text-sky-600 border-sky-200"
-                            }`}
-                          >
-                            {s.autoApproved ? "Auto" : "Review"}
-                          </span>
-                          <span className="text-[10px] text-bark">{s.account || "—"}</span>
-                          <span className="text-[11px] font-semibold text-espresso">
-                            {formatDuration(s.durationMs)}
+                        <div className="shrink-0 flex items-center gap-2 text-[10px] text-bark">
+                          <span>{s.account || "—"}</span>
+                          <span className="text-bark/40">&middot;</span>
+                          <span>started {s.workStartDate.slice(5)}</span>
+                          <span className="text-[11px] font-semibold text-espresso min-w-[42px] text-right">
+                            {s.timeSource === "none" ? "—" : formatDuration(s.durationMs)}
                           </span>
                         </div>
                       </div>
@@ -2153,7 +2148,15 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                         /api/team-submissions. */}
                     {(() => {
                       const daySubs = summarizeSubmissions(submissionsByDate.get(day.isoDate) ?? []);
-                      if (daySubs.count === 0) return <div className="flex-1" />;
+                      if (daySubs.count === 0) {
+                        // A day with nothing submitted says so. A blank space
+                        // reads as missing data rather than as a zero.
+                        return (
+                          <div className="flex-1 flex items-center justify-center px-3">
+                            <span className="text-[10px] text-stone">0 submitted</span>
+                          </div>
+                        );
+                      }
                       return (
                         <div className="flex-1 flex items-center justify-center gap-2 px-3">
                           <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-2.5 py-[3px] text-[10px] font-semibold text-sky-600 border border-sky-200">
@@ -2222,51 +2225,10 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                       themselves, same as the time-log entries above them. */}
                   {isExpanded && (
                     <div className="px-4 py-3 border-t border-sand bg-white space-y-3">
-                      {(submissionsByDate.get(day.isoDate) ?? []).length > 0 && (
-                        <div className="mb-3">
-                          <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-2">
-                            Submissions started this day
-                          </div>
-                          <div className="space-y-1">
-                            {(submissionsByDate.get(day.isoDate) ?? []).map((s) => (
-                              <div
-                                key={s.id}
-                                className="flex items-center justify-between gap-2 rounded-lg bg-parchment/40 px-3 py-1.5"
-                              >
-                                <div className="min-w-0 flex items-center gap-1.5">
-                                  <span className="text-[11px] font-semibold text-espresso truncate">
-                                    {s.taskDetail?.trim() || s.taskName || "Task"}
-                                  </span>
-                                  <RevisionBadge count={s.round} />
-                                </div>
-                                <div className="shrink-0 flex items-center gap-2">
-                                  <span
-                                    className={`text-[9px] font-semibold px-2 py-[2px] rounded-full border ${
-                                      s.autoApproved
-                                        ? "bg-sage-soft text-sage border-sage/20"
-                                        : "bg-sky-50 text-sky-600 border-sky-200"
-                                    }`}
-                                  >
-                                    {s.autoApproved ? "Auto" : "Review"}
-                                  </span>
-                                  <span className="text-[10px] text-bark">{s.account || "—"}</span>
-                                  <span className="text-[10px] text-bark">
-                                    submitted{" "}
-                                    {new Date(s.submittedAt).toLocaleDateString("en-US", {
-                                      timeZone: timezone,
-                                      month: "short",
-                                      day: "numeric",
-                                    })}
-                                  </span>
-                                  <span className="text-[11px] font-semibold text-espresso">
-                                    {formatDuration(s.durationMs)}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                      <DaySubmissionList
+                        submissions={submissionsByDate.get(day.isoDate) ?? []}
+                        timezone={timezone}
+                      />
                       <TaskLogList logs={day.logs} showProgress timezone={timezone} />
                       {day.outputItems.length > 0 && (
                         <div>
@@ -2345,6 +2307,76 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
 }
 
 /* ── Task Log List (shared between compact & expanded) ───── */
+
+/**
+ * A day's submissions, above that day's task log.
+ *
+ * Collapsed by default and written as plain lines rather than cards: this sits
+ * inside an already-expanded day, and a stack of bordered boxes inside another
+ * bordered box is three frames deep before any content shows up.
+ */
+function DaySubmissionList({ submissions, timezone }: { submissions: SubmissionStat[]; timezone: string }) {
+  const [open, setOpen] = useState(false);
+  if (submissions.length === 0) return null;
+
+  const summary = summarizeSubmissions(submissions);
+
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-bark hover:text-espresso transition-colors cursor-pointer"
+      >
+        <svg
+          width="8"
+          height="8"
+          viewBox="0 0 12 12"
+          className={`transition-transform ${open ? "rotate-90" : ""}`}
+        >
+          <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {summary.count} submitted &middot; {formatDuration(summary.ms)}
+        <span className="font-normal normal-case text-stone">
+          ({summary.reviewCount} review, {summary.autoCount} auto)
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-1.5 divide-y divide-sand/70 border-t border-sand/70">
+          {submissions.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-2 py-1.5">
+              <div className="min-w-0 flex items-center gap-1.5">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.autoApproved ? "bg-sage" : "bg-sky-500"}`}
+                  title={s.autoApproved ? "Auto approved" : "Review required"}
+                />
+                <span className="text-[11px] text-espresso truncate">
+                  {s.taskDetail?.trim() || s.taskName || "Task"}
+                </span>
+                <RevisionBadge count={s.round} />
+              </div>
+              <div className="shrink-0 flex items-center gap-2 text-[10px] text-bark">
+                <span>{s.account || "—"}</span>
+                <span className="text-bark/40">&middot;</span>
+                <span>
+                  submitted{" "}
+                  {new Date(s.submittedAt).toLocaleDateString("en-US", {
+                    timeZone: timezone,
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </span>
+                <span className="text-[11px] font-semibold text-espresso min-w-[42px] text-right">
+                  {s.timeSource === "none" ? "—" : formatDuration(s.durationMs)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]; showProgress?: boolean; timezone?: string }) {
   const revisionByLogId = useRevisionByLogId(logs);
