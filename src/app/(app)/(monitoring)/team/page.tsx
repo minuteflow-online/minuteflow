@@ -1590,6 +1590,8 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
   const [activeTab, setActiveTab] = useState<"activity" | "ratings">("activity");
   const [showCarriedOverOutput, setShowCarriedOverOutput] = useState(false);
   const [submissionsOpen, setSubmissionsOpen] = useState(false);
+  /** Which pile the itemised list is showing — the two pills act as tabs. */
+  const [submissionTab, setSubmissionTab] = useState<"all" | "review" | "auto">("all");
 
   const submissionSummary = useMemo(() => summarizeSubmissions(submissions), [submissions]);
 
@@ -1957,20 +1959,55 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
 
             {submissionsOpen && submissionSummary.count > 0 && (
               <div className="mt-2 rounded-lg border border-sand bg-parchment/20 p-3">
+                {/* The two pills are the filter. Reviewing means working one
+                    pile at a time, and a mixed list makes you sort it by eye
+                    on every pass. Clicking the active one clears it. */}
                 <div className="flex flex-wrap gap-2 mb-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 border border-sand">
-                    <span className="text-[11px] font-semibold text-espresso">Review required</span>
-                    <span className="text-[11px] font-bold text-espresso">{submissionSummary.reviewCount}</span>
-                    <span className="text-[11px] text-bark">{formatSubmissionTime(submissionSummary.reviewMs)}</span>
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 border border-sand">
-                    <span className="text-[11px] font-semibold text-espresso">Auto approved</span>
-                    <span className="text-[11px] font-bold text-espresso">{submissionSummary.autoCount}</span>
-                    <span className="text-[11px] text-bark">{formatSubmissionTime(submissionSummary.autoMs)}</span>
-                  </span>
+                  {([
+                    { key: "review" as const, label: "Review required", count: submissionSummary.reviewCount, ms: submissionSummary.reviewMs },
+                    { key: "auto" as const, label: "Auto approved", count: submissionSummary.autoCount, ms: submissionSummary.autoMs },
+                  ]).map((tab) => {
+                    const active = submissionTab === tab.key;
+                    return (
+                      <button
+                        key={tab.key}
+                        onClick={() => setSubmissionTab(active ? "all" : tab.key)}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 border transition-colors cursor-pointer ${
+                          active
+                            ? "bg-terracotta-soft border-terracotta"
+                            : "bg-white border-sand hover:bg-parchment/60"
+                        }`}
+                      >
+                        <span className={`text-[11px] font-semibold ${active ? "text-terracotta" : "text-espresso"}`}>
+                          {tab.label}
+                        </span>
+                        <span className={`text-[11px] font-bold ${active ? "text-terracotta" : "text-espresso"}`}>
+                          {tab.count}
+                        </span>
+                        <span className={`text-[11px] ${active ? "text-terracotta/70" : "text-bark"}`}>
+                          {formatSubmissionTime(tab.ms)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {submissionTab !== "all" && (
+                    <button
+                      onClick={() => setSubmissionTab("all")}
+                      className="text-[10px] font-semibold text-bark hover:text-espresso transition-colors cursor-pointer"
+                    >
+                      Show all {submissionSummary.count}
+                    </button>
+                  )}
                 </div>
                 <div className="divide-y divide-sand/70 border-t border-sand/70">
-                  {[...submissions]
+                  {submissions
+                    .filter((s) =>
+                      submissionTab === "all"
+                        ? true
+                        : submissionTab === "auto"
+                          ? s.autoApproved
+                          : !s.autoApproved
+                    )
                     .sort((a, b) => b.workStartDate.localeCompare(a.workStartDate))
                     .map((s) => (
                       <div key={s.id} className="flex items-center justify-between gap-2 py-1.5">
@@ -1994,6 +2031,17 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                         </div>
                       </div>
                     ))}
+
+                  {submissionTab === "review" && submissionSummary.reviewCount === 0 && (
+                    <p className="py-2 text-[11px] italic text-stone">
+                      Nothing waiting on a reviewer.
+                    </p>
+                  )}
+                  {submissionTab === "auto" && submissionSummary.autoCount === 0 && (
+                    <p className="py-2 text-[11px] italic text-stone">
+                      Nothing was auto approved.
+                    </p>
+                  )}
                 </div>
               </div>
             )}
