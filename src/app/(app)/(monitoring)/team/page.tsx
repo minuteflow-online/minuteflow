@@ -24,6 +24,51 @@ import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 
 type DateRangePreset = "today" | "week" | "month" | "custom";
 
+/**
+ * One submission, dated by the day its work started rather than the day it
+ * was handed in — see /api/team-submissions for why those differ.
+ */
+type SubmissionStat = {
+  id: number;
+  taskId: number;
+  taskName: string | null;
+  taskDetail: string | null;
+  account: string | null;
+  autoApproved: boolean;
+  round: number;
+  submittedAt: string;
+  workStartDate: string;
+  durationMs: number;
+};
+
+/** Counts and hours for a set of submissions, split by who reviews them. */
+type SubmissionSummary = {
+  count: number;
+  ms: number;
+  autoCount: number;
+  autoMs: number;
+  reviewCount: number;
+  reviewMs: number;
+};
+
+function summarizeSubmissions(list: SubmissionStat[]): SubmissionSummary {
+  return list.reduce<SubmissionSummary>(
+    (acc, s) => {
+      acc.count += 1;
+      acc.ms += s.durationMs;
+      if (s.autoApproved) {
+        acc.autoCount += 1;
+        acc.autoMs += s.durationMs;
+      } else {
+        acc.reviewCount += 1;
+        acc.reviewMs += s.durationMs;
+      }
+      return acc;
+    },
+    { count: 0, ms: 0, autoCount: 0, autoMs: 0, reviewCount: 0, reviewMs: 0 }
+  );
+}
+
 type TeamMember = {
   profile: Profile;
   session: Session | null;
@@ -193,6 +238,10 @@ export default function TeamPage() {
   // Mood data: { [userId]: { [session_date_YYYY-MM-DD]: mood } }
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
 
+  // Submissions for the period, dated by the day their work started rather
+  // than the day they were handed in — see /api/team-submissions.
+  const [submissionsByUser, setSubmissionsByUser] = useState<Record<string, SubmissionStat[]>>({});
+
   // Check role on mount and redirect VAs
   useEffect(() => {
     async function checkRole() {
@@ -335,6 +384,23 @@ export default function TeamPage() {
       });
     }
     setMoodData(moodLookup);
+
+    // Submissions come from the Submissions hub's own data, through an API
+    // route: task_submissions is service-role territory, and the round /
+    // work-start maths belongs in one place rather than in every reader.
+    try {
+      const subRes = await fetch(
+        `/api/team-submissions?from=${moodStart}&to=${moodEnd}`,
+        { cache: "no-store" }
+      );
+      if (subRes.ok) {
+        const subJson = await subRes.json();
+        setSubmissionsByUser(subJson.byUser ?? {});
+      }
+    } catch {
+      // A failed submissions fetch must not blank the whole team report.
+      setSubmissionsByUser({});
+    }
 
     // Build approved-absence lookup: only requests overlapping the selected date range
     type ApprovedRequest = { user_id: string; type: string; subject: string; start_date: string | null; end_date: string | null; start_time: string | null; end_time: string | null };
@@ -965,6 +1031,7 @@ export default function TeamPage() {
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
                   onDeselect={() => toggleMember(member.profile.id)}
                   userMoods={moodData[member.profile.id] || {}}
+                  submissions={submissionsByUser[member.profile.id] || []}
                   timezone={orgTimezone}
                 />
               ))}
@@ -1494,7 +1561,7 @@ function DailyRatingsPanel({ vaId, isAdmin, timezone = "UTC" }: { vaId: string; 
 
 /* ── Expanded Member Card (Full Width) ───────────────────── */
 
-function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, onForceLogout, onDeselect, userMoods, timezone }: {
+function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, onForceLogout, onDeselect, userMoods, submissions, timezone }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
@@ -1503,6 +1570,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
   onForceLogout?: (userId: string, fullName: string) => void;
   onDeselect: () => void;
   userMoods: Record<string, string>; // { "YYYY-MM-DD": mood }
+  submissions: SubmissionStat[];
   timezone: string;
 }) {
   const { profile, status, activeCategory, currentTaskName, currentTaskMeta } = member;
@@ -1510,6 +1578,28 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"activity" | "ratings">("activity");
   const [showCarriedOverOutput, setShowCarriedOverOutput] = useState(false);
+  const [submissionsOpen, setSubmissionsOpen] = useState(false);
+
+  const submissionSummary = useMemo(() => summarizeSubmissions(submissions), [submissions]);
+
+  /** account -> its submissions, so the per-account rows can carry them too. */
+  const submissionsByAccount = useMemo(() => {
+    const map = new Map<string, SubmissionStat[]>();
+    for (const s of submissions) {
+      const key = s.account || "Personal";
+      map.set(key, (map.get(key) ?? []).concat(s));
+    }
+    return map;
+  }, [submissions]);
+
+  /** "YYYY-MM-DD" -> that day's submissions, for the daily breakdown rows. */
+  const submissionsByDate = useMemo(() => {
+    const map = new Map<string, SubmissionStat[]>();
+    for (const s of submissions) {
+      map.set(s.workStartDate, (map.get(s.workStartDate) ?? []).concat(s));
+    }
+    return map;
+  }, [submissions]);
 
   const toggleDate = useCallback((dateLabel: string) => {
     setExpandedDates(prev => {
@@ -1552,9 +1642,14 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
       const acct = log.account || "Personal";
       byAccount[acct] = (byAccount[acct] || 0) + (log.duration_ms || 0);
     });
+    // An account can carry submitted work with no payroll-eligible time
+    // against it, and dropping that row would hide the submission entirely.
+    for (const account of submissionsByAccount.keys()) {
+      if (byAccount[account] == null) byAccount[account] = 0;
+    }
     // Sort by most time first
     return Object.entries(byAccount).sort((a, b) => b[1] - a[1]);
-  }, [member.todayLogs, profile.position]);
+  }, [member.todayLogs, profile.position, submissionsByAccount]);
 
   // Daily breakdown for multi-day ranges
   const moodEmoji: Record<string, string> = { bad: "\uD83D\uDE1E", neutral: "\uD83D\uDE10", good: "\uD83D\uDE0A" };
@@ -1803,7 +1898,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
         )}
 
         {/* Row 3: Category Breakdown */}
-        {categoryTotals.length > 0 && (
+        {(categoryTotals.length > 0 || submissionSummary.count > 0) && (
           <div className="mb-4">
             <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-2">Category Breakdown</div>
             <div className="flex flex-wrap gap-2">
@@ -1814,7 +1909,80 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                   <span className="text-[11px] text-bark">{formatDuration(cat.ms)}</span>
                 </div>
               ))}
+
+              {/* Submissions sit with the categories because that is the
+                  question being asked of this row — where did the time go —
+                  but they are a count first and hours second, and they split
+                  by who reviews them, so the detail lives behind a toggle. */}
+              {submissionSummary.count > 0 && (
+                <button
+                  onClick={() => setSubmissionsOpen((v) => !v)}
+                  className="flex items-center gap-1.5 rounded-lg bg-parchment/40 px-3 py-1.5 hover:bg-parchment/70 transition-colors cursor-pointer"
+                >
+                  <span className="w-2 h-2 rounded-full bg-sky-500" />
+                  <span className="text-[11px] font-semibold text-espresso">Submissions</span>
+                  <span className="text-[11px] font-bold text-espresso">{submissionSummary.count}</span>
+                  <span className="text-[11px] text-bark">{formatDuration(submissionSummary.ms)}</span>
+                  <svg
+                    width="8"
+                    height="8"
+                    viewBox="0 0 12 12"
+                    className={`text-bark transition-transform ${submissionsOpen ? "rotate-90" : ""}`}
+                  >
+                    <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
             </div>
+
+            {submissionsOpen && submissionSummary.count > 0 && (
+              <div className="mt-2 rounded-lg border border-sand bg-parchment/20 p-3">
+                <div className="flex flex-wrap gap-2 mb-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 border border-sand">
+                    <span className="text-[11px] font-semibold text-espresso">Review required</span>
+                    <span className="text-[11px] font-bold text-espresso">{submissionSummary.reviewCount}</span>
+                    <span className="text-[11px] text-bark">{formatDuration(submissionSummary.reviewMs)}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 border border-sand">
+                    <span className="text-[11px] font-semibold text-espresso">Auto approved</span>
+                    <span className="text-[11px] font-bold text-espresso">{submissionSummary.autoCount}</span>
+                    <span className="text-[11px] text-bark">{formatDuration(submissionSummary.autoMs)}</span>
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {[...submissions]
+                    .sort((a, b) => b.workStartDate.localeCompare(a.workStartDate))
+                    .map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-white border border-sand px-3 py-1.5"
+                      >
+                        <div className="min-w-0 flex items-center gap-1.5">
+                          <span className="text-[11px] font-semibold text-espresso truncate">
+                            {s.taskDetail?.trim() || s.taskName || "Task"}
+                          </span>
+                          <RevisionBadge count={s.round} />
+                        </div>
+                        <div className="shrink-0 flex items-center gap-2">
+                          <span
+                            className={`text-[9px] font-semibold px-2 py-[2px] rounded-full border ${
+                              s.autoApproved
+                                ? "bg-sage-soft text-sage border-sage/20"
+                                : "bg-sky-50 text-sky-600 border-sky-200"
+                            }`}
+                          >
+                            {s.autoApproved ? "Auto" : "Review"}
+                          </span>
+                          <span className="text-[10px] text-bark">{s.account || "—"}</span>
+                          <span className="text-[11px] font-semibold text-espresso">
+                            {formatDuration(s.durationMs)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1823,20 +1991,62 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-2">Hours per Account</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-              {accountBreakdown.map(([account, ms]) => (
-                <div key={account} className="flex items-center justify-between rounded-lg bg-parchment/40 px-3 py-2">
-                  <span className="text-[12px] font-semibold text-espresso truncate mr-2">{account}</span>
-                  <div className="text-right shrink-0">
-                    <span className="text-[12px] font-bold text-espresso">{formatDuration(ms)}</span>
-                    {isAdmin && profile.pay_rate > 0 && (
-                      <span className="text-[10px] text-sage ml-2">
-                        {formatCurrency(computePayable(ms, profile.pay_rate || 0, profile.pay_rate_type || "hourly"))}
-                      </span>
+              {accountBreakdown.map(([account, ms]) => {
+                const acctSubs = summarizeSubmissions(submissionsByAccount.get(account) ?? []);
+                return (
+                  <div key={account} className="rounded-lg bg-parchment/40 px-3 py-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12px] font-semibold text-espresso truncate mr-2">{account}</span>
+                      <div className="text-right shrink-0">
+                        <span className="text-[12px] font-bold text-espresso">{formatDuration(ms)}</span>
+                        {isAdmin && profile.pay_rate > 0 && (
+                          <span className="text-[10px] text-sage ml-2">
+                            {formatCurrency(computePayable(ms, profile.pay_rate || 0, profile.pay_rate_type || "hourly"))}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {acctSubs.count > 0 && (
+                      <div className="mt-1 flex items-center justify-between border-t border-sand/60 pt-1 text-[10px]">
+                        <span className="text-bark">
+                          <span className="text-sky-600 font-semibold">{acctSubs.reviewCount} review</span>
+                          <span className="text-bark/40"> &middot; </span>
+                          <span className="text-sage font-semibold">{acctSubs.autoCount} auto</span>
+                        </span>
+                        <span className="text-bark">
+                          <span className="font-bold text-espresso">{acctSubs.count} submitted</span>
+                          <span className="text-bark/40"> &middot; </span>
+                          {formatDuration(acctSubs.ms)}
+                        </span>
+                      </div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+
+            {/* The per-account rows split the submissions; this is the line
+                that has to add up to the Category Breakdown chip. */}
+            {submissionSummary.count > 0 && (
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sand bg-white px-3 py-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.5px] text-walnut">
+                  All accounts &middot; submissions
+                </span>
+                <span className="text-[11px] text-bark">
+                  <span className="text-sky-600 font-semibold">
+                    {submissionSummary.reviewCount} review {formatDuration(submissionSummary.reviewMs)}
+                  </span>
+                  <span className="text-bark/40"> &middot; </span>
+                  <span className="text-sage font-semibold">
+                    {submissionSummary.autoCount} auto {formatDuration(submissionSummary.autoMs)}
+                  </span>
+                  <span className="text-bark/40"> &middot; </span>
+                  <span className="font-bold text-espresso">
+                    {submissionSummary.count} total {formatDuration(submissionSummary.ms)}
+                  </span>
+                </span>
+              </div>
+            )}
           </div>
         )}
 
@@ -1937,6 +2147,36 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                             : "\u2014"}
                       </span>
                     </div>
+                    {/* Submissions for this day, in the empty middle of the
+                        row. Dated by when the work started, so a piece begun
+                        yesterday and handed in today counts yesterday — see
+                        /api/team-submissions. */}
+                    {(() => {
+                      const daySubs = summarizeSubmissions(submissionsByDate.get(day.isoDate) ?? []);
+                      if (daySubs.count === 0) return <div className="flex-1" />;
+                      return (
+                        <div className="flex-1 flex items-center justify-center gap-2 px-3">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-2.5 py-[3px] text-[10px] font-semibold text-sky-600 border border-sky-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                            {daySubs.count} submitted
+                            <span className="text-sky-600/60">&middot;</span>
+                            {formatDuration(daySubs.ms)}
+                          </span>
+                          <span className="text-[10px] text-bark">
+                            {daySubs.reviewCount > 0 && (
+                              <span className="text-sky-600 font-semibold">{daySubs.reviewCount} review</span>
+                            )}
+                            {daySubs.reviewCount > 0 && daySubs.autoCount > 0 && (
+                              <span className="text-bark/40"> &middot; </span>
+                            )}
+                            {daySubs.autoCount > 0 && (
+                              <span className="text-sage font-semibold">{daySubs.autoCount} auto</span>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
                     <div className="flex items-center gap-2">
                       {/* Mini status badges */}
                       {day.dayInProgress > 0 && (
@@ -1982,6 +2222,51 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                       themselves, same as the time-log entries above them. */}
                   {isExpanded && (
                     <div className="px-4 py-3 border-t border-sand bg-white space-y-3">
+                      {(submissionsByDate.get(day.isoDate) ?? []).length > 0 && (
+                        <div className="mb-3">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-2">
+                            Submissions started this day
+                          </div>
+                          <div className="space-y-1">
+                            {(submissionsByDate.get(day.isoDate) ?? []).map((s) => (
+                              <div
+                                key={s.id}
+                                className="flex items-center justify-between gap-2 rounded-lg bg-parchment/40 px-3 py-1.5"
+                              >
+                                <div className="min-w-0 flex items-center gap-1.5">
+                                  <span className="text-[11px] font-semibold text-espresso truncate">
+                                    {s.taskDetail?.trim() || s.taskName || "Task"}
+                                  </span>
+                                  <RevisionBadge count={s.round} />
+                                </div>
+                                <div className="shrink-0 flex items-center gap-2">
+                                  <span
+                                    className={`text-[9px] font-semibold px-2 py-[2px] rounded-full border ${
+                                      s.autoApproved
+                                        ? "bg-sage-soft text-sage border-sage/20"
+                                        : "bg-sky-50 text-sky-600 border-sky-200"
+                                    }`}
+                                  >
+                                    {s.autoApproved ? "Auto" : "Review"}
+                                  </span>
+                                  <span className="text-[10px] text-bark">{s.account || "—"}</span>
+                                  <span className="text-[10px] text-bark">
+                                    submitted{" "}
+                                    {new Date(s.submittedAt).toLocaleDateString("en-US", {
+                                      timeZone: timezone,
+                                      month: "short",
+                                      day: "numeric",
+                                    })}
+                                  </span>
+                                  <span className="text-[11px] font-semibold text-espresso">
+                                    {formatDuration(s.durationMs)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <TaskLogList logs={day.logs} showProgress timezone={timezone} />
                       {day.outputItems.length > 0 && (
                         <div>
