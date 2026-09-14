@@ -201,6 +201,46 @@ function localDay(iso: string, timezone: string) {
 }
 
 /**
+ * Applies a filter that describes submitted work — "from this VA", "in this
+ * date range" — by deciding which THREADS qualify (does the task have a
+ * `submission` entry matching `predicate`), then keeps every row on a
+ * qualifying thread regardless of that row's own fields.
+ *
+ * The naive version — `rows.filter(predicate)` applied to every row — looks
+ * right and passes every obvious test, because most rows in a thread share
+ * the task's own fields (VA, account, category...) and only a submission's
+ * `user_id` or `created_at` usually varies. But a note or a review is a row
+ * too, and it's authored by whoever added it and timestamped when they did —
+ * neither of which has anything to do with who submitted the work or when.
+ * Filtering it against the same predicate as the submission silently strips
+ * it off an otherwise-visible thread. That's exactly what happened on
+ * 2026-09-14: Toni's own note vanished the instant she wrote it, because a
+ * "Flordeliz Mandin" VA filter was active and the note was written by Toni,
+ * not Flordeliz — the thread stayed visible, only her note disappeared from
+ * it, which read as "my note didn't save" when it had saved fine.
+ *
+ * `expected` rows (due but nothing submitted yet) have no submission to key
+ * off, so they fall back to `predicate` directly — the same check the
+ * naive version would have made for them.
+ */
+function keepQualifyingThreads(
+  rows: FeedItem[],
+  predicate: (row: FeedItem) => boolean
+): FeedItem[] {
+  const qualifyingTaskIds = new Set(
+    rows
+      .filter((r) => r.message_type === "submission" && predicate(r))
+      .map((r) => r.task?.id ?? r.assigned_task_id)
+      .filter((id): id is number => id != null)
+  );
+  return rows.filter((r) => {
+    if (r.message_type === "expected") return predicate(r);
+    const taskId = r.task?.id ?? r.assigned_task_id;
+    return taskId != null && qualifyingTaskIds.has(taskId);
+  });
+}
+
+/**
  * A From/To date-range chip, same button/popover chrome as MultiSelectFilter
  * so it reads as one filter bar rather than two different widgets bolted
  * together. Either end can be left blank — an open-ended range still narrows.
@@ -846,8 +886,10 @@ This cannot be undone.`
   const visibleItems = useMemo(() => {
     let rows = items;
 
+    // "Work from this VA" is about who submitted it — not about who wrote
+    // every row riding along on that thread. See keepQualifyingThreads.
     if (vaFilter.size > 0) {
-      rows = rows.filter((r) => vaFilter.has(r.user_id));
+      rows = keepQualifyingThreads(rows, (r) => vaFilter.has(r.user_id));
     }
 
     if (scopeFilter.size > 0) {
@@ -862,7 +904,7 @@ This cannot be undone.`
     }
 
     if (ownerMode === "mine") {
-      rows = rows.filter((r) => r.user_id === currentUserId);
+      rows = keepQualifyingThreads(rows, (r) => r.user_id === currentUserId);
     } else if (ownerMode === "to_me") {
       rows = rows.filter((r) => r.task?.assigned_by === currentUserId);
     }
@@ -942,9 +984,13 @@ This cannot be undone.`
 
     // When the work was actually turned in, in org time — same conversion
     // Timeline/Calendar already group by (localDay), so this range lines up
-    // with what those two views show for the same day.
+    // with what those two views show for the same day. See
+    // keepQualifyingThreads: filtering every row by its own created_at
+    // (the previous version) made a freshly-added note vanish the moment
+    // it was posted outside the window, even on an otherwise-visible
+    // thread — the "my note didn't save" report from 2026-09-14.
     if (submissionDateFrom || submissionDateTo) {
-      rows = rows.filter((r) => {
+      rows = keepQualifyingThreads(rows, (r) => {
         const d = localDay(r.created_at, orgTimezone);
         if (submissionDateFrom && d < submissionDateFrom) return false;
         if (submissionDateTo && d > submissionDateTo) return false;
@@ -1054,7 +1100,16 @@ This cannot be undone.`
 
     const threads: Thread[] = Array.from(byTask.entries()).map(([taskId, list]) => {
       const ordered = [...list].sort((a, b) => a.created_at.localeCompare(b.created_at));
-      return { taskId, items: ordered, latest: ordered[ordered.length - 1] };
+      // The most recent *submission* specifically, matching the sort comment
+      // below — a resubmission is new work and should resurface the thread,
+      // but a note or an approval isn't work turned in, and bumping the
+      // thread to today over one made an old, already-answered task jump to
+      // the top of a reviewer's list every time anyone appended a comment.
+      // Falls back to the last item of any type only for the edge case of a
+      // thread with no submission entry at all.
+      const submissionsOnly = ordered.filter((i) => i.message_type === "submission");
+      const latest = submissionsOnly[submissionsOnly.length - 1] ?? ordered[ordered.length - 1];
+      return { taskId, items: ordered, latest };
     });
 
     // Newest activity first. A thread sits on the day of its most recent
