@@ -481,6 +481,7 @@ export default function SubmissionsPage() {
     }
   }, [currentUserId]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [batchApproving, setBatchApproving] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
@@ -1080,6 +1081,96 @@ This cannot be undone.`
     return map;
   }, [allThreads, safePage, orgTimezone]);
 
+  // What "select all" means: every thread on the current page — not every
+  // thread matching the filters across every page, which would let one click
+  // quietly stage a batch approval of work nobody has actually looked at yet.
+  const pageThreadIds = useMemo(
+    () => Array.from(threadsByDay.values()).flatMap((list) => list.map((t) => t.taskId)),
+    [threadsByDay]
+  );
+  const allPageSelected =
+    pageThreadIds.length > 0 && pageThreadIds.every((id) => selectedTaskIds.has(id));
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedTaskIds((prev) => {
+      if (pageThreadIds.length > 0 && pageThreadIds.every((id) => prev.has(id))) {
+        const next = new Set(prev);
+        for (const id of pageThreadIds) next.delete(id);
+        return next;
+      }
+      return new Set([...prev, ...pageThreadIds]);
+    });
+  }, [pageThreadIds]);
+
+  /**
+   * Approves every selected task that's actually awaiting a decision, in one
+   * go. Anything selected that's already been decided (approved, auto-
+   * approved, in revision) is silently skipped rather than erroring — a
+   * "select all" sweep is expected to catch a mix of states, and forcing the
+   * reviewer to hand-deselect the finished ones first would defeat the point.
+   * Posts one "approval" row per task, same as clicking Approve on the card,
+   * then reloads once at the end rather than after every task.
+   */
+  const batchApprove = useCallback(async () => {
+    const targets = allThreads.filter((t) => {
+      if (!selectedTaskIds.has(t.taskId) || !t.latest.task) return false;
+      const state = reviewState[String(t.taskId)];
+      return state === undefined || state === "awaiting";
+    });
+    if (targets.length === 0) {
+      alert("None of the selected tasks are awaiting review.");
+      return;
+    }
+    const skipped = selectedTaskIds.size - targets.length;
+    if (
+      !confirm(
+        `Approve ${targets.length} task${targets.length === 1 ? "" : "s"}?` +
+          (skipped > 0
+            ? ` (${skipped} of the selected task${skipped === 1 ? "" : "s"} ${skipped === 1 ? "isn't" : "aren't"} awaiting review and will be skipped.)`
+            : "")
+      )
+    ) {
+      return;
+    }
+    setBatchApproving(true);
+    try {
+      const failed: string[] = [];
+      for (const t of targets) {
+        const item = t.latest;
+        if (!item.task) continue;
+        try {
+          const res = await fetch(`/api/assigned-tasks/${item.task.id}/submissions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message_type: "approval",
+              message:
+                item.task.review_required === false
+                  ? "Auto approved — this task does not require review"
+                  : REVIEW_DEFAULT_NOTE.approval,
+            }),
+          });
+          if (!res.ok) throw new Error();
+          const moved = await setAssignedTaskStatus({
+            assignedTaskId: item.task.id,
+            status: REVIEW_STATUS.approval,
+            vaId: item.user_id,
+          });
+          if (!moved) throw new Error();
+        } catch {
+          failed.push(item.task.task_name);
+        }
+      }
+      setSelectedTaskIds(new Set());
+      await load();
+      if (failed.length > 0) {
+        alert(`Approved the rest, but these didn't go through:\n${failed.join("\n")}`);
+      }
+    } finally {
+      setBatchApproving(false);
+    }
+  }, [allThreads, selectedTaskIds, reviewState, load]);
+
   return (
     <div className="mx-auto max-w-5xl px-4 pb-12">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -1260,25 +1351,57 @@ This cannot be undone.`
         </span>
       </div>
 
-      {selectedTaskIds.size > 0 && (
-        <div className="mb-3 flex items-center gap-3 rounded-xl border border-terracotta/30 bg-terracotta-soft px-3 py-2">
-          <span className="text-[11px] font-semibold text-terracotta">
-            {selectedTaskIds.size} selected
-          </span>
-          <button
-            onClick={() => void trashSelected(showTrash)}
-            className="rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840]"
-          >
-            {showTrash ? "Restore" : "Move to trash"}
-          </button>
-          <button
-            onClick={() => setSelectedTaskIds(new Set())}
-            className="ml-auto text-[10px] font-semibold text-stone transition-colors hover:text-espresso"
-          >
-            Clear
-          </button>
+      {(canReview && view === "timeline" && pageThreadIds.length > 0) ||
+      selectedTaskIds.size > 0 ? (
+        <div
+          className={`mb-3 flex items-center gap-3 rounded-xl border px-3 py-2 ${
+            selectedTaskIds.size > 0
+              ? "border-terracotta/30 bg-terracotta-soft"
+              : "border-sand bg-white"
+          }`}
+        >
+          {canReview && view === "timeline" && pageThreadIds.length > 0 && (
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-stone">
+              <input
+                type="checkbox"
+                checked={allPageSelected}
+                onChange={toggleSelectAll}
+                className="cursor-pointer accent-terracotta"
+              />
+              Select all on this page
+            </label>
+          )}
+          {selectedTaskIds.size > 0 && (
+            <>
+              <span className="text-[11px] font-semibold text-terracotta">
+                {selectedTaskIds.size} selected
+              </span>
+              {!showTrash && (
+                <button
+                  onClick={() => void batchApprove()}
+                  disabled={batchApproving}
+                  className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                >
+                  {batchApproving ? "Approving..." : "Approve selected"}
+                </button>
+              )}
+              <button
+                onClick={() => void trashSelected(showTrash)}
+                disabled={batchApproving}
+                className="rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:opacity-50"
+              >
+                {showTrash ? "Restore" : "Move to trash"}
+              </button>
+              <button
+                onClick={() => setSelectedTaskIds(new Set())}
+                className="ml-auto text-[10px] font-semibold text-stone transition-colors hover:text-espresso"
+              >
+                Clear
+              </button>
+            </>
+          )}
         </div>
-      )}
+      ) : null}
 
       {view === "timeline" && pageCount > 1 && (
         <div className="mb-3 flex items-center justify-between rounded-xl border border-sand bg-white px-3 py-2">
