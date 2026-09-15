@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { statusBadgeClasses, statusLabel } from "@/lib/taskSchedule";
+import { computeAttendancePay, type DayDecision } from "@/lib/salaryProration";
 
 interface Props {
   profiles: Profile[];
@@ -51,6 +52,10 @@ interface PreviewData {
   isFixedPeriod?: boolean;
   periodWeekdays?: number;
   monthWeekdays?: number;
+  /** Weekday indices the VA is expected to work — drives the salary suggestion. */
+  workDays?: number[];
+  periodStart?: string;
+  periodEnd?: string;
   grossPay: number;
   byDate: Record<string, number>;
   rateByDate?: Record<string, number>;
@@ -273,6 +278,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
   const [preview, setPreview] = useState<PreviewData | null>(null);
+  // Per-day payroll decisions for a salaried VA: excused (no effect either
+  // way) or unpaid (docked). Cleared whenever the VA or period changes.
+  const [dayDecisions, setDayDecisions] = useState<Record<string, DayDecision>>({});
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -422,6 +430,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const handleCalculate = useCallback(async (opts?: { resetOutputSelections?: boolean }) => {
     setError(null);
     setPreview(null);
+    setDayDecisions({});
     setSent(false);
     setDraftSaved(false);
     // Default true: a fresh calculate is normally a new VA or period, so any
@@ -641,6 +650,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           included_output_item_ids: (preview?.fixedAssignments ?? [])
             .filter((a) => a.source === "fixed_pay_task" && a.status !== "completed" && includedOutputItemIds.has(a.id))
             .map((a) => a.id),
+          // Days excused or docked in the preview, so the route recomputes the
+          // salary the same way and the emailed stub agrees with what was shown.
+          day_decisions: dayDecisions,
           custom_amount: (() => {
             const outputItems = (preview?.fixedAssignments ?? []).filter((a) => a.source === "fixed_pay_task");
             const checkedTotal = outputItems
@@ -692,7 +704,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds, dayDecisions]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -885,8 +897,29 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const completedOutputItemsTotal = outputTaskItems
     .filter((item) => item.status === "completed")
     .reduce((sum, item) => sum + item.amount, 0);
+  // Salary suggestion, recomputed here as days are excused or docked so the
+  // figures move immediately. Same function the send route runs, so the
+  // emailed paystub lands on the number shown here.
+  const attendance = useMemo(() => {
+    if (!preview?.isFixedPeriod || !preview.workDays) return null;
+    return computeAttendancePay({
+      monthlySalary: preview.payRate,
+      periodStart: preview.periodStart ?? "",
+      periodEnd: preview.periodEnd ?? "",
+      workDays: preview.workDays,
+      byDateMs: preview.byDate,
+      decisions: dayDecisions,
+    });
+  }, [preview, dayDecisions]);
+
+  // A day excused or docked changes the salary, and everything downstream of
+  // it, before anything is sent.
+  const salaryGross = attendance ? attendance.suggestedGross : preview?.grossPay ?? 0;
   const effectiveTotalGrossPay = preview
-    ? (preview.totalGrossPay ?? preview.grossPay) + (checkedOutputItemsTotal - completedOutputItemsTotal)
+    ? (preview.totalGrossPay ?? preview.grossPay) -
+      (preview.grossPay ?? 0) +
+      salaryGross +
+      (checkedOutputItemsTotal - completedOutputItemsTotal)
     : 0;
   const effectiveFixedTotal = preview ? (preview.fixedTotal ?? 0) + (checkedOutputItemsTotal - completedOutputItemsTotal) : 0;
 
@@ -910,7 +943,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </label>
             <select
               value={selectedUserId}
-              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); setPersonalMessage(""); }}
+              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); setPersonalMessage(""); }}
               className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
             >
               <option value="">— Select VA —</option>
@@ -929,7 +962,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </label>
             <select
               value={preset}
-              onChange={(e) => { setPreset(e.target.value as PeriodPreset); setPreview(null); setSent(false); setDraftSaved(false); }}
+              onChange={(e) => { setPreset(e.target.value as PeriodPreset); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); }}
               className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
             >
               {PRESET_OPTIONS.map((o) => (
@@ -946,7 +979,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 <input
                   type="date"
                   value={customStart}
-                  onChange={(e) => { setCustomStart(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); }}
+                  onChange={(e) => { setCustomStart(e.target.value); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); }}
                   className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                 />
               </div>
@@ -955,7 +988,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 <input
                   type="date"
                   value={customEnd}
-                  onChange={(e) => { setCustomEnd(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); }}
+                  onChange={(e) => { setCustomEnd(e.target.value); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); }}
                   className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                 />
               </div>
@@ -1019,7 +1052,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
               </div>
               <button
-                onClick={() => { setPreview(null); setSent(false); setDraftSaved(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); setPersonalMessage(""); setConfirmationNumber(""); lastMessageOwnerRef.current = null; }}
+                onClick={() => { setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); setPersonalMessage(""); setConfirmationNumber(""); lastMessageOwnerRef.current = null; }}
                 className="text-xs text-terracotta underline underline-offset-2 shrink-0"
               >
                 Send another
@@ -1303,6 +1336,59 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
               )}
 
+              {/* Attendance — salaried VAs only. Each expected work day is an
+                  equal share of the cycle; a day with no clock-in isn't paid
+                  unless it's excused here. */}
+              {attendance && (
+                <div className="px-5 py-4 border-t border-linen">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-bark">Attendance</p>
+                    <p className="text-[10px] text-bark/50">
+                      {attendance.paidDays} paid · {attendance.missedDays} missed
+                      {attendance.excusedDays > 0 ? ` · ${attendance.excusedDays} excused` : ""}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    {attendance.days.map((day) => {
+                      const hrs = day.ms / 3_600_000;
+                      return (
+                        <div key={day.date} className="flex items-center justify-between gap-2 text-xs">
+                          <span className={`flex-1 ${day.decision === "excused" ? "text-bark/40" : "text-bark"}`}>
+                            {new Date(day.date + "T12:00:00Z").toLocaleDateString("en-US", {
+                              weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
+                            })}
+                          </span>
+                          <span className={`w-16 text-right ${day.worked ? "text-bark/70" : "text-terracotta"}`}>
+                            {day.worked ? `${hrs.toFixed(2)} hrs` : "no clock-in"}
+                          </span>
+                          <select
+                            value={day.decision}
+                            onChange={(e) => {
+                              const next = e.target.value as DayDecision;
+                              setDayDecisions((prev) => {
+                                const updated = { ...prev };
+                                if (next === "auto") delete updated[day.date];
+                                else updated[day.date] = next;
+                                return updated;
+                              });
+                            }}
+                            className="w-32 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none focus:border-terracotta cursor-pointer"
+                          >
+                            <option value="auto">{day.worked ? "Paid" : "Not paid"}</option>
+                            <option value="excused">Excused</option>
+                            <option value="unpaid">Don&apos;t pay</option>
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-[10px] text-bark/50">
+                    Excused days drop out of the count entirely — neither paid nor deducted.
+                    The Gross Pay below is a suggestion; the amount you actually send is yours to set.
+                  </p>
+                </div>
+              )}
+
               {/* Totals */}
               <div className="px-5 py-4 border-t border-linen bg-parchment">
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
@@ -1329,11 +1415,13 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 )}
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                   <span>
-                    {preview.isFixedPeriod
-                      ? `Prorated Pay (${preview.periodWeekdays} of ${preview.monthWeekdays} weekdays)`
-                      : "Time-based Pay"}
+                    {attendance
+                      ? `${attendance.baseLabel} · ${attendance.paidDays} of ${attendance.expectedDays} work days`
+                      : preview.isFixedPeriod
+                        ? `Prorated Pay (${preview.periodWeekdays} of ${preview.monthWeekdays} weekdays)`
+                        : "Time-based Pay"}
                   </span>
-                  <span>{formatCurrency(preview.grossPay)}</span>
+                  <span>{formatCurrency(salaryGross)}</span>
                 </div>
                 {effectiveFixedTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">

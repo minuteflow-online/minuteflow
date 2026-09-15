@@ -9,6 +9,8 @@ import {
 } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 import { isPayrollEligible } from "@/lib/payrollHours";
+import { workDaysFromProfile } from "@/lib/budget";
+import { computeAttendancePay, type AttendancePay, type DayDecision } from "@/lib/salaryProration";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +62,10 @@ export async function POST(request: Request) {
     // forcing a status change that implies it was fully signed off.
     // Completed items need no entry here; they're always included.
     included_output_item_ids = [],
+    // Per-day payroll decisions for a salaried VA, keyed by YYYY-MM-DD:
+    // "excused" (neither pays nor deducts) or "unpaid" (deducts regardless of
+    // logged time). Anything absent is decided by whether they clocked in.
+    day_decisions = {},
   } = body;
   const includedOutputItemIds = new Set<number>(
     Array.isArray(included_output_item_ids) ? included_output_item_ids.map((id: number) => Number(id)) : []
@@ -99,7 +105,7 @@ export async function POST(request: Request) {
   // Fetch VA profile (include payment_accounts for display on paystub)
   const { data: vaProfile, error: profileError } = await adminClient
     .from("profiles")
-    .select("full_name, pay_rate, pay_rate_type, payment_accounts, position")
+    .select("full_name, pay_rate, pay_rate_type, payment_accounts, position, work_days")
     .eq("id", user_id)
     .single();
 
@@ -155,15 +161,25 @@ export async function POST(request: Request) {
     .order("effective_date", { ascending: false });
   const rateHistory = (rateHistoryRaw ?? []) as PayRateHistoryRow[];
 
-  // A monthly salary is prorated by weekdays in the period — never hours x rate.
-  const { grossPay, segments, rateByDate, isFixedPeriod, periodWeekdays, monthWeekdays } = computeGrossForRateType(
-    byDate,
-    rateHistory,
-    payRate,
-    vaProfile.pay_rate_type,
-    start_date,
-    end_date
-  );
+  // A monthly salary is prorated by attendance — never hours x rate.
+  const { grossPay: rateBasedGross, segments, rateByDate, isFixedPeriod, periodWeekdays, monthWeekdays } =
+    computeGrossForRateType(byDate, rateHistory, payRate, vaProfile.pay_rate_type, start_date, end_date);
+
+  // For a salary, the cycle is worth a fixed amount and each expected work day
+  // in it an equal share, so a day with no clock-in at all is not paid. The
+  // caller can excuse a day (no effect either way) or dock one outright. This
+  // is a suggestion: whoever runs payroll still sets the amount actually paid.
+  const attendance = isFixedPeriod
+    ? computeAttendancePay({
+        monthlySalary: payRate,
+        periodStart: start_date,
+        periodEnd: end_date,
+        workDays: workDaysFromProfile(vaProfile),
+        byDateMs: byDate,
+        decisions: day_decisions as Record<string, DayDecision>,
+      })
+    : null;
+  const grossPay = attendance ? attendance.suggestedGross : rateBasedGross;
 
   // Snapshot by_date carries the per-day rate so portal/print can display
   // correct amounts without re-querying history. Legacy snapshots hold
@@ -282,6 +298,14 @@ export async function POST(request: Request) {
       isFixedPeriod,
       periodWeekdays,
       monthWeekdays,
+      attendance,
+      // The client recomputes the suggestion locally as days are excused or
+      // docked, so toggling a day doesn't cost a round trip (and doesn't have
+      // to discard line items typed since the calculate). Same function, same
+      // inputs, so what's previewed is what this route recomputes on send.
+      workDays: workDaysFromProfile(vaProfile),
+      periodStart: start_date,
+      periodEnd: end_date,
       grossPay,
       byDate,
       rateByDate,
@@ -378,6 +402,7 @@ export async function POST(request: Request) {
       isFixedPeriod: Boolean(isFixedPeriod),
       periodWeekdays,
       monthWeekdays,
+      attendance,
       grossPay,
       rateByDate,
       rateSegments: segments,
@@ -573,6 +598,7 @@ interface PaystubData {
   isFixedPeriod: boolean;
   periodWeekdays?: number;
   monthWeekdays?: number;
+  attendance?: AttendancePay | null;
   grossPay: number;
   rateByDate: Record<string, number>;
   rateSegments: RateSegment[];
@@ -602,7 +628,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
 
   // A salaried day has no per-day $ amount — hours are shown, the dollar
   // column is not, rather than misrepresenting the salary as an hourly price.
@@ -745,7 +771,11 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
           </tr>`}
           <tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">${isFixedPeriod ? `Prorated Pay (${periodWeekdays} of ${monthWeekdays} weekdays)` : `Time-based Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}`}</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">${isFixedPeriod
+              ? attendance
+                ? `${attendance.baseLabel} · ${attendance.paidDays} of ${attendance.expectedDays} work days${attendance.excusedDays > 0 ? ` (${attendance.excusedDays} excused)` : ""}`
+                : `Prorated Pay (${periodWeekdays} of ${monthWeekdays} weekdays)`
+              : `Time-based Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}`}</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(grossPay)}</td>
           </tr>
           ${fixedTotal > 0 ? `<tr>
