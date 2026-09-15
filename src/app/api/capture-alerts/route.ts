@@ -107,7 +107,7 @@ export async function POST() {
           subject: `⚠️ Your screen share stopped at ${alertTime}`,
           html,
         }),
-      });
+      }, { log: { type: "alert", label: profile?.full_name || vaEmail, sublabel: "Screen share stopped" } });
 
       if (resendRes.ok) {
         emailSent = true;

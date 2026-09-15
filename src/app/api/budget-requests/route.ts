@@ -81,7 +81,7 @@ async function notifyAdminsOfRequest(
               <p style="color:#b5a898;font-size:12px">Or review in Admin → VA Requests → Budget Requests</p>
             </div>`,
           }),
-        });
+        }, { log: { type: "budget_request", label: `${vaName} — ${amountStr}`, sublabel: "Submitted" } });
       }
     }
 

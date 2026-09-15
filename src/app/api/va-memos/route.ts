@@ -48,7 +48,7 @@ async function sendMemoEmail(memo: { title: string; body: string; requires_confi
       subject: `Team Memo: ${memo.title}`,
       html: htmlBody,
     }),
-  });
+  }, { log: { type: "team_notice", label: memo.title, sublabel: "Memo" } });
 }
 
 /** GET: List memos */

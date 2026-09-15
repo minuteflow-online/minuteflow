@@ -45,7 +45,7 @@ async function sendTrainingEmail(training: { title: string; description?: string
       subject: `New Training Available: ${training.title}`,
       html: htmlBody,
     }),
-  });
+  }, { log: { type: "team_notice", label: training.title, sublabel: "Training" } });
 }
 
 /** GET: List trainings (all authenticated) */

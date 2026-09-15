@@ -235,7 +235,7 @@ export async function PATCH(request: Request) {
           </div>
         `,
       }),
-    });
+    }, { log: { type: "password_reset", label: email, sublabel: "Admin-initiated" } });
 
     if (!resendRes.ok) {
       return Response.json({ error: "Reset link generated but email failed to send." }, { status: 500 });

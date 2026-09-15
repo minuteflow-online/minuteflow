@@ -251,7 +251,7 @@ export async function POST(
         subject: `Payment Receipt — Invoice ${invoice.invoice_number} — ${fromName}`,
         html: receiptHtml,
       }),
-    }).catch(() => {/* non-fatal */});
+    }, { log: { type: "payment_receipt", label: invoice.invoice_number, sublabel: "Paid online" } }).catch(() => {/* non-fatal */});
   }
 
   return Response.json({

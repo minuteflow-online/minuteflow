@@ -137,7 +137,7 @@ export async function POST(request: Request) {
       subject: `Payment Receipt — Invoice ${invoice.invoice_number} — ${fromName}`,
       html,
     }),
-  });
+  }, { log: { type: "payment_receipt", label: invoice.invoice_number, sublabel: "Recorded by admin" } });
 
   if (!resendRes.ok) {
     const err = await resendRes.json().catch(() => ({}));

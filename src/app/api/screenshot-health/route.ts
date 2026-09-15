@@ -82,7 +82,7 @@ async function sendAlertEmail(errorMessage: string): Promise<void> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-  });
+  }, { log: { type: "alert", label: "Screenshot health monitor", sublabel: "Google auth failure" } });
 
   if (!res.ok) {
     const text = await res.text();

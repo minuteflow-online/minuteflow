@@ -113,7 +113,7 @@ export async function POST(request: Request) {
             <p style="color:#b5a898;font-size:12px">Or review in Admin → VA Requests.</p>
           </div>`,
         }),
-      });
+      }, { log: { type: "va_request", label: `${typeLabel} — ${vaName}`, sublabel: "Submitted" } });
     }
   }
 
