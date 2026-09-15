@@ -95,6 +95,12 @@ interface ClientPaymentRow {
   payment_method: string;
   confirmation_number: string | null;
   notes: string | null;
+  // "invoice": a real payment on a real invoice (invoice_payments) — edit or
+  // delete it from the Invoices page, not here, since that's what keeps the
+  // invoice's own amount_paid/status correct. "manual": a standalone entry
+  // logged directly here (cash, misc income with no invoice) — those can be
+  // deleted from this tab same as always.
+  source: "invoice" | "manual";
 }
 
 interface ExpenseRow {
@@ -327,7 +333,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, invoicePayRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
@@ -351,6 +357,18 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       supabase
         .from("financial_payments")
         .select("id, account, client_name, amount, payment_date, payment_method, confirmation_number, notes")
+        .gte("payment_date", startDate)
+        .lte("payment_date", endDate)
+        .order("payment_date", { ascending: false }),
+      // Real payments on real invoices — the actual source of truth for what
+      // clients have paid, whether by card (Square, via the client payment
+      // link) or manually recorded. financial_payments only ever caught a
+      // fraction of these (a "sync" step that silently failed for most
+      // manually-recorded payments, and never existed at all for card
+      // payments) — this is what "Collected from Clients" now sums instead.
+      supabase
+        .from("invoice_payments")
+        .select("id, amount, payment_date, payment_method, reference_number, notes, invoices(account_name, to_name)")
         .gte("payment_date", startDate)
         .lte("payment_date", endDate)
         .order("payment_date", { ascending: false }),
@@ -419,7 +437,27 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     setRateHistories(Object.fromEntries(historyEntries));
     setLogs((logRes.data as LogRow[]) ?? []);
     setVaPayments((vaPayRes.data as VaPaymentRow[]) ?? []);
-    setClientPayments((clientPayRes.data as ClientPaymentRow[]) ?? []);
+    // Legacy mirror rows (notes start "Invoice #...") were auto-inserted
+    // alongside a real invoice_payments row by a since-removed sync step —
+    // keeping them here too would double-count that same payment now that
+    // it also arrives straight from invoice_payments below.
+    const manualPayments: ClientPaymentRow[] = ((clientPayRes.data ?? []) as Omit<ClientPaymentRow, "source">[])
+      .filter((p) => !p.notes?.startsWith("Invoice #"))
+      .map((p) => ({ ...p, source: "manual" }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const invoicePaymentRows = (invoicePayRes.data ?? []) as any[];
+    const invoiceDerivedPayments: ClientPaymentRow[] = invoicePaymentRows.map((ip) => ({
+      id: -ip.id, // negative to never collide with a real financial_payments id
+      account: ip.invoices?.account_name || ip.invoices?.to_name || "Personal / Unbilled",
+      client_name: ip.invoices?.to_name ?? null,
+      amount: Number(ip.amount) || 0,
+      payment_date: ip.payment_date,
+      payment_method: ip.payment_method || "",
+      confirmation_number: ip.reference_number ?? null,
+      notes: ip.notes ?? null,
+      source: "invoice",
+    }));
+    setClientPayments([...manualPayments, ...invoiceDerivedPayments]);
     setExpenses((expRes.data as ExpenseRow[]) ?? []);
 
     // Parse VA fixed assignments into flat structure
@@ -627,15 +665,36 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       })
       .sort((a, b) => b.ms - a.ms);
 
+    // A payment can land on an account with no logged hours this period at
+    // all — an invoice paid late for older work, or one billed "by client"
+    // whose account name never matches a time-logged account string. Without
+    // this, that money vanished from both the table and the total instead of
+    // just having no "billed" estimate to compare against.
+    const accountsWithRows = new Set(rows.map((r) => r.account));
+    const paymentOnlyRows = Object.entries(clientPaymentsByAccount)
+      .filter(([account]) => !accountsWithRows.has(account))
+      .map(([account, payments]) => ({
+        account,
+        clients: "—",
+        ms: 0,
+        hours: 0,
+        rate: null,
+        amount: null,
+        collected: payments.reduce((s, p) => s + Number(p.amount), 0),
+        balance: null,
+        payments,
+      }));
+    const allRows = [...rows, ...paymentOnlyRows];
+
     const totalMs = rows.reduce((s, r) => s + r.ms, 0);
     const totalAmount = rows.reduce(
       (s, r) => s + (r.amount ?? 0),
       0
     );
-    const totalCollected = rows.reduce((s, r) => s + r.collected, 0);
+    const totalCollected = allRows.reduce((s, r) => s + r.collected, 0);
     const hasUnsetRates = rows.some((r) => r.rate == null);
 
-    return { rows, totalMs, totalAmount, totalCollected, hasUnsetRates };
+    return { rows: allRows, totalMs, totalAmount, totalCollected, hasUnsetRates };
   }, [filteredLogs, accountRateMap, clientPaymentsByAccount]);
 
   /* ── VA Costs Calculation (Enhanced with day breakdown + fixed tasks from assignments) ── */
@@ -1756,13 +1815,19 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                           <td className="py-1.5 text-right font-semibold text-emerald-600">{fmtMoney(Number(p.amount))}</td>
                                           <td className="py-1.5 text-bark/70 max-w-[150px] truncate">{p.notes || "—"}</td>
                                           <td className="py-1.5">
-                                            <button
-                                              onClick={(e) => { e.stopPropagation(); deleteClientPayment(p.id); }}
-                                              className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
-                                              title="Delete"
-                                            >
-                                              ✕
-                                            </button>
+                                            {p.source === "manual" ? (
+                                              <button
+                                                onClick={(e) => { e.stopPropagation(); deleteClientPayment(p.id); }}
+                                                className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
+                                                title="Delete"
+                                              >
+                                                ✕
+                                              </button>
+                                            ) : (
+                                              <span className="text-bark/30 text-[9px]" title="Recorded on the invoice — edit or delete it from the Invoices page">
+                                                invoice
+                                              </span>
+                                            )}
                                           </td>
                                         </tr>
                                       ))}
