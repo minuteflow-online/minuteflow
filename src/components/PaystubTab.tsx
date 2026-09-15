@@ -451,6 +451,13 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       // Default amount = total gross pay (hourly + fixed)
       const net = data.totalGrossPay || data.grossPay;
       setCustomAmount(net.toFixed(2));
+      // Personalized default — only fills an empty box, never overwrites
+      // something already typed (e.g. re-calculating after editing line items).
+      setPersonalMessage((prev) => {
+        if (prev.trim()) return prev;
+        const firstName = String(data.vaName || "").trim().split(/\s+/)[0] || data.vaName;
+        return `${firstName}, thank you for all you do.`;
+      });
 
       // Approved time off / short days overlapping this pay period.
       try {
@@ -882,7 +889,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </label>
             <select
               value={selectedUserId}
-              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); }}
+              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setSent(false); setDraftSaved(false); setPersonalMessage(""); }}
               className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
             >
               <option value="">— Select VA —</option>
