@@ -176,6 +176,22 @@ export function computeGrossForRateType(
   return { grossPay, segments: [], rateByDate: {}, isFixedPeriod: true, periodWeekdays, monthWeekdays };
 }
 
+const RATE_SUFFIX: Record<string, string> = {
+  hourly: "/hr",
+  daily: "/day",
+  monthly: "/mo",
+  per_task: "/task",
+};
+
+/**
+ * A pay rate with the unit it is actually charged in — "$300.00/mo", not
+ * "$300.00/hr". Screens that assumed hourly displayed a monthly salary as an
+ * hourly price, which reads as a VA costing hundreds of dollars an hour.
+ */
+export function formatPayRate(amount: number, rateType?: PayRateType | string | null): string {
+  return `${formatUsd(amount)}${RATE_SUFFIX[String(rateType ?? "hourly")] ?? "/hr"}`;
+}
+
 /** "36.00h @ $18.00/hr + 30.00h @ $22.00/hr" */
 export function formatRateSegments(segments: RateSegment[]): string {
   return segments

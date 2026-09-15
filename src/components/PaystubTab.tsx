@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
-import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { formatPayRate, normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { statusBadgeClasses, statusLabel } from "@/lib/taskSchedule";
 import { computeAttendancePay, type DayDecision } from "@/lib/salaryProration";
 
@@ -83,6 +83,7 @@ interface PaystubSnapshot {
   payment_method: string | null;
   confirmation_number: string | null;
   payment_date: string | null;
+  pay_rate_type?: string | null;
   by_date: Record<string, ByDateValue>;
   email_sent_to: string;
   company_name: string;
@@ -949,7 +950,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
               <option value="">— Select VA —</option>
               {eligibleProfiles.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.full_name} ({p.pay_rate > 0 ? `$${Number(p.pay_rate).toFixed(2)}/hr` : "no rate set"})
+                  {p.full_name} ({p.pay_rate > 0 ? formatPayRate(Number(p.pay_rate), p.pay_rate_type) : "no rate set"})
                 </option>
               ))}
             </select>
@@ -1410,7 +1411,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 ) : (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                     <span>Rate</span>
-                    <span>{formatCurrency(preview.payRate)}/hr</span>
+                    <span>{formatPayRate(preview.payRate, preview.payRateType)}</span>
                   </div>
                 )}
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
@@ -1856,7 +1857,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                   <div className="space-y-1 text-xs text-bark/70">
                                     <div className="flex justify-between">
                                       <span className="text-bark/40">Rate</span>
-                                      <span>{formatCurrency(snap.pay_rate)}/hr</span>
+                                      <span>{formatPayRate(snap.pay_rate, snap.pay_rate_type)}</span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span className="text-bark/40">Total Hours</span>
