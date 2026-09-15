@@ -8,7 +8,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 export async function notifyOne(
   supabase: SupabaseClient,
-  opts: { targetUserId: string; senderId: string; content: string; telegram: string; topic: string }
+  opts: {
+    targetUserId: string;
+    senderId: string;
+    content: string;
+    telegram: string;
+    topic: string;
+    /** The task this notification is about, if any — lets the bell link
+     *  straight back to it instead of leaving the reader to go find it. */
+    assignedTaskId?: number;
+    submissionId?: number;
+  }
 ): Promise<void> {
   try {
     await supabase.from("messages").insert({
@@ -20,6 +30,8 @@ export async function notifyOne(
       // comments, which is what they were.
       kind: opts.topic,
       read: false,
+      assigned_task_id: opts.assignedTaskId ?? null,
+      submission_id: opts.submissionId ?? null,
     });
   } catch { /* ignore */ }
   try {

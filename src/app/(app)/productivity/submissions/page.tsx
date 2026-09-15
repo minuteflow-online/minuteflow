@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import {
@@ -484,7 +485,18 @@ function scopeLabel(item: FeedItem) {
   return "Project";
 }
 
+// useSearchParams() (for the ?taskId= deep link from a notification) opts the
+// page out of static rendering unless it's wrapped in Suspense — the real
+// component moves below and this just supplies that boundary.
 export default function SubmissionsPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-5xl px-4 pb-12 text-[12px] text-stone">Loading submissions...</div>}>
+      <SubmissionsPageInner />
+    </Suspense>
+  );
+}
+
+function SubmissionsPageInner() {
   const supabase = useMemo(() => createClient(), []);
 
   const [items, setItems] = useState<FeedItem[]>([]);
@@ -560,6 +572,43 @@ export default function SubmissionsPage() {
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [busyId, setBusyId] = useState<number | null>(null);
 
+  // assigned_task_id -> how many unread comments/notes this viewer has on
+  // that task's thread. Drives the ✉️ badge and the Unread filter below.
+  const [unreadByTask, setUnreadByTask] = useState<Record<number, number>>({});
+  const [unreadOnly, setUnreadOnly] = useState(false);
+
+  // A notification click arrives as ?taskId=123 — jump straight to that
+  // thread instead of leaving the reader to find it among everyone else's
+  // filters. Read once: it's a one-time "you arrived here for a reason", not
+  // something that should keep overriding filters the person picks after.
+  const searchParams = useSearchParams();
+  const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
+  useEffect(() => {
+    const raw = searchParams.get("taskId");
+    const parsed = raw ? Number(raw) : NaN;
+    if (!Number.isFinite(parsed)) return;
+    setHighlightTaskId(parsed);
+    // Clear every filter that could hide the target thread — a notification
+    // has to land you on the thing it's about, not on an empty "no matches".
+    setOwnerMode("all");
+    setShowTrash(false);
+    setUnreadOnly(false);
+    setStatusFilter(new Set());
+    setVaFilter(new Set());
+    setScopeFilter(new Set());
+    setProjectFilter(new Set());
+    setWorkTypeFilter(new Set());
+    setCategoryFilter(new Set());
+    setAccountFilter(new Set());
+    setClientFilter(new Set());
+    setAssignedByFilter(new Set());
+    setTaskDateFrom("");
+    setTaskDateTo("");
+    setSubmissionDateFrom("");
+    setSubmissionDateTo("");
+    setSearch("");
+  }, [searchParams]);
+
   useEffect(() => {
     (async () => {
       const {
@@ -626,6 +675,7 @@ export default function SubmissionsPage() {
       setCanReview(Boolean(data.canReview));
       setCanEmptyTrash(Boolean(data.canEmptyTrash));
       setSeesAll(Boolean(data.seesAll));
+      setUnreadByTask(data.unreadByTask ?? {});
     } catch {
       setItems([]);
     } finally {
@@ -872,6 +922,28 @@ This cannot be undone.`
     [load]
   );
 
+  // Clears the unread badge for one task's thread — called when the card is
+  // opened, since reading the comment is the whole point of the count. Same
+  // RLS the bell already relies on: a viewer may only touch their own rows,
+  // so this can go straight from the browser without a dedicated route.
+  const markThreadRead = useCallback(
+    (taskId: number) => {
+      if (!currentUserId || !(unreadByTask[taskId] > 0)) return;
+      setUnreadByTask((prev) => {
+        const next = { ...prev };
+        delete next[taskId];
+        return next;
+      });
+      void supabase
+        .from("messages")
+        .update({ read: true })
+        .eq("target_user_id", currentUserId)
+        .eq("assigned_task_id", taskId)
+        .eq("read", false);
+    },
+    [supabase, currentUserId, unreadByTask]
+  );
+
   // Narrows to the selected scopes when any are chosen, so picking "Objective"
   // leaves only objectives to choose from rather than every project.
   const projectOptions = useMemo(() => {
@@ -998,8 +1070,18 @@ This cannot be undone.`
       });
     }
 
+    // A thread's unread count belongs to the task, not to any one row in it —
+    // so this checks task membership directly rather than going through
+    // keepQualifyingThreads' per-submission predicate.
+    if (unreadOnly) {
+      rows = rows.filter((r) => {
+        const taskId = r.task?.id ?? r.assigned_task_id;
+        return taskId != null && (unreadByTask[taskId] ?? 0) > 0;
+      });
+    }
+
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone, unreadOnly, unreadByTask]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -1280,6 +1362,30 @@ This cannot be undone.`
           ))}
         </select>
 
+        {/* A quick way to find "did Toni leave me a comment I haven't seen
+            yet" without reading every card — the ✉️ badge on a card answers
+            "on which one", this answers "is there any at all". */}
+        <button
+          type="button"
+          onClick={() => setUnreadOnly((v) => !v)}
+          className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+            unreadOnly
+              ? "border-terracotta/30 bg-terracotta-soft text-terracotta"
+              : "border-sand bg-white text-stone hover:border-walnut"
+          }`}
+        >
+          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="m2 6 10 7 10-7" />
+          </svg>
+          Unread
+          {Object.keys(unreadByTask).length > 0 && (
+            <span className="rounded-full bg-terracotta px-1.5 py-[1px] text-[10px] font-bold text-white">
+              {Object.keys(unreadByTask).length}
+            </span>
+          )}
+        </button>
+
         <CardFieldsPicker
           titleField={titleField}
           onTitleChange={(next) => {
@@ -1503,6 +1609,9 @@ This cannot be undone.`
           clientByAccount={clientByAccount}
           onCancelReversal={cancelReversal}
           onOpenTask={setDetailTaskId}
+          unreadByTask={unreadByTask}
+          onMarkRead={markThreadRead}
+          highlightTaskId={highlightTaskId}
         />
       ) : (
         <CalendarView
@@ -2129,6 +2238,9 @@ function ThreadCard({
   clientByAccount,
   onCancelReversal,
   onOpenTask,
+  unreadCount = 0,
+  onMarkRead,
+  autoExpand = false,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -2155,6 +2267,11 @@ function ThreadCard({
   clientByAccount: Map<string, ClientRow>;
   onCancelReversal: (item: FeedItem) => void;
   onOpenTask: (taskId: number) => void;
+  /** Unread comments on this thread for the current viewer. */
+  unreadCount?: number;
+  onMarkRead?: (taskId: number) => void;
+  /** Arrived here via a notification link — start expanded and scroll into view. */
+  autoExpand?: boolean;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -2164,7 +2281,19 @@ function ThreadCard({
   const resubmissions = Math.max(0, submissions.length - 1);
   const submissionIndex = new Map(submissions.map((s, i) => [s.id, i]));
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(autoExpand);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Landed here from a notification: scroll it into view and clear the
+  // unread badge, same as opening the thread by hand would.
+  useEffect(() => {
+    if (!autoExpand) return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    onMarkRead?.(thread.taskId);
+    // Runs once for the card this notification pointed at — re-firing on
+    // every unrelated re-render would keep re-scrolling the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const client = head.task?.account ? clientByAccount.get(head.task.account) : undefined;
 
@@ -2368,7 +2497,7 @@ function ThreadCard({
       : undefined;
 
   return (
-    <div className="rounded-lg border border-sand bg-white px-3 py-2.5">
+    <div ref={cardRef} className="rounded-lg border border-sand bg-white px-3 py-2.5">
       {/* Task Name | R# Task Type | Total time | Approve Revise */}
       <div className="flex items-center gap-2">
         {/* Selection drives the bulk trash action. One checkbox per card beats
@@ -2384,7 +2513,13 @@ function ThreadCard({
         )}
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => {
+            setExpanded((v) => {
+              const next = !v;
+              if (next) onMarkRead?.(thread.taskId);
+              return next;
+            });
+          }}
           className="group flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
           <svg
@@ -2409,6 +2544,18 @@ function ThreadCard({
           <span className="shrink-0 rounded-full border border-stone/20 bg-stone/10 px-2 py-[2px] text-[10px] font-semibold text-stone">
             {scopeLabel(head)}
           </span>
+          {unreadCount > 0 && (
+            <span
+              className="flex shrink-0 items-center gap-1 rounded-full border border-terracotta/30 bg-terracotta-soft px-1.5 py-[1px] text-[10px] font-semibold text-terracotta"
+              title={`${unreadCount} unread comment${unreadCount === 1 ? "" : "s"}`}
+            >
+              <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m2 6 10 7 10-7" />
+              </svg>
+              {unreadCount}
+            </span>
+          )}
         </button>
 
         {/* Straight into the real task editor rather than a second copy of it
@@ -2700,6 +2847,9 @@ function TimelineView({
   clientByAccount,
   onCancelReversal,
   onOpenTask,
+  unreadByTask,
+  onMarkRead,
+  highlightTaskId,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -2725,6 +2875,12 @@ function TimelineView({
   clientByAccount: Map<string, ClientRow>;
   onCancelReversal: (item: FeedItem) => void;
   onOpenTask: (taskId: number) => void;
+  /** taskId -> unread comment count for the current viewer. */
+  unreadByTask: Record<number, number>;
+  onMarkRead: (taskId: number) => void;
+  /** The task a notification click pointed at — auto-expanded and scrolled
+   *  into view, once. */
+  highlightTaskId: number | null;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -2767,6 +2923,9 @@ function TimelineView({
                 clientByAccount={clientByAccount}
                 onCancelReversal={onCancelReversal}
                 onOpenTask={onOpenTask}
+                unreadCount={unreadByTask[thread.taskId] ?? 0}
+                onMarkRead={onMarkRead}
+                autoExpand={highlightTaskId === thread.taskId}
               />
             ))}
         </DayGroup>

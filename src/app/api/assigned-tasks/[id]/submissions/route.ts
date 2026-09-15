@@ -522,6 +522,8 @@ export async function POST(request: Request, { params }: RouteContext) {
       content: `${submitter} submitted: ${task.task_name ?? "a task"}`,
       telegramMessage: `📤 <b>New submission</b> from ${esc(submitter)}\n\nTask: ${esc(task.task_name ?? "a task")}`,
       topic: "submissions",
+      assignedTaskId: Number(id),
+      submissionId: submission.id as number,
     });
   }
 
@@ -546,6 +548,8 @@ export async function POST(request: Request, { params }: RouteContext) {
         content: `${commenter} commented on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
         telegram: `💬 <b>${esc(commenter)}</b> commented on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
         topic: "submissions",
+        assignedTaskId: Number(id),
+        submissionId: submission.id as number,
       });
     }
   }
