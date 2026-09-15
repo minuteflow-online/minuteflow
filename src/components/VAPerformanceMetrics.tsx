@@ -291,7 +291,7 @@ export default function VAPerformanceMetrics({
                   <MetricTile label="Accuracy" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
                   <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
                   <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
-                  <MetricTile label="Stars" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
+                  <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
                 </div>
                 <ProgressBar pct={m.progressPct} label={label} color={color} />
               </div>
@@ -321,7 +321,7 @@ export default function VAPerformanceMetrics({
           <MetricTile label="Accuracy" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
           <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
           <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
-          <MetricTile label="Stars" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
+          <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
         </div>
         <ProgressBar pct={m.progressPct} label={label} color={color} />
       </div>
