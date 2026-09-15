@@ -1110,7 +1110,13 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const receivable = revenueData.rows.reduce((sum, row) => sum + (row.balance ?? 0), 0); // sum the same row balances shown below
     const vaPaid = vaCostData.totalVaPaid;
     const vaPayable = cost - vaPaid; // what you still owe VAs
-    return { revenue, cost, net, margin, expenseTotal, collected, receivable, vaPaid, vaPayable };
+    // Net Margin sits in the "Paid & Collected" row, so it has to be money in
+    // less money out — not billed less earned. The accrual figure there had a
+    // month reading "$0.00 collected" and "$6,334.19 net margin" side by side:
+    // a profit on cash that hadn't arrived, against VA pay that had gone out.
+    const netCash = collected - vaPaid - expenseTotal;
+    const marginCash = collected > 0 ? (netCash / collected) * 100 : 0;
+    return { revenue, cost, net, margin, expenseTotal, collected, receivable, vaPaid, vaPayable, netCash, marginCash };
   }, [revenueData, vaCostData, expenseData]);
 
   /* ── Budgeting — Projected VA Cost ───────────────────── */
@@ -1818,9 +1824,13 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                 />
                 <SummaryCard
                   label="Net Margin"
-                  value={fmtMoney(profitData.net)}
-                  sub={profitData.margin.toFixed(1) + "% margin"}
-                  color={profitData.net >= 0 ? "text-sage" : "text-red-500"}
+                  value={fmtMoney(profitData.netCash)}
+                  sub={
+                    profitData.collected > 0
+                      ? `${profitData.marginCash.toFixed(1)}% of collected`
+                      : "nothing collected yet"
+                  }
+                  color={profitData.netCash >= 0 ? "text-sage" : "text-red-500"}
                 />
               </div>
             </div>
