@@ -7774,6 +7774,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [paymentError, setPaymentError] = useState("");
   const [deletingPaymentId, setDeletingPaymentId] = useState<number | null>(null);
 
+  // Edit payment state — a recorded payment's date/amount/method/etc need to
+  // be correctable without deleting and re-adding it (which loses the row's
+  // id and, worse, invited the "just re-enter it with today's date" mistake
+  // that misdated Thess's August payment into September).
+  const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null);
+  const [editPaymentAmount, setEditPaymentAmount] = useState("");
+  const [editPaymentDate, setEditPaymentDate] = useState("");
+  const [editPaymentMethod, setEditPaymentMethod] = useState("");
+  const [editPaymentRef, setEditPaymentRef] = useState("");
+  const [editPaymentNotes, setEditPaymentNotes] = useState("");
+  const [savingPaymentEdit, setSavingPaymentEdit] = useState(false);
+
   // Edit invoice state
   const [editingInvoice, setEditingInvoice] = useState(false);
   const [editSubtotal, setEditSubtotal] = useState("");
@@ -8961,6 +8973,86 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     setInvoicePayments((prev) => prev.filter((p) => p.id !== payment.id));
     setDeletingPaymentId(null);
+    fetchInvoices();
+  };
+
+  const startEditPayment = (payment: InvoicePayment) => {
+    setEditingPaymentId(payment.id);
+    setEditPaymentAmount(String(payment.amount));
+    setEditPaymentDate(payment.payment_date);
+    setEditPaymentMethod(payment.payment_method || "");
+    setEditPaymentRef(payment.reference_number || "");
+    setEditPaymentNotes(payment.notes || "");
+    setPaymentError("");
+  };
+
+  const cancelEditPayment = () => {
+    setEditingPaymentId(null);
+  };
+
+  const handleUpdatePayment = async (payment: InvoicePayment) => {
+    if (!selectedInvoice) return;
+    const newAmt = parseFloat(editPaymentAmount) || 0;
+    if (newAmt <= 0 || !editPaymentDate) {
+      setPaymentError("Amount and date are required.");
+      return;
+    }
+    setSavingPaymentEdit(true);
+
+    const { error } = await supabase
+      .from("invoice_payments")
+      .update({
+        amount: newAmt,
+        payment_date: editPaymentDate,
+        payment_method: editPaymentMethod || null,
+        reference_number: editPaymentRef || null,
+        notes: editPaymentNotes || null,
+      })
+      .eq("id", payment.id);
+    if (error) {
+      setPaymentError(error.message || "Failed to update payment. Please try again.");
+      setSavingPaymentEdit(false);
+      return;
+    }
+    setPaymentError("");
+
+    // Recalculate amount_paid and status from the delta (old amount out, new amount in) —
+    // same math as handleAddPayment/handleDeletePayment.
+    const newAmountPaid = Math.max(0, Number(selectedInvoice.amount_paid || 0) - Number(payment.amount) + newAmt);
+    const invoiceTotal = Number(selectedInvoice.total);
+    const prevBalance = Number(selectedInvoice.previous_balance || 0);
+    const grandTotal = invoiceTotal + prevBalance;
+
+    let newStatus: Invoice["status"] = selectedInvoice.status;
+    if (newAmountPaid >= grandTotal - 0.01) {
+      newStatus = "paid";
+    } else if (newAmountPaid > 0) {
+      newStatus = "partially_paid";
+    } else if (selectedInvoice.status === "paid" || selectedInvoice.status === "partially_paid") {
+      newStatus = "sent";
+    }
+
+    await supabase
+      .from("invoices")
+      .update({
+        amount_paid: newAmountPaid,
+        status: newStatus,
+        ...(newStatus !== "paid" ? { paid_date: null } : {}),
+      })
+      .eq("id", selectedInvoice.id);
+
+    setSelectedInvoice((prev) =>
+      prev ? { ...prev, amount_paid: newAmountPaid, status: newStatus, ...(newStatus !== "paid" ? { paid_date: null } : {}) } : null
+    );
+    setInvoicePayments((prev) =>
+      prev.map((p) =>
+        p.id === payment.id
+          ? { ...p, amount: newAmt, payment_date: editPaymentDate, payment_method: editPaymentMethod || null, reference_number: editPaymentRef || null, notes: editPaymentNotes || null }
+          : p
+      )
+    );
+    setEditingPaymentId(null);
+    setSavingPaymentEdit(false);
     fetchInvoices();
   };
 
@@ -11932,28 +12024,99 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-parchment">
-                  {invoicePayments.map((pmt) => (
-                    <tr key={pmt.id} className="hover:bg-parchment/20 transition-colors">
-                      <td className="px-4 py-2.5 text-espresso">
-                        {new Date(pmt.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-semibold text-sage">{formatCurrency(Number(pmt.amount))}</td>
-                      <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
-                      <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
-                      <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
-                      <td className="px-3 py-2.5 text-right">
-                        {!pmt.square_payment_id && (
+                  {invoicePayments.map((pmt) =>
+                    editingPaymentId === pmt.id ? (
+                      <tr key={pmt.id} className="bg-parchment/20">
+                        <td className="px-4 py-2.5">
+                          <input
+                            type="date"
+                            value={editPaymentDate}
+                            onChange={(e) => setEditPaymentDate(e.target.value)}
+                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={editPaymentAmount}
+                            onChange={(e) => setEditPaymentAmount(e.target.value)}
+                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso text-right outline-none bg-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <input
+                            type="text"
+                            value={editPaymentMethod}
+                            onChange={(e) => setEditPaymentMethod(e.target.value)}
+                            placeholder="e.g. check"
+                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <input
+                            type="text"
+                            value={editPaymentRef}
+                            onChange={(e) => setEditPaymentRef(e.target.value)}
+                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <input
+                            type="text"
+                            value={editPaymentNotes}
+                            onChange={(e) => setEditPaymentNotes(e.target.value)}
+                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                          />
+                        </td>
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
                           <button
-                            onClick={() => handleDeletePayment(pmt)}
-                            disabled={deletingPaymentId === pmt.id}
-                            className="text-[11px] text-red-400 hover:text-red-600 hover:underline disabled:opacity-50"
+                            onClick={() => handleUpdatePayment(pmt)}
+                            disabled={savingPaymentEdit}
+                            className="text-[11px] text-sage hover:text-sage/80 hover:underline disabled:opacity-50 mr-2"
                           >
-                            {deletingPaymentId === pmt.id ? "Deleting..." : "Delete"}
+                            {savingPaymentEdit ? "Saving..." : "Save"}
                           </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                          <button
+                            onClick={cancelEditPayment}
+                            disabled={savingPaymentEdit}
+                            className="text-[11px] text-stone hover:text-bark hover:underline disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={pmt.id} className="hover:bg-parchment/20 transition-colors">
+                        <td className="px-4 py-2.5 text-espresso">
+                          {new Date(pmt.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-semibold text-sage">{formatCurrency(Number(pmt.amount))}</td>
+                        <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
+                        <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
+                        <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          {!pmt.square_payment_id && (
+                            <>
+                              <button
+                                onClick={() => startEditPayment(pmt)}
+                                className="text-[11px] text-slate-blue hover:text-slate-blue/80 hover:underline mr-2"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeletePayment(pmt)}
+                                disabled={deletingPaymentId === pmt.id}
+                                className="text-[11px] text-red-400 hover:text-red-600 hover:underline disabled:opacity-50"
+                              >
+                                {deletingPaymentId === pmt.id ? "Deleting..." : "Delete"}
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  )}
                 </tbody>
               </table>
             </div>
