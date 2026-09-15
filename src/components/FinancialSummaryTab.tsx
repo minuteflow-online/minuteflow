@@ -1857,15 +1857,26 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                   color={profitData.receivable > 0 ? "text-amber-600" : "text-sage"}
                 />
                 <SummaryCard
-                  label="Payable to VAs"
-                  value={fmtMoney(profitData.vaPayable)}
-                  sub={profitData.vaPayable > 0.01 ? "still owed to VAs" : "all paid up"}
-                  color={profitData.vaPayable > 0.01 ? "text-amber-600" : "text-sage"}
+                  // Paying more than the period's logged work comes to isn't
+                  // "all paid up" — it's an overpayment, and printing it as a
+                  // negative under that label hid it. Over a year it reached
+                  // −$4,137.54: $12,001.66 paid against $7,864.12 earned,
+                  // because logged hours fall well short of the work done.
+                  label={profitData.vaPayable < -0.01 ? "Paid Ahead of Logged Work" : "Payable to VAs"}
+                  value={fmtMoney(Math.abs(profitData.vaPayable))}
+                  sub={
+                    profitData.vaPayable > 0.01
+                      ? "still owed to VAs"
+                      : profitData.vaPayable < -0.01
+                        ? "paid more than the hours logged"
+                        : "all paid up"
+                  }
+                  color={profitData.vaPayable > 0.01 ? "text-amber-600" : profitData.vaPayable < -0.01 ? "text-amber-600" : "text-sage"}
                 />
                 <SummaryCard
-                  label="Billed This Month"
+                  label="Billed"
                   value={fmtMoney(profitData.revenue)}
-                  sub={revenueData.hasUnsetRates ? "before costs · some rates not set" : "invoices issued, before costs"}
+                  sub={revenueData.hasUnsetRates ? "invoices issued · some rates not set" : "invoices issued, before costs"}
                   color="text-sage"
                 />
                 <SummaryCard
