@@ -65,7 +65,20 @@ export async function GET(request: Request) {
   const totalHours = (snap.total_hours_ms as number) / 3_600_000;
   const payRate = snap.pay_rate as number;
   const grossPay = snap.gross_pay as number;
-  const amountPaid = snap.amount_paid as number;
+  // Everything paid for this period, not just what this send paid out — a
+  // period part-settled by an advance otherwise printed $145.00 against
+  // $196.50 actually received, and showed a balance still owing when the VA
+  // had in fact been overpaid.
+  const { data: periodPayments } = await adminClient
+    .from("va_payments")
+    .select("amount")
+    .eq("va_id", snap.user_id)
+    .eq("period_start", snap.period_start)
+    .eq("period_end", snap.period_end);
+  const paidForPeriod = (periodPayments ?? []).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const amountPaid = periodPayments && periodPayments.length > 0
+    ? paidForPeriod
+    : (snap.amount_paid as number);
   const remainingBalance = grossPay - amountPaid;
   const isFixedPeriod = isFixedPeriodRate(snap.pay_rate_type as string | null);
 
@@ -416,6 +429,9 @@ export async function GET(request: Request) {
         ${remainingBalance > 0.005 ? `<tr>
           <td style="color:#6b5e52;font-size:12px;">Remaining Balance</td>
           <td style="color:#6b5e52;font-size:12px;">${formatCurrency(remainingBalance)}</td>
+        </tr>` : remainingBalance < -0.005 ? `<tr>
+          <td style="color:#6b5e52;font-size:12px;">Overpaid</td>
+          <td style="color:#6b5e52;font-size:12px;">${formatCurrency(Math.abs(remainingBalance))}</td>
         </tr>` : ""}
       </table>
     </div>
