@@ -1003,7 +1003,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         .update({ revision_count: (taskForReview?.revision_count ?? 0) + 1, updated_at: now })
         .eq("id", id);
 
-      // Decrement accuracy_score by 10 for every assignee on this task
+      // Decrement accuracy_score by 10 for every assignee on this task, never
+      // below zero — unclamped, eleven revisions on one task would have gone
+      // negative, and nothing else in the app expects that.
       const { data: assigneeRows } = await adminSupabase
         .from("assigned_task_assignees")
         .select("id, accuracy_score")
@@ -1011,7 +1013,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       for (const row of assigneeRows ?? []) {
         await adminSupabase
           .from("assigned_task_assignees")
-          .update({ status, accuracy_score: (row.accuracy_score as number) - 10, updated_at: now })
+          .update({ status, accuracy_score: Math.max(0, (row.accuracy_score as number) - 10), updated_at: now })
           .eq("id", row.id);
       }
     } else {
@@ -1078,9 +1080,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .maybeSingle();
 
     if (status === "revision_needed") {
-      // Decrement accuracy_score by 10 on the targeted row
+      // Decrement accuracy_score by 10 on the targeted row, never below zero.
       if (priorAssigneeRow) {
-        updatePayload.accuracy_score = (priorAssigneeRow.accuracy_score as number) - 10;
+        updatePayload.accuracy_score = Math.max(0, (priorAssigneeRow.accuracy_score as number) - 10);
       }
 
       // Count the revision the moment it's issued. This is the path an admin's
