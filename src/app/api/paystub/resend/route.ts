@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { normalizeByDateValue, isFixedPeriodRate, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
@@ -82,6 +82,7 @@ export async function POST(request: Request) {
     personalMessage: snap.personal_message as string | null,
     companyName: (snap.company_name as string) || "MinuteFlow",
     originalSentAt: snap.sent_at as string,
+    isFixedPeriod: isFixedPeriodRate(snap.pay_rate_type as string | null),
   });
 
   const resendRes = await sendResendEmail({
@@ -162,6 +163,7 @@ interface ResendEmailData {
   personalMessage: string | null;
   companyName: string;
   originalSentAt: string;
+  isFixedPeriod: boolean;
 }
 
 function buildResendEmail(data: ResendEmailData): string {
@@ -179,6 +181,7 @@ function buildResendEmail(data: ResendEmailData): string {
     personalMessage,
     companyName,
     originalSentAt,
+    isFixedPeriod,
   } = data;
 
   // by_date values are legacy plain ms numbers or {ms, rate} — normalize.
@@ -191,20 +194,22 @@ function buildResendEmail(data: ResendEmailData): string {
     const r = rate ?? payRate;
     msByRate.set(r, (msByRate.get(r) || 0) + ms);
   }
-  const rateSegments: RateSegment[] = [...msByRate].map(([rate, ms]) => ({
+  const rateSegments: RateSegment[] = isFixedPeriod ? [] : [...msByRate].map(([rate, ms]) => ({
     rate,
     ms,
     hours: ms / 3_600_000,
     amount: (ms / 3_600_000) * rate,
   }));
 
+  // A salaried day has no per-day $ amount — hours are shown, the dollar
+  // column is not.
   const rowsHtml = byDateEntries
     .map(
       ([date, { ms, rate }]) => `
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${formatDateLabel(date)}</td>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatHours(ms)}</td>
-        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency((ms / 3_600_000) * (rate ?? payRate))}</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${isFixedPeriod ? "—" : formatCurrency((ms / 3_600_000) * (rate ?? payRate))}</td>
       </tr>`
     )
     .join("");
@@ -252,7 +257,7 @@ function buildResendEmail(data: ResendEmailData): string {
       <div style="padding: 20px 32px; background: #faf6f0; border-bottom: 1px solid #e8e0d4;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 4px;">Prepared for</div>
         <div style="font-size: 16px; font-weight: 700; color: #3d2b1f;">${vaName}</div>
-        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">Rate: ${rateSegments.length > 1 ? rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ") : `${formatCurrency(payRate)}/hr`}</div>
+        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">Rate: ${isFixedPeriod ? `${formatCurrency(payRate)}/mo (salary)` : rateSegments.length > 1 ? rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ") : `${formatCurrency(payRate)}/hr`}</div>
       </div>
 
       <!-- Hours Breakdown -->
@@ -279,7 +284,12 @@ function buildResendEmail(data: ResendEmailData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Total Hours</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${totalHours.toFixed(2)} hrs</td>
           </tr>
-          ${rateSegments.length > 1
+          ${isFixedPeriod
+            ? `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Monthly Salary</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}/mo</td>
+          </tr>`
+            : rateSegments.length > 1
             ? rateSegments.map((s) => `<tr>
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">${s.hours.toFixed(2)}h @ ${formatCurrency(s.rate)}/hr</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(s.amount)}</td>

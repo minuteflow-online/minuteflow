@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types/database";
 import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 import VAProfileTab from "@/components/VAProfileTab";
-import { normalizeByDateValue, type ByDateValue } from "@/lib/payroll";
+import { normalizeByDateValue, isFixedPeriodRate, type ByDateValue } from "@/lib/payroll";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { hasModerationAccess, canReviewBugReports } from "@/lib/financialAccess";
 import ReportIssueModal, {
@@ -1604,6 +1604,7 @@ interface PaystubRecord {
   period_end: string | null;
   total_hours_ms: number | null;
   pay_rate: number | null;
+  pay_rate_type: string | null;
   confirmation_number: string | null;
   payment_date: string | null;
   personal_message: string | null;
@@ -1647,7 +1648,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
         const [paystubRes, perTaskRes] = await Promise.all([
           supabase
             .from("paystub_snapshots")
-            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, confirmation_number, payment_date, personal_message, by_date")
+            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, pay_rate_type, confirmation_number, payment_date, personal_message, by_date")
             .eq("user_id", currentUserId)
             .order("sent_at", { ascending: false }),
           supabase
@@ -1809,6 +1810,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                         const distinctRates = [
                           ...new Set(byDateEntries.map(([, { rate }]) => rate).filter((r): r is number => r != null)),
                         ];
+                        const isFixedPeriod = isFixedPeriodRate(p.pay_rate_type);
 
                         return (
                           <Fragment key={p.id}>
@@ -1871,11 +1873,15 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                                     <div>
                                       <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Pay Rate</p>
                                       <p className="text-[13px] text-espresso">
-                                        {distinctRates.length > 1
-                                          ? distinctRates.map((r) => `${fmtCurrency(r)}/hr`).join(" → ")
-                                          : p.pay_rate != null
-                                            ? `${fmtCurrency(p.pay_rate)}/hr`
-                                            : "—"}
+                                        {isFixedPeriod
+                                          ? p.pay_rate != null
+                                            ? `${fmtCurrency(p.pay_rate)}/mo (salary)`
+                                            : "—"
+                                          : distinctRates.length > 1
+                                            ? distinctRates.map((r) => `${fmtCurrency(r)}/hr`).join(" → ")
+                                            : p.pay_rate != null
+                                              ? `${fmtCurrency(p.pay_rate)}/hr`
+                                              : "—"}
                                       </p>
                                     </div>
                                     <div>
@@ -1922,7 +1928,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                                         <tbody>
                                           {byDateEntries.map(([date, { ms, rate }]) => {
                                             const hrs = ms / 3_600_000;
-                                            const amt = rate != null ? hrs * rate : null;
+                                            const amt = isFixedPeriod ? null : rate != null ? hrs * rate : null;
                                             return (
                                               <tr key={date} className="border-b border-sand/50 last:border-0">
                                                 <td className="py-1.5 pr-4 text-espresso">

@@ -51,6 +51,35 @@ export interface HourlyGrossResult {
   segments: RateSegment[];
   /** Rate applied to each logged date. */
   rateByDate: Record<string, number>;
+  /** True for a flat monthly salary — grossPay is not hours × a per-hour
+   * rate, so callers must not show a per-day $ amount or a "$/hr" label. */
+  isFixedPeriod?: boolean;
+  /** Set only when isFixedPeriod: the weekday counts behind the proration
+   * fraction, so a paystub can show its own math ("15 of 21 weekdays"). */
+  periodWeekdays?: number;
+  monthWeekdays?: number;
+}
+
+/** Count of Mon–Fri dates in [start, end] inclusive (YYYY-MM-DD, UTC-safe). */
+export function weekdaysInRange(start: string, end: string): number {
+  const s = new Date(start + "T00:00:00Z");
+  const e = new Date(end + "T00:00:00Z");
+  let count = 0;
+  for (let d = new Date(s); d <= e; d.setUTCDate(d.getUTCDate() + 1)) {
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return count;
+}
+
+/** Weekday count for the whole calendar month containing `dateInMonth`. */
+export function weekdaysInMonth(dateInMonth: string): number {
+  const d = new Date(dateInMonth + "T00:00:00Z");
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth();
+  const first = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  const last = new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
+  return weekdaysInRange(first, last);
 }
 
 /** Snapshot by_date value: legacy plain ms number, or {ms, rate} going forward. */
@@ -113,13 +142,16 @@ export function computeHourlyGross(
 /**
  * Gross pay for a period, respecting how the rate is actually charged.
  *
- * A monthly rate produces NO computed pay. It is a fixed salary settled outside
- * the time log, so deriving an amount from hours is wrong however it is done —
- * multiplying gave $8,000 for a $4,000 salary, and even paying the flat figure
- * guesses at a period the log knows nothing about. The line is left blank and a
- * person enters what is actually owed.
+ * A monthly rate is NEVER hours × a per-hour price — multiplying gave $8,000
+ * for a $4,000 salary. It is prorated instead, by how much of the month's
+ * working days this specific period covers: a VA who started mid-month, or
+ * whose paystub period is a partial one, gets that fraction of the salary; a
+ * full-month period gets all of it. `periodStart`/`periodEnd` decide both the
+ * fraction's numerator (weekdays in the period) and which calendar month's
+ * weekday count is the denominator.
  *
- * Hours are still counted and reported; they just do not become money here.
+ * Hours are still counted and reported; they just are not what the pay is
+ * derived from here.
  *
  * Everything else falls through to the hours-based calculation unchanged.
  */
@@ -127,14 +159,21 @@ export function computeGrossForRateType(
   byDateMs: Record<string, number>,
   history: PayRateHistoryRow[],
   fallbackRate: number,
-  rateType?: PayRateType | string | null
+  rateType: PayRateType | string | null | undefined,
+  periodStart: string,
+  periodEnd: string
 ): HourlyGrossResult {
   if (!isFixedPeriodRate(rateType)) {
     return computeHourlyGross(byDateMs, history, fallbackRate);
   }
 
-  // No segments and no per-day rate: nothing here asserts a figure.
-  return { grossPay: 0, segments: [], rateByDate: {} };
+  const periodWeekdays = weekdaysInRange(periodStart, periodEnd);
+  const monthWeekdays = weekdaysInMonth(periodStart);
+  const grossPay = monthWeekdays > 0 ? fallbackRate * (periodWeekdays / monthWeekdays) : 0;
+
+  // No segments and no per-day rate: a salary isn't attributed to any one
+  // logged day, so there is nothing meaningful to show in a daily breakdown.
+  return { grossPay, segments: [], rateByDate: {}, isFixedPeriod: true, periodWeekdays, monthWeekdays };
 }
 
 /** "36.00h @ $18.00/hr + 30.00h @ $22.00/hr" */

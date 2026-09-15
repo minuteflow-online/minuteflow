@@ -47,6 +47,10 @@ interface PreviewData {
   payPeriod: string;
   totalHours: number;
   payRate: number;
+  payRateType?: string | null;
+  isFixedPeriod?: boolean;
+  periodWeekdays?: number;
+  monthWeekdays?: number;
   grossPay: number;
   byDate: Record<string, number>;
   rateByDate?: Record<string, number>;
@@ -353,10 +357,10 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         if (Math.abs(freshGross - Number(d.gross_pay)) > 0.005 || Math.abs(freshMs - Number(d.total_hours_ms)) > 1000) {
           const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
           for (const [dt, ms] of Object.entries(p.byDate ?? {})) {
-            byDateWithRates[dt] = { ms: Number(ms), rate: Number((p.rateByDate ?? {})[dt] ?? p.payRate) };
+            byDateWithRates[dt] = { ms: Number(ms), rate: p.isFixedPeriod ? 0 : Number((p.rateByDate ?? {})[dt] ?? p.payRate) };
           }
           await supabase.from("paystub_snapshots").update({
-            gross_pay: freshGross, total_hours_ms: freshMs, by_date: byDateWithRates,
+            gross_pay: freshGross, total_hours_ms: freshMs, by_date: byDateWithRates, pay_rate_type: p.payRateType ?? null,
           }).eq("id", d.id);
           return { ...d, gross_pay: freshGross, total_hours_ms: freshMs };
         }
@@ -513,7 +517,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       const supabase = createClient();
       const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
       for (const [date, ms] of Object.entries(preview.byDate)) {
-        byDateWithRates[date] = { ms: Number(ms), rate: Number(preview.rateByDate?.[date] ?? preview.payRate) };
+        byDateWithRates[date] = { ms: Number(ms), rate: preview.isFixedPeriod ? 0 : Number(preview.rateByDate?.[date] ?? preview.payRate) };
       }
       const payload = {
         user_id: selectedUserId,
@@ -523,6 +527,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         pay_period_label: range.label,
         total_hours_ms: Math.round(preview.totalHours * 3_600_000),
         pay_rate: preview.payRate,
+        pay_rate_type: preview.payRateType ?? null,
         gross_pay:
           (preview.totalGrossPay ?? preview.grossPay) +
           (preview.fixedAssignments ?? [])
@@ -1141,7 +1146,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             <td className="py-1.5 text-bark/70">{formatDateLabel(date)}</td>
                             <td className="py-1.5 text-right text-bark/70">{formatHours(ms)}</td>
                             <td className="py-1.5 text-right text-bark/70">
-                              {formatCurrency((ms / 3_600_000) * (preview.rateByDate?.[date] ?? preview.payRate))}
+                              {preview.isFixedPeriod
+                                ? "—"
+                                : formatCurrency((ms / 3_600_000) * (preview.rateByDate?.[date] ?? preview.payRate))}
                             </td>
                           </tr>
                         ))}
@@ -1302,7 +1309,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <span>Total Hours</span>
                   <span>{preview.totalHours.toFixed(2)} hrs</span>
                 </div>
-                {preview.rateSegments && preview.rateSegments.length > 1 ? (
+                {preview.isFixedPeriod ? (
+                  <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
+                    <span>Monthly Salary</span>
+                    <span>{formatCurrency(preview.payRate)}/mo</span>
+                  </div>
+                ) : preview.rateSegments && preview.rateSegments.length > 1 ? (
                   preview.rateSegments.map((s) => (
                     <div key={s.rate} className="flex justify-between items-center text-xs text-bark/60 mb-1">
                       <span>{s.hours.toFixed(2)}h @ {formatCurrency(s.rate)}/hr</span>
@@ -1316,7 +1328,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   </div>
                 )}
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
-                  <span>Time-based Pay</span>
+                  <span>
+                    {preview.isFixedPeriod
+                      ? `Prorated Pay (${preview.periodWeekdays} of ${preview.monthWeekdays} weekdays)`
+                      : "Time-based Pay"}
+                  </span>
                   <span>{formatCurrency(preview.grossPay)}</span>
                 </div>
                 {effectiveFixedTotal > 0 && (
