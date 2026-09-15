@@ -5,7 +5,18 @@ import { createClient } from "@/lib/supabase/client";
 
 /* ── Types ────────────────────────────────────────────────── */
 
-type EmailType = "invoice" | "paystub" | "broadcast" | "invite";
+type EmailType =
+  | "invoice"
+  | "paystub"
+  | "broadcast"
+  | "invite"
+  | "payment_receipt"
+  | "invoice_reminder"
+  | "password_reset"
+  | "team_notice"
+  | "va_request"
+  | "budget_request"
+  | "alert";
 type DateFilter = "all" | "today" | "week" | "month";
 type TypeFilter = "all" | EmailType;
 
@@ -44,10 +55,17 @@ function startOfDay(d: Date): Date {
 }
 
 const TYPE_COLORS: Record<EmailType, { bg: string; text: string; label: string }> = {
-  invoice:   { bg: "#f0f7ff", text: "#1d4ed8", label: "Invoice" },
-  paystub:   { bg: "#f0fdf4", text: "#15803d", label: "Paystub" },
-  broadcast: { bg: "#fef9ec", text: "#b45309", label: "Broadcast" },
-  invite:    { bg: "#f5f0ff", text: "#7c3aed", label: "Invite" },
+  invoice:          { bg: "#f0f7ff", text: "#1d4ed8", label: "Invoice" },
+  paystub:          { bg: "#f0fdf4", text: "#15803d", label: "Paystub" },
+  broadcast:        { bg: "#fef9ec", text: "#b45309", label: "Broadcast" },
+  invite:           { bg: "#f5f0ff", text: "#7c3aed", label: "Invite" },
+  payment_receipt:  { bg: "#ecfdf5", text: "#047857", label: "Payment Receipt" },
+  invoice_reminder: { bg: "#eff6ff", text: "#2563eb", label: "Invoice Reminder" },
+  password_reset:   { bg: "#f3f4f6", text: "#4b5563", label: "Password Reset" },
+  team_notice:      { bg: "#fdf4ff", text: "#a21caf", label: "Team Notice" },
+  va_request:       { bg: "#fff7ed", text: "#c2410c", label: "VA Request" },
+  budget_request:   { bg: "#fefce8", text: "#a16207", label: "Budget Request" },
+  alert:            { bg: "#fef2f2", text: "#dc2626", label: "Alert" },
 };
 
 /* ── Component ───────────────────────────────────────────── */
@@ -71,7 +89,7 @@ export default function EmailStatusTab() {
     setLoading(true);
     const sb = createClient();
 
-    const [invoiceRes, sendLogRes, paystubRes, broadcastRes, inviteRes, eventsRes, hiddenRes] = await Promise.all([
+    const [invoiceRes, sendLogRes, paystubRes, broadcastRes, inviteRes, eventsRes, hiddenRes, logRes] = await Promise.all([
       sb
         .from("invoices")
         .select("id, invoice_number, to_email, to_name, sent_at, resend_message_id")
@@ -102,6 +120,9 @@ export default function EmailStatusTab() {
       // email_log_hidden has no anon/authenticated grants — read through the
       // service-role route instead of the browser client.
       fetch("/api/email-log-hidden").then((r) => r.json()),
+      // email_log — every send type that isn't already tracked above (payment
+      // receipts, reminders, alerts, etc.). Same no-direct-grant lockdown.
+      fetch("/api/email-log").then((r) => r.json()),
     ]);
 
     // Build hidden set
@@ -223,6 +244,30 @@ export default function EmailStatusTab() {
         recipient: invite.email,
         sent_at: invite.created_at,
         resend_message_id: invite.resend_message_id ?? "",
+      });
+    }
+
+    for (const rec of (logRes.records ?? []) as {
+      id: number;
+      email_type: EmailType;
+      label: string | null;
+      sublabel: string | null;
+      recipient: string | null;
+      cc_emails: string | null;
+      subject: string | null;
+      resend_message_id: string | null;
+      sent_at: string;
+    }[]) {
+      if (hidden.has(`${rec.email_type}:${rec.id}`)) continue;
+      unified.push({
+        id: String(rec.id),
+        type: rec.email_type,
+        label: rec.label || rec.subject || TYPE_COLORS[rec.email_type]?.label || "Email",
+        sublabel: rec.sublabel ?? undefined,
+        recipient: rec.recipient ?? "—",
+        cc_emails: rec.cc_emails ?? undefined,
+        sent_at: rec.sent_at,
+        resend_message_id: rec.resend_message_id ?? "",
       });
     }
 
@@ -460,10 +505,10 @@ export default function EmailStatusTab() {
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
         {([
           { key: "all" as TypeFilter, label: "All Types" },
-          { key: "invoice" as TypeFilter, label: "Invoice" },
-          { key: "paystub" as TypeFilter, label: "Paystub" },
-          { key: "broadcast" as TypeFilter, label: "Broadcast" },
-          { key: "invite" as TypeFilter, label: "Invite" },
+          ...(Object.keys(TYPE_COLORS) as EmailType[]).map((key) => ({
+            key: key as TypeFilter,
+            label: TYPE_COLORS[key].label,
+          })),
         ]).map(({ key, label }) => {
           const isActive = typeFilter === key;
           const color = key === "all" ? "#6b5c4e" : TYPE_COLORS[key as EmailType].text;

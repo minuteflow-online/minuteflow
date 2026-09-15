@@ -142,7 +142,7 @@ export async function PATCH(request: Request) {
           subject: `Your Request Was ${decisionLabel} — ${typeLabel}`,
           html,
         }),
-      });
+      }, { log: { type: "va_request", label: typeLabel, sublabel: decisionLabel } });
 
       if (resendRes.ok) {
         emailSent = true;

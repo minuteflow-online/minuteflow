@@ -167,7 +167,7 @@ export async function POST(request: NextRequest) {
                 </div>
               `,
             }),
-          });
+          }, { log: { type: "alert", label: vaName, sublabel: "Screenshot upload failing" } });
         }
       }
 

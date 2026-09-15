@@ -164,7 +164,7 @@ export async function resetPassword(
         subject: "Reset your MinuteFlow password",
         html: buildPasswordResetEmail(resetLink),
       }),
-    });
+    }, { type: "password_reset", label: email, sublabel: "Self-service" });
 
     if (!res.ok) {
       const err = await res.text();

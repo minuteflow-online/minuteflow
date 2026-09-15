@@ -79,7 +79,7 @@ async function emailVa(
           <p style="color:#b5a898;font-size:12px">— MinuteFlow</p>
         </div>`,
       }),
-    });
+    }, { log: { type: "budget_request", label: `${amt} (${per})`, sublabel: decided } });
   } catch (e) {
     console.error("budget emailVa error:", e);
   }

@@ -102,7 +102,7 @@ export async function POST(request: Request) {
       open_tracking: true,
       click_tracking: true,
     }),
-  });
+  }, { log: { type: "invoice_reminder", label: invoice.invoice_number, sublabel: "Sent manually" } });
 
   if (!resendRes.ok) {
     const resendError = await resendRes.text();

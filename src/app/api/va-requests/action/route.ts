@@ -102,7 +102,7 @@ async function emailVa(
           <p style="color:#b5a898;font-size:12px">— MinuteFlow</p>
         </div>`,
       }),
-    });
+    }, { log: { type: "va_request", label: typeLabel, sublabel: heading } });
   } catch (e) {
     console.error("va-request emailVa error:", e);
   }

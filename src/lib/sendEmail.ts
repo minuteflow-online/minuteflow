@@ -24,11 +24,25 @@ import { createClient } from "@supabase/supabase-js";
  * Response, so call sites that check `res.ok` keep working unchanged. When every
  * recipient is suppressed it returns a synthetic 200 — nothing was sent, and
  * nothing went wrong.
+ *
+ * Passing `log` records the send to the `email_log` table (Admin → Email Log)
+ * — same reasoning as suppression: this is the one place a send happens, so
+ * it's the one place that can guarantee every kind of mail is visible without
+ * every call site remembering to log it itself.
  */
 
 type SendOptions = {
   /** Skip the suppression check — account recovery and invitations only. */
   alwaysSend?: boolean;
+  /** Record this send in the email_log table. Omit for sends that shouldn't
+   * show up there (e.g. a manual test/diagnostic ping). */
+  log?: {
+    /** Broad category shown as a filter pill in the Email Log tab. */
+    type: string;
+    /** Per-send identifier, e.g. an invoice number or a VA's name. */
+    label?: string;
+    sublabel?: string;
+  };
 };
 
 function adminClient() {
@@ -37,6 +51,49 @@ function adminClient() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false } }
   );
+}
+
+function safeParseBody(body: unknown): Record<string, unknown> | null {
+  try {
+    return JSON.parse(String(body ?? "{}"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fire-and-forget insert into email_log. Never awaited by the caller, and
+ * failures here must never surface as a failed send — the email already
+ * left, or didn't; this is just the record of it.
+ */
+async function logSend(
+  response: Response,
+  payload: Record<string, unknown> | null,
+  log: NonNullable<SendOptions["log"]>
+) {
+  try {
+    if (!response.ok) return; // failed sends aren't recorded — Resend already errors loudly
+    const body = (await response.clone().json().catch(() => null)) as
+      | { id?: string; skipped?: string }
+      | null;
+    if (body?.skipped) return; // suppressed — nothing actually went out
+
+    const to = toArray(payload?.to);
+    const cc = toArray(payload?.cc);
+    const subject = typeof payload?.subject === "string" ? payload.subject : null;
+
+    await adminClient().from("email_log").insert({
+      email_type: log.type,
+      label: log.label ?? null,
+      sublabel: log.sublabel ?? null,
+      recipient: to.join(", ") || null,
+      cc_emails: cc.length ? cc.join(", ") : null,
+      subject,
+      resend_message_id: body?.id ?? null,
+    });
+  } catch {
+    // Logging must never break a send.
+  }
 }
 
 function toArray(value: unknown): string[] {
@@ -102,34 +159,43 @@ export async function sendResendEmail(
 ): Promise<Response> {
   const url = "https://api.resend.com/emails";
 
-  if (options.alwaysSend) return fetch(url, init);
+  // Every path below ends here so a `log` option always gets recorded,
+  // regardless of which branch actually sent the mail. Awaited, not
+  // fire-and-forget — a serverless function can be torn down the instant it
+  // returns a response, which would silently drop an un-awaited insert.
+  const finish = async (response: Response, payload: Record<string, unknown> | null) => {
+    if (options.log) await logSend(response, payload, options.log);
+    return response;
+  };
 
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(String(init.body ?? "{}"));
-  } catch {
+  if (options.alwaysSend) return finish(await fetch(url, init), safeParseBody(init.body));
+
+  const payload = safeParseBody(init.body);
+  if (!payload) {
     // Unparseable body — not ours to rewrite, pass it straight through.
-    return fetch(url, init);
+    return finish(await fetch(url, init), null);
   }
 
   const to = toArray(payload.to);
-  if (to.length === 0) return fetch(url, init);
+  if (to.length === 0) return finish(await fetch(url, init), payload);
 
   const suppressed = await suppressedAddresses(to);
-  if (suppressed.size === 0) return fetch(url, init);
+  if (suppressed.size === 0) return finish(await fetch(url, init), payload);
 
   const allowed = to.filter((address) => !suppressed.has(address.trim().toLowerCase()));
 
   if (allowed.length === 0) {
-    return new Response(
+    const synthetic = new Response(
       JSON.stringify({ id: null, skipped: "recipient inactive or emails disabled" }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
+    return finish(synthetic, payload);
   }
 
-  if (allowed.length === to.length) return fetch(url, init);
+  if (allowed.length === to.length) return finish(await fetch(url, init), payload);
 
-  return fetch(url, { ...init, body: JSON.stringify({ ...payload, to: allowed }) });
+  const narrowedPayload = { ...payload, to: allowed };
+  return finish(await fetch(url, { ...init, body: JSON.stringify(narrowedPayload) }), narrowedPayload);
 }
 
 /**
@@ -139,6 +205,9 @@ export async function sendResendEmail(
  * able to reset a password or accept an invite. Turning off updates is not the
  * same as taking away the keys.
  */
-export function sendResendEmailAlways(init: RequestInit): Promise<Response> {
-  return sendResendEmail(init, { alwaysSend: true });
+export function sendResendEmailAlways(
+  init: RequestInit,
+  log?: SendOptions["log"]
+): Promise<Response> {
+  return sendResendEmail(init, { alwaysSend: true, log });
 }
