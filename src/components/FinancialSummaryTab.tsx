@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import CSVUploadModal from "@/components/CSVUploadModal";
 import { computeHourlyGross, type PayRateHistoryRow } from "@/lib/payroll";
 import { isPayrollEligible } from "@/lib/payrollHours";
+import { grandTotal } from "@/lib/invoiceBalance";
 import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
 
 
@@ -407,7 +408,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       // two pages agree. Draft/trash invoices aren't real bills yet.
       supabase
         .from("invoices")
-        .select("account_name, to_name, issue_date, total, status")
+        .select("account_name, to_name, issue_date, total, previous_balance, status")
         .gte("issue_date", startDate)
         .lte("issue_date", endDate),
       supabase
@@ -511,7 +512,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .filter((inv) => ["sent", "paid", "partially_paid", "overdue", "archived"].includes(inv.status))
         .map((inv) => ({
           account: inv.account_name || inv.to_name || "Personal / Unbilled",
-          amount: Number(inv.total) || 0,
+          // What the invoice actually asks for, which is its own total plus
+          // whatever was carried into it — a credit from an invoice the client
+          // overpaid reduces this, a shortfall adds to it. Using total alone
+          // billed the client for a month they'd already partly paid for.
+          amount: grandTotal(inv),
         }))
     );
     setExpenses((expRes.data as ExpenseRow[]) ?? []);
