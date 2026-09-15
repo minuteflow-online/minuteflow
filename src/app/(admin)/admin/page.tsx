@@ -7680,6 +7680,12 @@ interface LineItemDraft {
 function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezone: string }) {
   const [view, setView] = useState<InvoiceView>("list");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  // Every real payment, independent of which invoice they're on or that
+  // invoice's issue date — "Paid" is computed from these by payment_date so
+  // it means the same thing here as it does on Financial Summary: real cash
+  // in that month, not "invoices issued this month that happen to be fully
+  // paid now" (which could include money that arrived in a different month).
+  const [allInvoicePayments, setAllInvoicePayments] = useState<{ invoice_id: number; amount: number; payment_date: string }[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -8066,14 +8072,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const fetchInvoices = useCallback(async () => {
     const sb = createClient();
-    const [invRes, clientsRes, orgRes, accRes, tagsRes] = await Promise.all([
+    const [invRes, clientsRes, orgRes, accRes, tagsRes, invoicePayRes] = await Promise.all([
       sb.from("invoices").select("*").order("created_at", { ascending: false }),
       sb.from("clients").select("*").eq("active", true).order("name"),
       sb.from("organization_settings").select("*").limit(1).single(),
       fetch("/api/accounts"),
       sb.from("project_tags").select("project_name").eq("is_active", true).order("sort_order"),
+      sb.from("invoice_payments").select("invoice_id, amount, payment_date"),
     ]);
     setInvoices((invRes.data ?? []) as Invoice[]);
+    setAllInvoicePayments((invoicePayRes.data ?? []) as { invoice_id: number; amount: number; payment_date: string }[]);
     setClients((clientsRes.data ?? []) as Client[]);
     if (orgRes.data) {
       setOrgSettings(orgRes.data as OrganizationSettings);
@@ -8167,7 +8175,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const summaryStats = useMemo(() => {
     let totalInvoiced = 0;
     let outstanding = 0;
-    let paid = 0;
     let overdue = 0;
     let draftTotal = 0;
     periodFilteredInvoices.forEach((inv) => {
@@ -8178,11 +8185,26 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       }
       if (inv.status === "sent") outstanding += Number(inv.total) + Number(inv.previous_balance || 0);
       if (inv.status === "partially_paid") outstanding += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
-      if (inv.status === "paid" || inv.status === "archived") paid += Number(inv.total);
       if (inv.status === "overdue") overdue += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
     });
+
+    // "Paid" = real cash collected in the selected period, by payment_date —
+    // matches Financial Summary's "Collected from Clients" exactly, instead
+    // of "invoices issued this period that happen to be fully paid now"
+    // (which silently missed payments on invoices issued a different month,
+    // and would have counted a payment toward the wrong month entirely).
+    const isFullYear = periodFilter.endsWith("-full");
+    const year = periodFilter.slice(0, 4);
+    const periodStart = isFullYear ? `${year}-01-01` : `${periodFilter}-01`;
+    const periodEnd = isFullYear
+      ? `${year}-12-31`
+      : new Date(Number(year), Number(periodFilter.slice(5, 7)), 0).toISOString().slice(0, 10);
+    const paid = allInvoicePayments
+      .filter((p) => p.payment_date >= periodStart && p.payment_date <= periodEnd)
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+
     return { totalInvoiced, outstanding, paid, overdue, draftTotal };
-  }, [periodFilteredInvoices]);
+  }, [periodFilteredInvoices, allInvoicePayments, periodFilter]);
 
   const selectedClient = useMemo(() => {
     return clients.find((c) => c.id === selectedClientId) ?? null;
