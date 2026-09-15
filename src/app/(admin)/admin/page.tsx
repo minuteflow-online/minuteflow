@@ -12570,15 +12570,35 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       {formatCurrency(Number(inv.total), inv.currency)}
                     </td>
                     <td className="px-3 py-3 text-right text-bark">
-                      {inv.carried_into_invoice_id != null
-                        ? <span className="text-slate-blue font-semibold" title="Balance rolled into a later invoice">carried →</span>
-                        : creditAmount(inv) > 0
-                        ? <span className="text-sage font-semibold" title="Overpaid — carries to the next invoice">+ {formatCurrency(creditAmount(inv), inv.currency)}</span>
-                        : amountOwed(inv) === 0
-                          ? <span className="text-sage font-semibold">{formatCurrency(0)}</span>
-                          : Number(inv.amount_paid || 0) > 0
-                            ? <span className="text-terracotta font-semibold">{formatCurrency(amountOwed(inv), inv.currency)}</span>
-                            : formatCurrency(amountOwed(inv), inv.currency)}
+                      {(() => {
+                        // Always a figure, never a word: a credit reads in
+                        // parentheses the way an accountant writes one, and
+                        // where it went is a tooltip rather than the number.
+                        const credit = creditAmount(inv);
+                        const owed = amountOwed(inv);
+                        const carried = inv.carried_into_invoice_id != null;
+                        if (credit > 0) {
+                          return (
+                            <span
+                              className="text-sage font-semibold"
+                              title={carried ? "Credit applied to a later invoice" : "Overpaid — credit carries to the next invoice"}
+                            >
+                              ({formatCurrency(credit, inv.currency)})
+                            </span>
+                          );
+                        }
+                        if (owed === 0) return <span className="text-sage font-semibold">{formatCurrency(0, inv.currency)}</span>;
+                        if (carried) {
+                          return (
+                            <span className="text-slate-blue font-semibold" title="Balance carried into a later invoice">
+                              {formatCurrency(owed, inv.currency)}
+                            </span>
+                          );
+                        }
+                        return Number(inv.amount_paid || 0) > 0
+                          ? <span className="text-terracotta font-semibold">{formatCurrency(owed, inv.currency)}</span>
+                          : <>{formatCurrency(owed, inv.currency)}</>;
+                      })()}
                     </td>
                     <td className="px-3 py-3 text-center">
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${statusBadge(inv.status)}`}>
