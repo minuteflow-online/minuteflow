@@ -20,6 +20,9 @@ export interface PaystubComputation {
   fixedTotal: number;    // fixed assignments + output-based tasks
   totalGrossPay: number; // grossPay + fixedTotal
   rateByDate: Record<string, number>;
+  /** True for a flat monthly salary — grossPay is prorated by weekdays, not hours × rate. */
+  isFixedPeriod: boolean;
+  payRateType: string | null;
 }
 
 /** Compute a VA's paystub numbers for [startDate, endDate] (inclusive, session_date). */
@@ -61,17 +64,22 @@ export async function computePaystubData(
     .select("rate_amount, rate_type, effective_date, end_date")
     .eq("user_id", userId)
     .order("effective_date", { ascending: false });
-  // A monthly salary is flat for the period — never hours x rate.
-  const { grossPay, rateByDate } = computeGrossForRateType(
+  // A monthly salary is prorated by weekdays in the period, not hours x rate.
+  const { grossPay, rateByDate, isFixedPeriod } = computeGrossForRateType(
     byDate,
     (rateHistoryRaw ?? []) as PayRateHistoryRow[],
     payRate,
-    vaProfile.pay_rate_type
+    vaProfile.pay_rate_type,
+    startDate,
+    endDate
   );
 
+  // A salaried day has no meaningful per-day $ amount — leave it out of
+  // byDateWithRates instead of falling back to payRate, which would draw it
+  // as if payRate were an hourly price.
   const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
   for (const [date, ms] of Object.entries(byDate)) {
-    byDateWithRates[date] = { ms, rate: rateByDate[date] ?? payRate };
+    byDateWithRates[date] = { ms, rate: isFixedPeriod ? 0 : rateByDate[date] ?? payRate };
   }
 
   // Fixed-rate assignments (approved/completed, not yet paid)
@@ -108,5 +116,7 @@ export async function computePaystubData(
     fixedTotal,
     totalGrossPay: grossPay + fixedTotal,
     rateByDate,
+    isFixedPeriod: Boolean(isFixedPeriod),
+    payRateType: vaProfile.pay_rate_type ?? null,
   };
 }

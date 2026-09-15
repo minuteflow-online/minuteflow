@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { normalizeByDateValue, isFixedPeriodRate, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +67,7 @@ export async function GET(request: Request) {
   const grossPay = snap.gross_pay as number;
   const amountPaid = snap.amount_paid as number;
   const remainingBalance = grossPay - amountPaid;
+  const isFixedPeriod = isFixedPeriodRate(snap.pay_rate_type as string | null);
 
   // by_date values are legacy plain ms numbers or {ms, rate} with the
   // rate-history rate that applied that day. Normalize to one shape.
@@ -81,19 +82,21 @@ export async function GET(request: Request) {
     const r = rate ?? payRate;
     msByRate.set(r, (msByRate.get(r) || 0) + ms);
   }
-  const rateSegments: RateSegment[] = [...msByRate].map(([rate, ms]) => ({
+  const rateSegments: RateSegment[] = isFixedPeriod ? [] : [...msByRate].map(([rate, ms]) => ({
     rate,
     ms,
     hours: ms / 3_600_000,
     amount: (ms / 3_600_000) * rate,
   }));
 
+  // A salaried day has no per-day $ amount — hours are shown, the dollar
+  // column is not.
   const rowsHtml = byDateEntries
     .map(([date, { ms, rate }]) => `
       <tr>
         <td>${formatDateLabel(date)}</td>
         <td class="text-right">${formatHours(ms)}</td>
-        <td class="text-right">${formatCurrency((ms / 3_600_000) * (rate ?? payRate))}</td>
+        <td class="text-right">${isFixedPeriod ? "—" : formatCurrency((ms / 3_600_000) * (rate ?? payRate))}</td>
       </tr>`)
     .join("");
 
@@ -363,7 +366,7 @@ export async function GET(request: Request) {
     <div class="va-section">
       <div class="section-label">Prepared for</div>
       <div class="va-name">${snap.full_name as string}</div>
-      <div class="va-rate">Rate: ${rateSegments.length > 1 ? rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ") : `${formatCurrency(payRate)}/hr`}</div>
+      <div class="va-rate">Rate: ${isFixedPeriod ? `${formatCurrency(payRate)}/mo (salary)` : rateSegments.length > 1 ? rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ") : `${formatCurrency(payRate)}/hr`}</div>
     </div>
 
     <div class="breakdown-section">
@@ -388,7 +391,12 @@ export async function GET(request: Request) {
           <td>Total Hours</td>
           <td>${totalHours.toFixed(2)} hrs</td>
         </tr>
-        ${rateSegments.length > 1
+        ${isFixedPeriod
+          ? `<tr>
+          <td>Monthly Salary</td>
+          <td>${formatCurrency(payRate)}/mo</td>
+        </tr>`
+          : rateSegments.length > 1
           ? rateSegments.map((s) => `<tr>
           <td>${s.hours.toFixed(2)}h @ ${formatCurrency(s.rate)}/hr</td>
           <td>${formatCurrency(s.amount)}</td>

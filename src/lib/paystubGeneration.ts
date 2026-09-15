@@ -60,6 +60,7 @@ export async function runPaystubDraftGeneration(
         pay_period_label: periodLabel,
         total_hours_ms: calc.totalMs,
         pay_rate: calc.payRate,
+        pay_rate_type: calc.payRateType,
         gross_pay: calc.totalGrossPay,
         amount_paid: 0,
         by_date: calc.byDateWithRates,

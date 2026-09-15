@@ -155,20 +155,24 @@ export async function POST(request: Request) {
     .order("effective_date", { ascending: false });
   const rateHistory = (rateHistoryRaw ?? []) as PayRateHistoryRow[];
 
-  // A monthly salary is flat for the period — never hours x rate.
-  const { grossPay, segments, rateByDate } = computeGrossForRateType(
+  // A monthly salary is prorated by weekdays in the period — never hours x rate.
+  const { grossPay, segments, rateByDate, isFixedPeriod, periodWeekdays, monthWeekdays } = computeGrossForRateType(
     byDate,
     rateHistory,
     payRate,
-    vaProfile.pay_rate_type
+    vaProfile.pay_rate_type,
+    start_date,
+    end_date
   );
 
   // Snapshot by_date carries the per-day rate so portal/print can display
   // correct amounts without re-querying history. Legacy snapshots hold
-  // plain ms numbers — readers handle both.
+  // plain ms numbers — readers handle both. A salaried day has no
+  // meaningful per-day $ amount — 0, not a fallback to payRate, which would
+  // draw it as if payRate were an hourly price.
   const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
   for (const [date, ms] of Object.entries(byDate)) {
-    byDateWithRates[date] = { ms, rate: rateByDate[date] ?? payRate };
+    byDateWithRates[date] = { ms, rate: isFixedPeriod ? 0 : rateByDate[date] ?? payRate };
   }
   const periodLabel =
     pay_period_label ||
@@ -274,6 +278,10 @@ export async function POST(request: Request) {
       payPeriod: periodLabel,
       totalHours,
       payRate,
+      payRateType: vaProfile.pay_rate_type ?? null,
+      isFixedPeriod,
+      periodWeekdays,
+      monthWeekdays,
       grossPay,
       byDate,
       rateByDate,
@@ -367,6 +375,9 @@ export async function POST(request: Request) {
       byDate,
       totalHours,
       payRate,
+      isFixedPeriod: Boolean(isFixedPeriod),
+      periodWeekdays,
+      monthWeekdays,
       grossPay,
       rateByDate,
       rateSegments: segments,
@@ -438,6 +449,7 @@ export async function POST(request: Request) {
       pay_period_label: periodLabel,
       total_hours_ms: totalMs,
       pay_rate: payRate,
+      pay_rate_type: vaProfile.pay_rate_type ?? null,
       gross_pay: grossPay,
       amount_paid: paymentAmount,
       payment_method: payment_method ?? null,
@@ -558,6 +570,9 @@ interface PaystubData {
   byDate: Record<string, number>;
   totalHours: number;
   payRate: number;
+  isFixedPeriod: boolean;
+  periodWeekdays?: number;
+  monthWeekdays?: number;
   grossPay: number;
   rateByDate: Record<string, number>;
   rateSegments: RateSegment[];
@@ -587,8 +602,10 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
 
+  // A salaried day has no per-day $ amount — hours are shown, the dollar
+  // column is not, rather than misrepresenting the salary as an hourly price.
   const rowsHtml = Object.entries(byDate)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(
@@ -596,7 +613,7 @@ function buildPaystubEmail(data: PaystubData): string {
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${formatDateLabel(date)}</td>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatHours(ms)}</td>
-        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency((ms / 3_600_000) * (rateByDate[date] ?? payRate))}</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${isFixedPeriod ? "—" : formatCurrency((ms / 3_600_000) * (rateByDate[date] ?? payRate))}</td>
       </tr>`
     )
     .join("");
@@ -649,7 +666,7 @@ function buildPaystubEmail(data: PaystubData): string {
       <div style="padding: 20px 32px; background: #faf6f0; border-bottom: 1px solid #e8e0d4;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 4px;">Prepared for</div>
         <div style="font-size: 16px; font-weight: 700; color: #3d2b1f;">${vaName}</div>
-        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">${rateSegments.length > 1 ? `Rate: ${rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ")}` : `Rate: ${formatCurrency(payRate)}/hr`}</div>
+        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">${isFixedPeriod ? `Rate: ${formatCurrency(payRate)}/mo (salary)` : rateSegments.length > 1 ? `Rate: ${rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ")}` : `Rate: ${formatCurrency(payRate)}/hr`}</div>
       </div>
 
       <!-- Hours Breakdown -->
@@ -713,7 +730,12 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Total Hours</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${totalHours.toFixed(2)} hrs</td>
           </tr>
-          ${rateSegments.length > 1
+          ${isFixedPeriod
+            ? `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Monthly Salary</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}/mo</td>
+          </tr>`
+            : rateSegments.length > 1
             ? rateSegments.map((s) => `<tr>
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">${s.hours.toFixed(2)}h @ ${formatCurrency(s.rate)}/hr</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(s.amount)}</td>
@@ -723,7 +745,7 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
           </tr>`}
           <tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Time-based Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">${isFixedPeriod ? `Prorated Pay (${periodWeekdays} of ${monthWeekdays} weekdays)` : `Time-based Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}`}</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(grossPay)}</td>
           </tr>
           ${fixedTotal > 0 ? `<tr>
