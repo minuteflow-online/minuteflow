@@ -390,11 +390,12 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       // fraction of these (a "sync" step that silently failed for most
       // manually-recorded payments, and never existed at all for card
       // payments) — this is what "Collected from Clients" now sums instead.
+      // Fetched unfiltered (not by payment_date) because attribution is by
+      // the invoice's issue month, not when the cash happened to arrive —
+      // filtered client-side below against invoices(issue_date).
       supabase
         .from("invoice_payments")
-        .select("id, amount, payment_date, payment_method, reference_number, notes, invoices(account_name, to_name)")
-        .gte("payment_date", startDate)
-        .lte("payment_date", endDate)
+        .select("id, amount, payment_date, payment_method, reference_number, notes, invoices(account_name, to_name, issue_date)")
         .order("payment_date", { ascending: false }),
       supabase
         .from("financial_expenses")
@@ -470,17 +471,25 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       .map((p) => ({ ...p, source: "manual" }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const invoicePaymentRows = (invoicePayRes.data ?? []) as any[];
-    const invoiceDerivedPayments: ClientPaymentRow[] = invoicePaymentRows.map((ip) => ({
-      id: -ip.id, // negative to never collide with a real financial_payments id
-      account: ip.invoices?.account_name || ip.invoices?.to_name || "Personal / Unbilled",
-      client_name: ip.invoices?.to_name ?? null,
-      amount: Number(ip.amount) || 0,
-      payment_date: ip.payment_date,
-      payment_method: ip.payment_method || "",
-      confirmation_number: ip.reference_number ?? null,
-      notes: ip.notes ?? null,
-      source: "invoice",
-    }));
+    // Attributed by the invoice's issue month, not when the cash arrived —
+    // a payment collected in August for a July-issued invoice counts toward
+    // July, matching how "Paid" is defined on the Invoices page.
+    const invoiceDerivedPayments: ClientPaymentRow[] = invoicePaymentRows
+      .filter((ip) => {
+        const issueDate = ip.invoices?.issue_date;
+        return issueDate && issueDate >= startDate && issueDate <= endDate;
+      })
+      .map((ip) => ({
+        id: -ip.id, // negative to never collide with a real financial_payments id
+        account: ip.invoices?.account_name || ip.invoices?.to_name || "Personal / Unbilled",
+        client_name: ip.invoices?.to_name ?? null,
+        amount: Number(ip.amount) || 0,
+        payment_date: ip.payment_date,
+        payment_method: ip.payment_method || "",
+        confirmation_number: ip.reference_number ?? null,
+        notes: ip.notes ?? null,
+        source: "invoice",
+      }));
     setClientPayments([...manualPayments, ...invoiceDerivedPayments]);
     setExpenses((expRes.data as ExpenseRow[]) ?? []);
 

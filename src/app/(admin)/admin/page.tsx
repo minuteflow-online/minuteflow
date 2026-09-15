@@ -8188,23 +8188,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       if (inv.status === "overdue") overdue += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
     });
 
-    // "Paid" = real cash collected in the selected period, by payment_date —
-    // matches Financial Summary's "Collected from Clients" exactly, instead
-    // of "invoices issued this period that happen to be fully paid now"
-    // (which silently missed payments on invoices issued a different month,
-    // and would have counted a payment toward the wrong month entirely).
-    const isFullYear = periodFilter.endsWith("-full");
-    const year = periodFilter.slice(0, 4);
-    const periodStart = isFullYear ? `${year}-01-01` : `${periodFilter}-01`;
-    const periodEnd = isFullYear
-      ? `${year}-12-31`
-      : new Date(Number(year), Number(periodFilter.slice(5, 7)), 0).toISOString().slice(0, 10);
+    // "Paid" = real payments on invoices issued in the selected period —
+    // attributed by the invoice's issue month, not when the cash happened
+    // to arrive, matching Financial Summary's "Collected from Clients".
+    // periodFilteredInvoices is already scoped to issue_date, so this is
+    // just "payments whose invoice is in that same set".
+    const periodInvoiceIds = new Set(periodFilteredInvoices.map((inv) => inv.id));
     const paid = allInvoicePayments
-      .filter((p) => p.payment_date >= periodStart && p.payment_date <= periodEnd)
+      .filter((p) => periodInvoiceIds.has(p.invoice_id))
       .reduce((sum, p) => sum + Number(p.amount), 0);
 
     return { totalInvoiced, outstanding, paid, overdue, draftTotal };
-  }, [periodFilteredInvoices, allInvoicePayments, periodFilter]);
+  }, [periodFilteredInvoices, allInvoicePayments]);
 
   const selectedClient = useMemo(() => {
     return clients.find((c) => c.id === selectedClientId) ?? null;
