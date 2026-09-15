@@ -8457,8 +8457,37 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
 
     const { data: expData } = await expQuery;
+
+    // Drop anything already billed on a live invoice. "reimbursed" only means
+    // the money has been paid back, so filtering on it alone re-offered every
+    // expense sitting on an invoice that hadn't been settled yet — and billing
+    // a client twice for the same expense is not something to leave to whoever
+    // remembers to untick it.
+    const candidateIds = (expData ?? []).map((e: { id: number }) => e.id);
+    const billedExpenseIds = new Set<number>();
+    if (candidateIds.length > 0) {
+      const { data: billedRows } = await supabase
+        .from("invoice_line_items")
+        .select("expense_id, invoice_id")
+        .in("expense_id", candidateIds);
+      const billedInvoiceIds = [...new Set((billedRows ?? []).map((r: { invoice_id: number }) => r.invoice_id))];
+      if (billedInvoiceIds.length > 0) {
+        const { data: liveInvoices } = await supabase
+          .from("invoices")
+          .select("id")
+          .in("id", billedInvoiceIds)
+          .not("status", "in", '("trash","cancelled")');
+        const liveIds = new Set((liveInvoices ?? []).map((i: { id: number }) => i.id));
+        (billedRows ?? []).forEach((r: { expense_id: number; invoice_id: number }) => {
+          if (liveIds.has(r.invoice_id)) billedExpenseIds.add(r.expense_id);
+        });
+      }
+    }
+
     setExpenseItems(
-      (expData ?? []).map((e: { id: number; description: string; amount: number; account: string | null; expense_date: string; notes: string | null }) => ({
+      (expData ?? [])
+        .filter((e: { id: number }) => !billedExpenseIds.has(e.id))
+        .map((e: { id: number; description: string; amount: number; account: string | null; expense_date: string; notes: string | null }) => ({
         expense_id: e.id,
         description: e.description,
         amount: Number(e.amount),
