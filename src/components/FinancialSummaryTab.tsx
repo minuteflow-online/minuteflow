@@ -200,11 +200,25 @@ function fmtLimit(v: number | null, unit: "hours" | "dollars"): string {
   return unit === "dollars" ? fmtMoney(v) : `${v.toFixed(2)}h`;
 }
 
+/** First and last day of a calendar month, as plain YYYY-MM-DD. */
+function monthRangeFor(year: number, month: number): { start: string; end: string } {
+  const mm = String(month).padStart(2, "0");
+  const lastDay = new Date(year, month, 0).getDate();
+  return { start: `${year}-${mm}-01`, end: `${year}-${mm}-${String(lastDay).padStart(2, "0")}` };
+}
+
+/** Whole calendar year, as plain YYYY-MM-DD. */
+function yearRangeFor(year: number): { start: string; end: string } {
+  return { start: `${year}-01-01`, end: `${year}-12-31` };
+}
+
+// Built as date strings rather than local Dates put through toISOString():
+// that conversion pushed the end of the month into the next day for anyone
+// west of UTC, so "this month" ran to Oct 1 and quietly counted a day of
+// October in September's figures.
 function getMonthRange(): { start: string; end: string } {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  return { start: start.toISOString(), end: end.toISOString() };
+  return monthRangeFor(now.getFullYear(), now.getMonth() + 1);
 }
 
 function toDateInputValue(iso: string): string {
@@ -249,6 +263,38 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const monthRange = useMemo(() => getMonthRange(), []);
   const [startDate, setStartDate] = useState(toDateInputValue(monthRange.start));
   const [endDate, setEndDate] = useState(toDateInputValue(monthRange.end));
+
+  // Picking a month is what this filter is used for nearly every time, so
+  // offer it directly instead of making both ends of the range be typed. The
+  // From/To fields still work for anything that isn't a whole month, and the
+  // dropdown falls back to "Custom range" when they're set to one.
+  const periodValue = useMemo(() => {
+    const [sYear, sMonth, sDay] = startDate.split("-");
+    const [eYear, eMonth, eDay] = endDate.split("-");
+    if (!sYear || !eYear || sDay !== "01") return "custom";
+    if (sYear === eYear && sMonth === "01" && eMonth === "12" && eDay === "31") return `${sYear}-full`;
+    const lastDay = String(new Date(Number(eYear), Number(eMonth), 0).getDate()).padStart(2, "0");
+    if (sYear === eYear && sMonth === eMonth && eDay === lastDay) return `${sYear}-${sMonth}`;
+    return "custom";
+  }, [startDate, endDate]);
+
+  const applyPeriod = (value: string) => {
+    if (value === "custom") return;
+    const year = Number(value.slice(0, 4));
+    const range = value.endsWith("-full") ? yearRangeFor(year) : monthRangeFor(year, Number(value.slice(5, 7)));
+    setStartDate(range.start);
+    setEndDate(range.end);
+  };
+
+  // This year and the two before it, plus whatever year is currently selected
+  // so a hand-typed range never falls off the end of the list.
+  const periodYears = useMemo(() => {
+    const current = new Date().getFullYear();
+    const years = new Set([current, current - 1, current - 2]);
+    const selected = Number(startDate.slice(0, 4));
+    if (selected) years.add(selected);
+    return Array.from(years).sort((a, b) => b - a);
+  }, [startDate]);
 
   // How long the selected range actually is — projections (Budgeting and
   // Projected Expenses) used to always show a flat "typical month" figure
@@ -1468,6 +1514,28 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       {/* ── Filters ──────────────────────────────────────── */}
       <div className="rounded-xl border border-sand bg-white p-5">
         <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-bark">
+              Period
+            </label>
+            <select
+              value={periodValue}
+              onChange={(e) => applyPeriod(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[13px] text-espresso outline-none focus:border-terracotta cursor-pointer"
+            >
+              {periodValue === "custom" && <option value="custom">Custom range</option>}
+              {periodYears.map((year) => (
+                <optgroup key={year} label={String(year)}>
+                  <option value={`${year}-full`}>Full Year {year}</option>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => (
+                    <option key={month} value={`${year}-${String(month).padStart(2, "0")}`}>
+                      {new Date(year, month - 1, 1).toLocaleString("en-US", { month: "long" })} {year}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-bark">
               From
