@@ -248,6 +248,27 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const [startDate, setStartDate] = useState(toDateInputValue(monthRange.start));
   const [endDate, setEndDate] = useState(toDateInputValue(monthRange.end));
 
+  // How long the selected range actually is — projections (Budgeting and
+  // Projected Expenses) used to always show a flat "typical month" figure
+  // no matter what range was picked up top, which is exactly backwards from
+  // every other section on this page scoping to it. Picking a full month
+  // (the common case) lands within a rounding error of the old fixed
+  // numbers; a shorter or longer range now scales proportionally instead of
+  // silently ignoring the date picker.
+  const rangeMetrics = useMemo(() => {
+    const start = new Date(startDate + "T00:00:00Z");
+    const end = new Date(endDate + "T00:00:00Z");
+    const daysInRange = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+    let workDaysInRange = 0;
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      const dow = d.getUTCDay();
+      if (dow !== 0 && dow !== 6) workDaysInRange++;
+    }
+    const weeksInRange = daysInRange / 7;
+    const monthFractionInRange = daysInRange / 30.44; // average month length
+    return { daysInRange, workDaysInRange, weeksInRange, monthFractionInRange };
+  }, [startDate, endDate]);
+
   // Filters
   const [filterVa, setFilterVa] = useState("");
   const [filterAccount, setFilterAccount] = useState("");
@@ -992,13 +1013,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
   /* ── Budgeting — Projected VA Cost ───────────────────── */
   // Pulls each VA's assigned budget from their team-management overview and
-  // derives an expected monthly $ so the admin can see what to expect. Time-
-  // based limits (hours) are converted to $ via the VA's hourly-equivalent rate;
+  // derives an expected $ for the SELECTED RANGE so the admin can see what
+  // to expect for whatever period they've picked up top — not always a flat
+  // "typical month" figure regardless of the date filter. Time-based limits
+  // (hours) are converted to $ via the VA's hourly-equivalent rate;
   // output-based VAs are already in dollars. Precedence for the projection:
-  // monthly limit → weekly × 4.33 → daily × 22 working days.
+  // monthly limit (scaled to the range) → weekly × weeks in range → daily ×
+  // working days in range.
   const budgetData = useMemo(() => {
-    const WORK_DAYS_PER_MONTH = 22;
-
     const rows = vaProfiles
       .filter((p) => (filterVa ? p.id === filterVa : true))
       .map((p) => {
@@ -1012,20 +1034,20 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         const weekly = p.weekly_budget_limit ?? null;
         const monthly = p.monthly_budget_limit ?? null;
 
-        // Monthly amount in the native unit, using precedence
-        const monthlyNative =
-          monthly != null ? monthly
-          : weekly != null ? weekly * WEEKS_PER_MONTH
-          : daily != null ? daily * WORK_DAYS_PER_MONTH
+        // Amount in the native unit for the SELECTED RANGE, using precedence
+        const rangeNative =
+          monthly != null ? monthly * rangeMetrics.monthFractionInRange
+          : weekly != null ? weekly * rangeMetrics.weeksInRange
+          : daily != null ? daily * rangeMetrics.workDaysInRange
           : null;
 
         // Convert to projected $ (time-based needs the hourly rate)
         let projected: number | null = null;
-        if (monthlyNative != null) {
+        if (rangeNative != null) {
           projected = outputBased
-            ? monthlyNative
+            ? rangeNative
             : hourlyRate != null
-              ? monthlyNative * hourlyRate
+              ? rangeNative * hourlyRate
               : null;
         }
 
@@ -1049,7 +1071,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const configuredCount = rows.filter((r) => r.hasLimit).length;
 
     return { rows, totalProjected, anyMissingRate, configuredCount };
-  }, [vaProfiles, filterVa]);
+  }, [vaProfiles, filterVa, rangeMetrics]);
 
   const startEditingBudget = (userId: string, field: "daily" | "weekly" | "monthly", currentValue: number | null) => {
     setEditingBudgetCell({ userId, field });
@@ -1150,24 +1172,41 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   };
 
   /* ── Projected Expenses — Totals ─────────────────────── */
+  // Scoped to the selected range like every other section: a one-time item
+  // only counts if it's actually dated inside the range, a recurring one
+  // only counts if it's active at some point during it, and the recurring
+  // total is scaled to how much of it falls in the range rather than always
+  // showing a flat "per month" number regardless of what's picked up top.
   const projectedExpenseData = useMemo(() => {
-    const rows = [...projectedExpenses].sort((a, b) =>
-      (a.start_date || "").localeCompare(b.start_date || "")
-    );
+    const activeInRange = [...projectedExpenses]
+      .filter((e) => {
+        if (e.frequency === "one_time") {
+          return Boolean(e.start_date) && e.start_date >= startDate && e.start_date <= endDate;
+        }
+        // Recurring: active if its own [start, end) overlaps the selected range.
+        const startsBeforeRangeEnds = !e.start_date || e.start_date <= endDate;
+        const endsAfterRangeStarts = !e.end_date || e.end_date >= startDate;
+        return startsBeforeRangeEnds && endsAfterRangeStarts;
+      })
+      .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
     const lineTotal = (e: ProjectedExpense) => (Number(e.amount) || 0) * (Number(e.quantity) || 0);
-    const total = rows.reduce((s, e) => s + lineTotal(e), 0);
-    // Monthly-equivalent of anything recurring (for "what to expect" per month)
-    const monthlyRecurring = rows.reduce((s, e) => {
+    // Recurring amounts scaled to how much of the selected range they cover;
+    // one-time amounts count in full since they're already range-filtered above.
+    const scaledTotal = (e: ProjectedExpense) => {
       const t = lineTotal(e);
-      if (e.frequency === "monthly") return s + t;
-      if (e.frequency === "weekly") return s + t * WEEKS_PER_MONTH;
-      return s;
-    }, 0);
-    const oneTimeTotal = rows
+      if (e.frequency === "monthly") return t * rangeMetrics.monthFractionInRange;
+      if (e.frequency === "weekly") return t * rangeMetrics.weeksInRange;
+      return t;
+    };
+    const total = activeInRange.reduce((s, e) => s + scaledTotal(e), 0);
+    const monthlyRecurring = activeInRange
+      .filter((e) => e.frequency === "monthly" || e.frequency === "weekly")
+      .reduce((s, e) => s + scaledTotal(e), 0);
+    const oneTimeTotal = activeInRange
       .filter((e) => e.frequency === "one_time")
       .reduce((s, e) => s + lineTotal(e), 0);
-    return { rows, total, monthlyRecurring, oneTimeTotal, lineTotal };
-  }, [projectedExpenses]);
+    return { rows: activeInRange, total, monthlyRecurring, oneTimeTotal, lineTotal, scaledTotal };
+  }, [projectedExpenses, startDate, endDate, rangeMetrics]);
 
   /* ── Unique accounts for filter (active only) ──────────── */
   const activeAccountNames = useMemo(() => {
