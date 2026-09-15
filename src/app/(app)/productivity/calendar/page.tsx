@@ -67,6 +67,25 @@ function actualMatchKey(userId: string, dateStr: string, taskName: string | null
   return `${userId}|${dateStr}|${(taskName ?? "").trim().toLowerCase()}|${(account ?? "").trim().toLowerCase()}`;
 }
 
+/**
+ * One logged stretch of real work, with the clock times it actually ran.
+ *
+ * Distinct from the minute totals the rest of this page carries: a total can
+ * say a task took 45 minutes, but only a span can put it on the grid at
+ * 2:15pm. Work that was logged without ever being blocked out has no planned
+ * position to borrow, so this is the only thing that can place it.
+ */
+type ActualSpan = {
+  key: string;
+  taskId: number | null;
+  name: string;
+  account: string | null;
+  category: string | null;
+  start: string;
+  end: string;
+  minutes: number;
+};
+
 type DueItem = {
   id: string;
   // The underlying assigned_tasks/fixed_pay_tasks row id — id itself carries a
@@ -229,6 +248,11 @@ export default function ProductivityCalendarPage() {
   // category, which is often blank on a quickly-created row even though the
   // log itself carries a real one. Read this before giving up and going gray.
   const [actualCategoryByTaskId, setActualCategoryByTaskId] = useState<Map<string, string | null>>(new Map());
+  // The actual worked spans themselves, "vaId|YYYY-MM-DD" -> logs with real
+  // clock times. The maps above total minutes, which is all the Duration
+  // Block list needs; the Time Block grid needs to know WHEN, or work that
+  // was logged but never blocked out has nowhere to be drawn.
+  const [actualSpansByVaDate, setActualSpansByVaDate] = useState<Map<string, ActualSpan[]>>(new Map());
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -1569,6 +1593,7 @@ export default function ProductivityCalendarPage() {
         setActualMinutesByVaDate(new Map());
         setActualCategoryByKey(new Map());
         setActualCategoryByTaskId(new Map());
+        setActualSpansByVaDate(new Map());
         return;
       }
       // Covers whichever is wider — the Week grid only needs its own 7 days,
@@ -1579,7 +1604,7 @@ export default function ProductivityCalendarPage() {
       const supabase = createClient();
       const { data } = await supabase
         .from("time_logs")
-        .select("user_id, task_name, account, category, session_date, duration_ms, assigned_task_id")
+        .select("id, user_id, task_name, account, category, session_date, duration_ms, assigned_task_id, start_time, end_time")
         .in("user_id", actualTimeVaIds)
         .gte("session_date", rangeStart)
         .lte("session_date", rangeEnd)
@@ -1590,14 +1615,35 @@ export default function ProductivityCalendarPage() {
       const byVaDate = new Map<string, number>();
       const categoryByKey = new Map<string, string | null>();
       const categoryByTaskId = new Map<string, string | null>();
+      const spansByVaDate = new Map<string, ActualSpan[]>();
       for (const log of (data ?? []) as {
-        user_id: string; task_name: string | null; account: string | null; category: string | null;
+        id: number; user_id: string; task_name: string | null; account: string | null; category: string | null;
         session_date: string | null; duration_ms: number | null; assigned_task_id: number | null;
+        start_time: string | null; end_time: string | null;
       }[]) {
         if (!log.session_date) continue;
         const ms = log.duration_ms && log.duration_ms > 0 ? log.duration_ms : 0;
         if (ms === 0) continue;
         const minutes = ms / 60000;
+
+        // Kept alongside the totals rather than derived from them: the grid
+        // needs each stretch separately, since two sittings on one task are
+        // two blocks at two times, not one block of the combined length.
+        if (log.start_time && log.end_time) {
+          const spanKey = `${log.user_id}|${log.session_date}`;
+          const list = spansByVaDate.get(spanKey) ?? [];
+          list.push({
+            key: `log-${log.id}`,
+            taskId: log.assigned_task_id,
+            name: log.task_name || "Untitled",
+            account: log.account,
+            category: log.category,
+            start: log.start_time,
+            end: log.end_time,
+            minutes,
+          });
+          spansByVaDate.set(spanKey, list);
+        }
         const vaDateKey = `${log.user_id}|${log.session_date}`;
         byVaDate.set(vaDateKey, (byVaDate.get(vaDateKey) ?? 0) + minutes);
         // A stamped log is claimed entirely by its own task — left out of the
@@ -1618,6 +1664,7 @@ export default function ProductivityCalendarPage() {
       setActualMinutesByVaDate(byVaDate);
       setActualCategoryByKey(categoryByKey);
       setActualCategoryByTaskId(categoryByTaskId);
+      setActualSpansByVaDate(spansByVaDate);
     })();
     return () => { cancelled = true; };
   }, [actualTimeVaIds, weekDates, monthGrid]);
@@ -1830,6 +1877,75 @@ export default function ProductivityCalendarPage() {
     }
 
     return out.sort((a, b) => b.minutes - a.minutes);
+  }
+
+  /**
+   * The same work unscheduledActualForDate lists, but as spans the Time Block
+   * grid can place.
+   *
+   * These are the blue and plum cards on the Duration Block tab: work that was
+   * logged with real clock times but never blocked out for that day. They had
+   * nowhere to appear on the grid, so a day could read as empty at 2pm while
+   * someone was demonstrably working — the times were in time_logs all along,
+   * they just weren't being asked for.
+   *
+   * Exclusion follows the Duration Block rule exactly, so the two tabs always
+   * agree about what counts as unplanned: a log is dropped when its task is
+   * one of the day's scheduled rows, or — for logs with no task stamped on
+   * them — when a scheduled row shares its name and account.
+   */
+  function unscheduledSpansForDate(vaId: string | null, dateStr: string): ActualSpan[] {
+    if (!vaId) return [];
+    const spans = actualSpansByVaDate.get(`${vaId}|${dateStr}`) ?? [];
+    if (spans.length === 0) return [];
+
+    const { rows } = durationsForDate(dateStr);
+    const scheduledIds = new Set(rows.map((r) => r.id));
+    const scheduledKeys = new Set(
+      rows.map((r) => `${(r.name ?? "").trim().toLowerCase()}|${(r.account ?? "").trim().toLowerCase()}`)
+    );
+
+    return spans.filter((span) => {
+      if (span.taskId != null) return !scheduledIds.has(span.taskId);
+      const key = `${span.name.trim().toLowerCase()}|${(span.account ?? "").trim().toLowerCase()}`;
+      return !scheduledKeys.has(key);
+    });
+  }
+
+  /**
+   * Grid position for a real clock span — blockPosition, without a task row.
+   *
+   * Unlike a planned block, a logged one routinely crosses midnight: the team
+   * is twelve hours ahead, so a shift that starts at 11pm and ends at 2am is
+   * an ordinary night, not an error. Subtracting those clock times gives a
+   * negative length, which drew every overnight stretch as a 20px stub. Such
+   * a span now runs to the bottom of its own day; the hours after midnight
+   * belong to the next day's column and are not duplicated here.
+   */
+  function spanPosition(span: ActualSpan) {
+    const gridMinutes = (DAY_END_HOUR - DAY_START_HOUR + 1) * 60;
+    const start = new Date(span.start);
+    const end = new Date(span.end);
+    const startMinutes = (start.getHours() - DAY_START_HOUR) * 60 + start.getMinutes();
+    let endMinutes = (end.getHours() - DAY_START_HOUR) * 60 + end.getMinutes();
+    if (endMinutes <= startMinutes) endMinutes = gridMinutes;
+    const top = Math.max(0, (startMinutes / 60) * HOUR_HEIGHT);
+    const height = Math.max(
+      20,
+      ((Math.min(endMinutes, gridMinutes) - startMinutes) / 60) * HOUR_HEIGHT
+    );
+    return { top, height };
+  }
+
+  /**
+   * Blue or plum, the same meaning the Duration Block cards carry: plum when
+   * the task has a plan on some other day, blue when it was never planned at
+   * all.
+   */
+  function spanIsMoved(span: ActualSpan) {
+    if (span.taskId == null) return false;
+    const task = assignedTasksAll.find((t) => t.id === span.taskId);
+    return Boolean(task?.start_date || task?.due_date);
   }
 
   // Same shade-to-actual fill durationRowOverlay draws for a scheduled row,
@@ -2085,8 +2201,21 @@ export default function ProductivityCalendarPage() {
                         <div className="pointer-events-none absolute inset-0">
                           {(() => {
                             const dayTasks = scheduledForDate(dateStr);
-                            const overlapLayout = computeOverlapLayout(dayTasks);
-                            return dayTasks.map((task) => {
+                            const unplanned = unscheduledSpansForDate(dayUserId, dateStr);
+                            // Packed together with the planned blocks rather
+                            // than in a layer of their own, so an unplanned
+                            // stretch sits BESIDE whatever was booked over the
+                            // same hour instead of hiding it. Synthetic
+                            // negative ids keep them out of the real tasks'
+                            // id space.
+                            const spanIdByKey = new Map<string, number>();
+                            const spanPseudoTasks = unplanned.map((span, i) => {
+                              const id = -1 - i;
+                              spanIdByKey.set(span.key, id);
+                              return { id, start_time: span.start, end_time: span.end } as RawTask;
+                            });
+                            const overlapLayout = computeOverlapLayout([...dayTasks, ...spanPseudoTasks]);
+                            return [...dayTasks.map((task) => {
                               const pos = blockPosition(task);
                               const { top, height } = pos;
                               // Due-date-driven blocks render fully opaque; start-date-driven
@@ -2135,7 +2264,64 @@ export default function ProductivityCalendarPage() {
                                   )}
                                 </div>
                               );
-                            });
+                            }),
+                            // Work that was logged but never blocked out, drawn
+                            // at the hours it actually ran. Ringed rather than
+                            // filled differently, so it reads as "this happened"
+                            // against the planned blocks' "this was intended" —
+                            // the same blue/plum the Duration Block tab uses.
+                            ...unplanned.map((span) => {
+                              const { top, height } = spanPosition(span);
+                              const pseudoId = spanIdByKey.get(span.key)!;
+                              const { col, cols } = overlapLayout.get(pseudoId) ?? { col: 0, cols: 1 };
+                              const left = `calc(2px + (100% - 4px) * ${col} / ${cols})`;
+                              const width = `calc((100% - 4px) / ${cols} - 2px)`;
+                              const moved = spanIsMoved(span);
+                              const clock = `${new Date(span.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} – ${new Date(span.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+                              return (
+                                <div
+                                  key={span.key}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
+                                    if (span.taskId != null) {
+                                      const task = assignedTasksAll.find((t) => t.id === span.taskId);
+                                      if (task) void openScheduleExisting(task, dateStr);
+                                      return;
+                                    }
+                                    // openUnscheduledView reparses the key to
+                                    // find the bucket it summarises, so it has
+                                    // to be actualMatchKey's shape — a log id
+                                    // would parse into nothing.
+                                    if (!dayUserId) return;
+                                    void openUnscheduledView({
+                                      key: actualMatchKey(dayUserId, dateStr, span.name, span.account),
+                                      name: span.name,
+                                      account: span.account,
+                                      minutes: span.minutes,
+                                    });
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      (e.currentTarget as HTMLDivElement).click();
+                                    }
+                                  }}
+                                  title={`${span.name}${span.account ? " — " + span.account : ""} · ${clock} · ${formatDuration(span.minutes)} logged, ${moved ? "planned another day" : "never planned"}`}
+                                  className={`pointer-events-auto absolute rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(span.category)} ${
+                                    moved ? "ring-2 ring-plum ring-inset" : "ring-2 ring-blue-500 ring-inset"
+                                  }`}
+                                  style={{ ...blockGapStyle(top, height), left, width }}
+                                >
+                                  <p className="relative truncate text-[9px] font-semibold leading-tight">
+                                    {span.name}
+                                  </p>
+                                  <p className="relative truncate text-[8px] opacity-75 leading-tight">
+                                    {moved ? "moved" : "not planned"}
+                                  </p>
+                                </div>
+                              );
+                            })];
                           })()}
                         </div>
                       </div>
@@ -3850,9 +4036,59 @@ export default function ProductivityCalendarPage() {
                         );
                       });
 
+                    // Logged work that was never blocked out for this day,
+                    // drawn at the hours it actually ran — the Day view's own
+                    // copy of what renderTimeGrid does for Week and Range.
+                    const unplannedBlocks = unscheduledSpansForDate(dayUserId, selectedDate).map((span) => {
+                      const { top, height } = spanPosition(span);
+                      const moved = spanIsMoved(span);
+                      const clock = `${new Date(span.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} – ${new Date(span.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+                      return (
+                        <div
+                          key={span.key}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            if (span.taskId != null) {
+                              const task = assignedTasksAll.find((t) => t.id === span.taskId);
+                              if (task) void openScheduleExisting(task, selectedDate);
+                              return;
+                            }
+                            if (!dayUserId) return;
+                            void openUnscheduledView({
+                              key: actualMatchKey(dayUserId, selectedDate, span.name, span.account),
+                              name: span.name,
+                              account: span.account,
+                              minutes: span.minutes,
+                            });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              (e.currentTarget as HTMLDivElement).click();
+                            }
+                          }}
+                          title={`${span.name}${span.account ? " — " + span.account : ""} · ${clock} · ${formatDuration(span.minutes)} logged, ${moved ? "planned another day" : "never planned"}`}
+                          className={`pointer-events-auto absolute rounded-md border px-1.5 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(span.category)} ${
+                            moved ? "ring-2 ring-plum ring-inset" : "ring-2 ring-blue-500 ring-inset"
+                          }`}
+                          // Right half of the column, so it sits beside the
+                          // plan for that hour rather than over it.
+                          style={{ ...blockGapStyle(top, height), left: "calc(50% + 1px)", right: "2px" }}
+                        >
+                          <p className="truncate text-[11px] font-semibold leading-tight">{span.name}</p>
+                          <p className="truncate text-[9px] opacity-75">
+                            {[span.account, formatDuration(span.minutes)].filter(Boolean).join(" | ")}
+                            {" · "}{moved ? "moved" : "not planned"}
+                          </p>
+                        </div>
+                      );
+                    });
+
                     return (
                       <>
                         {taskBlocks}
+                        {unplannedBlocks}
                         {dueMarkers}
                       </>
                     );
