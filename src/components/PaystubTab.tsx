@@ -80,6 +80,8 @@ interface PaystubSnapshot {
   pay_rate: number;
   gross_pay: number;
   amount_paid: number;
+  /** Everything paid for this period, advances included — see /api/paystub/history. */
+  total_paid?: number | null;
   payment_method: string | null;
   confirmation_number: string | null;
   payment_date: string | null;
@@ -1828,7 +1830,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           </td>
                           <td className="px-4 py-3 text-right text-bark/70">{totalHrs.toFixed(2)} hrs</td>
                           <td className="px-4 py-3 text-right text-bark/70">{formatCurrency(snap.gross_pay)}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-terracotta">{formatCurrency(snap.amount_paid)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-terracotta">{formatCurrency(snap.total_paid ?? snap.amount_paid)}</td>
                           <td className="px-4 py-3 text-right text-bark/50 hidden sm:table-cell capitalize">
                             {snap.payment_method ? snap.payment_method.replace(/_/g, " ") : "—"}
                           </td>
@@ -1885,8 +1887,18 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                     </div>
                                     <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
                                       <span>Amount Paid</span>
-                                      <span>{formatCurrency(snap.amount_paid)}</span>
+                                      <span>{formatCurrency(snap.total_paid ?? snap.amount_paid)}</span>
                                     </div>
+                                    {/* Say where the total came from when an advance made it
+                                        up, so the figure can be reconciled against the stub. */}
+                                    {(snap.total_paid ?? snap.amount_paid) - snap.amount_paid > 0.005 && (
+                                      <div className="flex justify-between text-[10px] text-bark/40">
+                                        <span>on this paystub</span>
+                                        <span>
+                                          {formatCurrency(snap.amount_paid)} + {formatCurrency((snap.total_paid ?? 0) - snap.amount_paid)} sent earlier
+                                        </span>
+                                      </div>
+                                    )}
                                     <div className="flex justify-between pt-1">
                                       <span className="text-bark/40">Sent to</span>
                                       <span>{snap.email_sent_to}</span>

@@ -53,5 +53,32 @@ export async function GET(request: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  return Response.json(data ?? []);
+  const snapshots = data ?? [];
+
+  // A snapshot's amount_paid is only what that send paid out, so a period
+  // settled partly by an advance under-reported: $145 shown against $196.50
+  // actually sent. Total it from the payment records for the period instead,
+  // which also picks up anything recorded after the paystub went out.
+  const { data: payments } = await adminClient
+    .from("va_payments")
+    .select("amount, period_start, period_end")
+    .eq("va_id", userId);
+
+  const paidByPeriod = new Map<string, number>();
+  for (const payment of payments ?? []) {
+    const key = `${payment.period_start}|${payment.period_end}`;
+    paidByPeriod.set(key, (paidByPeriod.get(key) ?? 0) + Number(payment.amount || 0));
+  }
+
+  return Response.json(
+    snapshots.map((snap) => {
+      const total = paidByPeriod.get(`${snap.period_start}|${snap.period_end}`);
+      return {
+        ...snap,
+        // Falls back to the snapshot's own figure when a period has no payment
+        // rows at all, so older paystubs read exactly as they did before.
+        total_paid: total ?? Number(snap.amount_paid || 0),
+      };
+    })
+  );
 }
