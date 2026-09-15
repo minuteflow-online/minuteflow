@@ -1,6 +1,7 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { sendResendEmail } from "@/lib/sendEmail";
 import type { PaymentScheduleItem } from "@/types/database";
+import { amountOwed } from "@/lib/invoiceBalance";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -85,7 +86,7 @@ export async function GET(request: NextRequest) {
           subject: `Gentle Reminder: Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
           html,
         }),
-      }, { log: { type: "invoice_reminder", label: invoice.invoice_number, sublabel: "Daily reminder" } });
+      });
 
       if (resendRes.ok) {
         sent++;
@@ -152,7 +153,7 @@ export async function GET(request: NextRequest) {
           subject: `Payment Reminder: ${formatCurrency(dueAmount, invoice.currency)} due tomorrow — Invoice ${invoice.invoice_number}`,
           html,
         }),
-      }, { log: { type: "invoice_reminder", label: invoice.invoice_number, sublabel: "Split-payment due tomorrow" } });
+      });
 
       if (res.ok) {
         splitSent++;
@@ -256,7 +257,9 @@ function buildInvoiceEmail(
   let headerAmount: number;
   let headerAmountLabel: string;
   if (invoice.status === "partially_paid") {
-    headerAmount = finalTotal - amountPaid;
+    // Count anything carried in, and never dun for a negative — an overpaid
+    // invoice reads as paid and isn't reminded at all.
+    headerAmount = amountOwed(invoice);
     headerAmountLabel = "Remaining Balance";
   } else if (prevBalance > 0) {
     headerAmount = finalTotal + prevBalance;

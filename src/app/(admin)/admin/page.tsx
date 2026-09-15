@@ -6,6 +6,16 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { isOnBreak, isOnPersonal } from "@/lib/breakState";
+import {
+  syncInvoicePaymentState,
+  fetchCarryCandidates,
+  carryTotal,
+  carryNote,
+  markCarried,
+  amountOwed,
+  creditAmount,
+  type CarryCandidate,
+} from "@/lib/invoiceBalance";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import VaAccountAssignments from "@/components/VaAccountAssignments";
@@ -50,8 +60,7 @@ import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
 import { applyCorrection } from "@/lib/applyCorrection";
-import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, hasModerationAccess, canGrantRoles } from "@/lib/financialAccess";
-import { explainScreenshotReason } from "@/lib/screenshots";
+import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
 
 // Each of these renders behind its own `activeTab === "..."` check below, so
 // only one is ever visible at a time — but all 15 used to load eagerly on
@@ -73,7 +82,6 @@ const VaBroadcastsAdminTab = dynamic(() => import("@/components/VaBroadcastsAdmi
 const EmailStatusTab = dynamic(() => import("@/components/EmailStatusTab"), { loading: tabLoading });
 const TaskAssignmentsAdminTab = dynamic(() => import("@/components/TaskAssignmentsAdminTab"), { loading: tabLoading });
 const FixedPayTasksTab = dynamic(() => import("@/components/FixedPayTasksTab"), { loading: tabLoading });
-const AdminConversationsTab = dynamic(() => import("@/components/AdminConversationsTab"), { loading: tabLoading });
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -185,7 +193,7 @@ type ScreenshotPersonDay = {
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password" | "conversations";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -344,15 +352,6 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
-    id: "conversations",
-    label: "Private Messages",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-      </svg>
-    ),
-  },
-  {
     id: "va_resources",
     label: "VA Resources",
     icon: (
@@ -471,7 +470,7 @@ const ADMIN_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "activity",
     label: "Activity",
-    tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections", "conversations"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "billing",
@@ -512,13 +511,6 @@ const ADMIN_ONLY_TABS: AdminTab[] = ["invoices", "financial", "paystubs", "email
 // hasAccountsClientsAccess in financialAccess.ts.
 const ACCOUNTS_CLIENTS_TABS: AdminTab[] = ["accounts", "clients"];
 
-// Reading people's private conversations is a bigger step than the rest of
-// the broad admin tier grants — restricted to the same moderation tier
-// (Admin, Manager, CEO/Founder) that already moderates Requests/Feedback/
-// Reviews. Coordinator and Specialist, who otherwise get broad access, are
-// deliberately excluded. See hasModerationAccess in financialAccess.ts.
-const MODERATION_TABS: AdminTab[] = ["conversations"];
-
 // Which admin tabs each admin_permissions bundle (see adminPermissions.ts)
 // unlocks for a plain "va" role account. Kept here rather than in the shared
 // helper since it's a page-rendering concern, not a permission-checking one.
@@ -530,8 +522,7 @@ function filterGroupsForRole(
   groups: SidebarGroup[],
   isFullAdmin: boolean,
   allowedTabs: Set<AdminTab> | null,
-  canSeeAccountsClients: boolean,
-  canSeeConversations: boolean
+  canSeeAccountsClients: boolean
 ): SidebarGroup[] {
   let result = groups;
   if (!isFullAdmin) {
@@ -542,11 +533,6 @@ function filterGroupsForRole(
   if (!canSeeAccountsClients) {
     result = result
       .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !ACCOUNTS_CLIENTS_TABS.includes(t.id)) }))
-      .filter((g) => g.tabs.length > 0);
-  }
-  if (!canSeeConversations) {
-    result = result
-      .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !MODERATION_TABS.includes(t.id)) }))
       .filter((g) => g.tabs.length > 0);
   }
   if (allowedTabs) {
@@ -613,10 +599,6 @@ export default function AdminPage() {
   // not this). See hasAdminPanelAccess in financialAccess.ts.
   const hasBroadAccess = hasAdminPanelAccess(currentUserProfile);
   const canSeeAccountsClients = hasAccountsClientsAccess(currentUserProfile);
-  // Private-messages oversight is moderation-tier only — narrower than
-  // hasBroadAdminAccess (Coordinator/Specialist excluded). See
-  // hasModerationAccess in financialAccess.ts.
-  const canSeeConversations = hasModerationAccess(currentUserProfile) && !previewAsIT;
 
   // A plain "va" role account only reaches /admin at all if the layout gate
   // let them in via admin_permissions (see (admin)/layout.tsx) — restrict
@@ -649,14 +631,10 @@ export default function AdminPage() {
       setActiveTab("overview");
       return;
     }
-    if (!canSeeConversations && MODERATION_TABS.includes(activeTab)) {
-      setActiveTab("overview");
-      return;
-    }
     if (restrictedTabs && !restrictedTabs.has(activeTab)) {
       setActiveTab("overview");
     }
-  }, [loading, isFullAdmin, activeTab, restrictedTabs, canSeeAccountsClients, canSeeConversations, setActiveTab]);
+  }, [loading, isFullAdmin, activeTab, restrictedTabs, canSeeAccountsClients, setActiveTab]);
 
   // Screenshot viewer state
   const [selectedScreenshot, setSelectedScreenshot] = useState<TaskScreenshot | null>(null);
@@ -1557,7 +1535,7 @@ export default function AdminPage() {
           </div>
         </div>
         <nav className="flex-1 py-2 px-2 overflow-y-auto">
-          {filterGroupsForRole(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS, isFullAdmin, restrictedTabs, canSeeAccountsClients, canSeeConversations).map((group) => {
+          {filterGroupsForRole(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS, isFullAdmin, restrictedTabs, canSeeAccountsClients).map((group) => {
             if (!group.label) {
               // Pinned tabs (Overview) — no group header
               return group.tabs.map((tab) => {
@@ -1695,7 +1673,6 @@ export default function AdminPage() {
                 {activeTab === "sorting" && "Review sorting task entries and assign billing"}
                 {activeTab === "password" && "Update your admin password"}
                 {activeTab === "alerts" && "Track screen capture drops and VA responses"}
-                {activeTab === "conversations" && "Review private conversations between team members"}
                 {activeTab === "va_resources" && "Manage onboarding, SOPs, coaching, and job postings for VAs"}
                 {activeTab === "va_feedback" && "Review feedback submitted by your team"}
                 {activeTab === "va_requests" && "Approve or deny time off, schedule change, and other VA requests"}
@@ -1801,10 +1778,6 @@ export default function AdminPage() {
 
           {activeTab === "alerts" && (
             <CaptureAlertsTab orgTimezone={orgTimezone} />
-          )}
-
-          {activeTab === "conversations" && canSeeConversations && (
-            <AdminConversationsTab />
           )}
 
           {activeTab === "organization" && (
@@ -7584,13 +7557,13 @@ function ScreenshotLightbox({
             // A marker has no image and never will, so waiting on one says
             // "Loading image…" forever. Arrow keys still walk onto these, so the
             // lightbox has to state the reason rather than sit blank.
-            <div className="flex h-96 flex-col items-center justify-center gap-2 px-8 text-center">
+            <div className="flex h-96 flex-col items-center justify-center gap-2 text-center">
               <span className="text-3xl text-stone">&#8709;</span>
               <span className="text-sm font-medium text-parchment">
                 {screenshot.failure_reason || "No screenshot was taken"}
               </span>
-              <span className="max-w-sm text-xs text-stone">
-                {explainScreenshotReason(screenshot.failure_reason)}
+              <span className="text-xs text-stone">
+                Nothing was captured for this slot.
               </span>
             </div>
           ) : url ? (
@@ -7680,12 +7653,6 @@ interface LineItemDraft {
 function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezone: string }) {
   const [view, setView] = useState<InvoiceView>("list");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  // Every real payment, independent of which invoice they're on or that
-  // invoice's issue date — "Paid" is computed from these by payment_date so
-  // it means the same thing here as it does on Financial Summary: real cash
-  // in that month, not "invoices issued this month that happen to be fully
-  // paid now" (which could include money that arrived in a different month).
-  const [allInvoicePayments, setAllInvoicePayments] = useState<{ invoice_id: number; amount: number; payment_date: string }[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -7779,18 +7746,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [savingPayment, setSavingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState("");
   const [deletingPaymentId, setDeletingPaymentId] = useState<number | null>(null);
-
-  // Edit payment state — a recorded payment's date/amount/method/etc need to
-  // be correctable without deleting and re-adding it (which loses the row's
-  // id and, worse, invited the "just re-enter it with today's date" mistake
-  // that misdated Thess's August payment into September).
-  const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null);
-  const [editPaymentAmount, setEditPaymentAmount] = useState("");
-  const [editPaymentDate, setEditPaymentDate] = useState("");
-  const [editPaymentMethod, setEditPaymentMethod] = useState("");
-  const [editPaymentRef, setEditPaymentRef] = useState("");
-  const [editPaymentNotes, setEditPaymentNotes] = useState("");
-  const [savingPaymentEdit, setSavingPaymentEdit] = useState(false);
 
   // Edit invoice state
   const [editingInvoice, setEditingInvoice] = useState(false);
@@ -8011,6 +7966,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [openBuilderNoteId, setOpenBuilderNoteId] = useState<number | null>(null);
   const [openDetailNoteId, setOpenDetailNoteId] = useState<number | null>(null);
 
+  // Balances left open on this client's earlier invoices — a shortfall they
+  // still owe or an overpayment sitting as a credit. Ticked items roll into
+  // this invoice's previous_balance; unticking leaves one behind to carry later.
+  const [carryItems, setCarryItems] = useState<CarryCandidate[]>([]);
+
   // Tracks settled status for expense line items in detail view
   const [expenseSettledMap, setExpenseSettledMap] = useState<Record<number, boolean>>({});
 
@@ -8072,16 +8032,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const fetchInvoices = useCallback(async () => {
     const sb = createClient();
-    const [invRes, clientsRes, orgRes, accRes, tagsRes, invoicePayRes] = await Promise.all([
+    const [invRes, clientsRes, orgRes, accRes, tagsRes] = await Promise.all([
       sb.from("invoices").select("*").order("created_at", { ascending: false }),
       sb.from("clients").select("*").eq("active", true).order("name"),
       sb.from("organization_settings").select("*").limit(1).single(),
       fetch("/api/accounts"),
       sb.from("project_tags").select("project_name").eq("is_active", true).order("sort_order"),
-      sb.from("invoice_payments").select("invoice_id, amount, payment_date"),
     ]);
     setInvoices((invRes.data ?? []) as Invoice[]);
-    setAllInvoicePayments((invoicePayRes.data ?? []) as { invoice_id: number; amount: number; payment_date: string }[]);
     setClients((clientsRes.data ?? []) as Client[]);
     if (orgRes.data) {
       setOrgSettings(orgRes.data as OrganizationSettings);
@@ -8175,6 +8133,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const summaryStats = useMemo(() => {
     let totalInvoiced = 0;
     let outstanding = 0;
+    let paid = 0;
     let overdue = 0;
     let draftTotal = 0;
     periodFilteredInvoices.forEach((inv) => {
@@ -8183,23 +8142,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       if (["sent", "paid", "partially_paid", "overdue", "archived"].includes(inv.status)) {
         totalInvoiced += Number(inv.total);
       }
-      if (inv.status === "sent") outstanding += Number(inv.total) + Number(inv.previous_balance || 0);
-      if (inv.status === "partially_paid") outstanding += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
-      if (inv.status === "overdue") overdue += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
+      // amountOwed floors at zero, so an overpaid invoice contributes nothing
+      // here instead of quietly cancelling out what another client still owes.
+      // Once a balance has been rolled into a later invoice it is outstanding
+      // there, not here — counting both would bill the same money twice.
+      const carriedAway = inv.carried_into_invoice_id != null;
+      if (!carriedAway && (inv.status === "sent" || inv.status === "partially_paid")) outstanding += amountOwed(inv);
+      if (inv.status === "paid" || inv.status === "archived") paid += Number(inv.total);
+      if (!carriedAway && inv.status === "overdue") overdue += amountOwed(inv);
     });
-
-    // "Paid" = real payments on invoices issued in the selected period —
-    // attributed by the invoice's issue month, not when the cash happened
-    // to arrive, matching Financial Summary's "Collected from Clients".
-    // periodFilteredInvoices is already scoped to issue_date, so this is
-    // just "payments whose invoice is in that same set".
-    const periodInvoiceIds = new Set(periodFilteredInvoices.map((inv) => inv.id));
-    const paid = allInvoicePayments
-      .filter((p) => periodInvoiceIds.has(p.invoice_id))
-      .reduce((sum, p) => sum + Number(p.amount), 0);
-
     return { totalInvoiced, outstanding, paid, overdue, draftTotal };
-  }, [periodFilteredInvoices, allInvoicePayments]);
+  }, [periodFilteredInvoices]);
 
   const selectedClient = useMemo(() => {
     return clients.find((c) => c.id === selectedClientId) ?? null;
@@ -8494,7 +8447,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       if (linkedAccounts.length > 0) {
         expQuery = expQuery.in("account", linkedAccounts);
       } else {
+        // No linked accounts means no expenses to pull, but the client can
+        // still be carrying a balance from an earlier invoice.
         setExpenseItems([]);
+        setCarryItems(await fetchCarryCandidates(supabase, { clientId: selectedClientId }));
         setLoadingLogs(false);
         return;
       }
@@ -8511,6 +8467,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         excluded: false,
         notes: e.notes || null,
       }))
+    );
+
+    // Anything still open on this client's earlier invoices, in either
+    // direction, so it carries forward without anyone retyping it.
+    setCarryItems(
+      await fetchCarryCandidates(
+        supabase,
+        generateBy === "account"
+          ? { accountName: selectedAccount }
+          : { clientId: selectedClientId }
+      )
     );
 
     setLoadingLogs(false);
@@ -8536,6 +8503,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const manualTotal = timeTotal + expenseTotal;
     const adjustment = parseFloat(adjustmentAmount) || 0;
     const finalTotal = manualTotal - adjustment;
+
+    // Balances rolled over from this client's earlier invoices — positive when
+    // they underpaid, negative when they overpaid and are owed a credit. The
+    // typed-in field stays available on top for anything predating MinuteFlow.
+    const carriedBalance = carryTotal(carryItems);
+    const typedBalance = parseFloat(previousBalance) || 0;
+    const combinedPrevBalance = Math.round((carriedBalance + typedBalance) * 100) / 100;
+    const combinedPrevNote = [carryNote(carryItems), previousBalanceNote].filter(Boolean).join(" · ");
 
     // Determine billing target (client or account)
     const billingClient = clients.find((c) => c.id === selectedClientId);
@@ -8576,8 +8551,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       rate_amount: rateAmount ? parseFloat(rateAmount) : null,
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
-      previous_balance: previousBalance ? parseFloat(previousBalance) : null,
-      previous_balance_note: previousBalanceNote || null,
+      previous_balance: combinedPrevBalance !== 0 ? combinedPrevBalance : null,
+      previous_balance_note: combinedPrevNote || null,
       invoice_type: invoiceType,
       custom_line_items: invoiceType === "custom" ? JSON.stringify(customItems.filter(i => i.description).map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 }))) : null,
       share_token: crypto.randomUUID(),
@@ -8676,6 +8651,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       await supabase.from("invoice_line_items").insert(expenseLineItemsData);
     }
 
+    // Close out the invoices whose open balance this one absorbed, so the same
+    // money is never carried forward a second time. Items left unticked keep
+    // their balance and stay available for a later invoice.
+    await markCarried(supabase, carryItems, newInvoice!.id as number);
+
     // If sending now, fire email
     if (sendNow && billingEmail) {
       try {
@@ -8710,6 +8690,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setHoursNotBilledLabel("Volunteer");
     setRateAmount("");
     setPreviousBalance("");
+    setCarryItems([]);
     setCreateDueDate("");
     setCreateDba("");
     setCreateAccountName("");
@@ -8853,34 +8834,19 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
     setPaymentError("");
 
-    // Calculate new total paid
-    const newAmountPaid = Number(selectedInvoice.amount_paid || 0) + amt;
-    const invoiceTotal = Number(selectedInvoice.total);
-    const prevBalance = Number(selectedInvoice.previous_balance || 0);
-    const grandTotal = invoiceTotal + prevBalance;
-
-    // Determine new status
-    let newStatus: Invoice["status"] = selectedInvoice.status;
-    if (newAmountPaid >= grandTotal - 0.01) {
-      newStatus = "paid";
-    } else if (newAmountPaid > 0) {
-      newStatus = "partially_paid";
-    }
-
-    // Update invoice
-    await supabase
-      .from("invoices")
-      .update({
-        amount_paid: newAmountPaid,
-        status: newStatus,
-        ...(newStatus === "paid" ? { paid_date: new Date().toISOString().split("T")[0] } : {}),
-      })
-      .eq("id", selectedInvoice.id);
+    // Recompute amount_paid and status from the payment rows we just added to.
+    // Adding the amount onto the stored amount_paid is what let the column drift
+    // out of step with the payment history — see src/lib/invoiceBalance.ts.
+    const synced = await syncInvoicePaymentState(supabase, selectedInvoice.id);
 
     // Update local state
-    setSelectedInvoice((prev) =>
-      prev ? { ...prev, amount_paid: newAmountPaid, status: newStatus, ...(newStatus === "paid" ? { paid_date: new Date().toISOString().split("T")[0] } : {}) } : null
-    );
+    if (synced) {
+      setSelectedInvoice((prev) =>
+        prev
+          ? { ...prev, amount_paid: synced.amount_paid, status: synced.status as Invoice["status"], paid_date: synced.paid_date }
+          : null
+      );
+    }
 
     // Sync to financial_payments
     await supabase.from("financial_payments").insert({
@@ -8909,8 +8875,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         body: JSON.stringify({
           invoiceId: selectedInvoice.id,
           amountPaid: amt,
-          newAmountPaid,
-          newStatus,
+          newAmountPaid: synced?.amount_paid ?? Number(selectedInvoice.amount_paid || 0) + amt,
+          newStatus: synced?.status ?? selectedInvoice.status,
         }),
       }).catch(() => {/* non-fatal */});
     }
@@ -8960,116 +8926,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       await supabase.from("financial_payments").delete().eq("id", mirrorRows[0].id);
     }
 
-    // Recalculate amount_paid and status
-    const newAmountPaid = Math.max(0, Number(selectedInvoice.amount_paid || 0) - Number(payment.amount));
-    const invoiceTotal = Number(selectedInvoice.total);
-    const prevBalance = Number(selectedInvoice.previous_balance || 0);
-    const grandTotal = invoiceTotal + prevBalance;
+    // Recompute from the rows that survived the delete. Subtracting the deleted
+    // amount from the stored amount_paid is what left MF-2026-042 reading
+    // $467.20 against a $1,500 payment.
+    const synced = await syncInvoicePaymentState(supabase, selectedInvoice.id);
 
-    let newStatus: Invoice["status"] = selectedInvoice.status;
-    if (newAmountPaid >= grandTotal - 0.01) {
-      newStatus = "paid";
-    } else if (newAmountPaid > 0) {
-      newStatus = "partially_paid";
-    } else if (selectedInvoice.status === "paid" || selectedInvoice.status === "partially_paid") {
-      newStatus = "sent";
+    if (synced) {
+      setSelectedInvoice((prev) =>
+        prev
+          ? { ...prev, amount_paid: synced.amount_paid, status: synced.status as Invoice["status"], paid_date: synced.paid_date }
+          : null
+      );
     }
-
-    await supabase
-      .from("invoices")
-      .update({
-        amount_paid: newAmountPaid,
-        status: newStatus,
-        ...(newStatus !== "paid" ? { paid_date: null } : {}),
-      })
-      .eq("id", selectedInvoice.id);
-
-    setSelectedInvoice((prev) =>
-      prev ? { ...prev, amount_paid: newAmountPaid, status: newStatus, ...(newStatus !== "paid" ? { paid_date: null } : {}) } : null
-    );
 
     setInvoicePayments((prev) => prev.filter((p) => p.id !== payment.id));
     setDeletingPaymentId(null);
-    fetchInvoices();
-  };
-
-  const startEditPayment = (payment: InvoicePayment) => {
-    setEditingPaymentId(payment.id);
-    setEditPaymentAmount(String(payment.amount));
-    setEditPaymentDate(payment.payment_date);
-    setEditPaymentMethod(payment.payment_method || "");
-    setEditPaymentRef(payment.reference_number || "");
-    setEditPaymentNotes(payment.notes || "");
-    setPaymentError("");
-  };
-
-  const cancelEditPayment = () => {
-    setEditingPaymentId(null);
-  };
-
-  const handleUpdatePayment = async (payment: InvoicePayment) => {
-    if (!selectedInvoice) return;
-    const newAmt = parseFloat(editPaymentAmount) || 0;
-    if (newAmt <= 0 || !editPaymentDate) {
-      setPaymentError("Amount and date are required.");
-      return;
-    }
-    setSavingPaymentEdit(true);
-
-    const { error } = await supabase
-      .from("invoice_payments")
-      .update({
-        amount: newAmt,
-        payment_date: editPaymentDate,
-        payment_method: editPaymentMethod || null,
-        reference_number: editPaymentRef || null,
-        notes: editPaymentNotes || null,
-      })
-      .eq("id", payment.id);
-    if (error) {
-      setPaymentError(error.message || "Failed to update payment. Please try again.");
-      setSavingPaymentEdit(false);
-      return;
-    }
-    setPaymentError("");
-
-    // Recalculate amount_paid and status from the delta (old amount out, new amount in) —
-    // same math as handleAddPayment/handleDeletePayment.
-    const newAmountPaid = Math.max(0, Number(selectedInvoice.amount_paid || 0) - Number(payment.amount) + newAmt);
-    const invoiceTotal = Number(selectedInvoice.total);
-    const prevBalance = Number(selectedInvoice.previous_balance || 0);
-    const grandTotal = invoiceTotal + prevBalance;
-
-    let newStatus: Invoice["status"] = selectedInvoice.status;
-    if (newAmountPaid >= grandTotal - 0.01) {
-      newStatus = "paid";
-    } else if (newAmountPaid > 0) {
-      newStatus = "partially_paid";
-    } else if (selectedInvoice.status === "paid" || selectedInvoice.status === "partially_paid") {
-      newStatus = "sent";
-    }
-
-    await supabase
-      .from("invoices")
-      .update({
-        amount_paid: newAmountPaid,
-        status: newStatus,
-        ...(newStatus !== "paid" ? { paid_date: null } : {}),
-      })
-      .eq("id", selectedInvoice.id);
-
-    setSelectedInvoice((prev) =>
-      prev ? { ...prev, amount_paid: newAmountPaid, status: newStatus, ...(newStatus !== "paid" ? { paid_date: null } : {}) } : null
-    );
-    setInvoicePayments((prev) =>
-      prev.map((p) =>
-        p.id === payment.id
-          ? { ...p, amount: newAmt, payment_date: editPaymentDate, payment_method: editPaymentMethod || null, reference_number: editPaymentRef || null, notes: editPaymentNotes || null }
-          : p
-      )
-    );
-    setEditingPaymentId(null);
-    setSavingPaymentEdit(false);
     fetchInvoices();
   };
 
@@ -9489,18 +9360,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   /* ── Mark as paid ─────────────────────────────────────────── */
 
   const handleMarkPaid = async (invoice: Invoice) => {
-    const invoiceTotal = Number(invoice.total);
-    await supabase
-      .from("invoices")
-      .update({
-        status: "paid",
-        paid_date: new Date().toISOString().split("T")[0],
-        amount_paid: invoiceTotal,
-      })
-      .eq("id", invoice.id);
-
-    // If amount remaining, insert a balancing payment record
-    const remaining = invoiceTotal - Number(invoice.amount_paid || 0);
+    // Top the invoice up with a balancing payment and let the payment rows
+    // decide amount_paid and status. Writing amount_paid directly is what let
+    // this screen contradict the payment history; it also ignored any balance
+    // carried in, so a topped-up invoice could still read as owing money.
+    // An already-settled or overpaid invoice gets nothing — marking it paid
+    // must never write away a recorded overpayment.
+    const remaining = amountOwed(invoice);
     if (remaining > 0) {
       await supabase.from("invoice_payments").insert({
         invoice_id: invoice.id,
@@ -9523,26 +9389,41 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       });
     }
 
-    setSelectedInvoice((prev) =>
-      prev ? { ...prev, status: "paid" as const, paid_date: new Date().toISOString().split("T")[0], amount_paid: invoiceTotal } : null
-    );
+    const synced = await syncInvoicePaymentState(supabase, invoice.id);
+    if (synced) {
+      setSelectedInvoice((prev) =>
+        prev
+          ? { ...prev, amount_paid: synced.amount_paid, status: synced.status as Invoice["status"], paid_date: synced.paid_date }
+          : null
+      );
+    }
     fetchInvoices();
   };
 
   /* ── Mark as unpaid (reverse paid status) ────────────────── */
 
   const handleMarkUnpaid = async (invoice: Invoice) => {
+    // Reverse only the balancing row "Mark as Fully Paid" creates. Zeroing
+    // amount_paid outright used to leave real payments on the invoice with
+    // none of their money counted against it.
     await supabase
-      .from("invoices")
-      .update({
-        status: "sent" as const,
-        paid_date: null,
-        amount_paid: 0,
-      })
-      .eq("id", invoice.id);
-    setSelectedInvoice((prev) =>
-      prev ? { ...prev, status: "sent" as const, paid_date: null, amount_paid: 0 } : null
-    );
+      .from("invoice_payments")
+      .delete()
+      .eq("invoice_id", invoice.id)
+      .eq("notes", "Marked as fully paid");
+    await supabase
+      .from("financial_payments")
+      .delete()
+      .eq("notes", `Invoice #${invoice.invoice_number} — Marked as fully paid`);
+
+    const synced = await syncInvoicePaymentState(supabase, invoice.id);
+    if (synced) {
+      setSelectedInvoice((prev) =>
+        prev
+          ? { ...prev, amount_paid: synced.amount_paid, status: synced.status as Invoice["status"], paid_date: synced.paid_date }
+          : null
+      );
+    }
     fetchInvoices();
   };
 
@@ -10665,6 +10546,64 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       </td>
                       <td className="px-3 py-2 text-right font-bold text-amber-700 text-[11px]">
                         ${expenseItems.filter(e => !e.excluded).reduce((s, e) => s + e.amount, 0).toFixed(2)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            {/* Carried Forward — balances left open on earlier invoices */}
+            {carryItems.length > 0 && (
+              <div className="mt-4 rounded-lg border border-slate-blue/30 overflow-hidden">
+                <div className="px-4 py-2.5 bg-slate-blue-soft border-b border-slate-blue/30">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-blue">
+                    Carried Forward — Auto-added ({carryItems.filter(c => !c.excluded).length} of {carryItems.length} included)
+                  </p>
+                </div>
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-slate-blue/20 bg-slate-blue-soft/50 text-[10px] font-semibold uppercase tracking-wider text-slate-blue">
+                      <th className="px-4 py-2.5">Include</th>
+                      <th className="px-4 py-2.5">Invoice</th>
+                      <th className="px-3 py-2.5">Issued</th>
+                      <th className="px-3 py-2.5">Type</th>
+                      <th className="px-3 py-2.5 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-blue/10">
+                    {carryItems.map((c) => (
+                      <tr key={c.invoice_id} className={`hover:bg-slate-blue-soft/40 transition-colors${c.excluded ? " line-through opacity-50" : ""}`}>
+                        <td className="px-4 py-2.5 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!c.excluded}
+                            onChange={() => setCarryItems(prev => prev.map(i => i.invoice_id === c.invoice_id ? { ...i, excluded: !i.excluded } : i))}
+                            className="cursor-pointer"
+                          />
+                        </td>
+                        <td className="px-4 py-2.5 text-espresso font-medium">{c.invoice_number}</td>
+                        <td className="px-3 py-2.5 text-bark text-[11px]">{c.issue_date}</td>
+                        <td className="px-3 py-2.5">
+                          <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${c.amount < 0 ? "bg-sage-soft text-sage border-sage/20" : "bg-amber-50 text-amber-600 border-amber-200"}`}>
+                            {c.amount < 0 ? "Credit" : "Unpaid"}
+                          </span>
+                        </td>
+                        <td className={`px-3 py-2.5 text-right font-medium ${c.amount < 0 ? "text-sage" : "text-espresso"}`}>
+                          {c.amount < 0 ? `− ${formatCurrency(Math.abs(c.amount))}` : formatCurrency(c.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-slate-blue/30 bg-slate-blue-soft">
+                      <td colSpan={4} className="px-4 py-2 text-[11px] font-semibold text-slate-blue text-right">
+                        {carryTotal(carryItems) < 0 ? "Credit Applied" : "Previous Balance"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold text-slate-blue text-[11px]">
+                        {carryTotal(carryItems) < 0
+                          ? `− ${formatCurrency(Math.abs(carryTotal(carryItems)))}`
+                          : formatCurrency(carryTotal(carryItems))}
                       </td>
                     </tr>
                   </tfoot>
@@ -11953,10 +11892,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   type="number"
                   step="0.01"
                   min="0"
-                  max={Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0)}
                   value={paymentAmount}
                   onChange={(e) => setPaymentAmount(e.target.value)}
-                  placeholder={`Max: ${formatCurrency(Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0))}`}
+                  /* No max: a client can pay more than the bill, and capping the
+                     field here is what forced overpayments to be fixed by hand.
+                     The balance is a hint, not a ceiling — anything above it
+                     becomes a credit that carries to the next invoice. */
+                  placeholder={`Balance: ${formatCurrency(amountOwed(inv), inv.currency)}`}
                   className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
                 />
               </div>
@@ -12041,99 +11983,28 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-parchment">
-                  {invoicePayments.map((pmt) =>
-                    editingPaymentId === pmt.id ? (
-                      <tr key={pmt.id} className="bg-parchment/20">
-                        <td className="px-4 py-2.5">
-                          <input
-                            type="date"
-                            value={editPaymentDate}
-                            onChange={(e) => setEditPaymentDate(e.target.value)}
-                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={editPaymentAmount}
-                            onChange={(e) => setEditPaymentAmount(e.target.value)}
-                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso text-right outline-none bg-white"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <input
-                            type="text"
-                            value={editPaymentMethod}
-                            onChange={(e) => setEditPaymentMethod(e.target.value)}
-                            placeholder="e.g. check"
-                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <input
-                            type="text"
-                            value={editPaymentRef}
-                            onChange={(e) => setEditPaymentRef(e.target.value)}
-                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <input
-                            type="text"
-                            value={editPaymentNotes}
-                            onChange={(e) => setEditPaymentNotes(e.target.value)}
-                            className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-                          />
-                        </td>
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                  {invoicePayments.map((pmt) => (
+                    <tr key={pmt.id} className="hover:bg-parchment/20 transition-colors">
+                      <td className="px-4 py-2.5 text-espresso">
+                        {new Date(pmt.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-sage">{formatCurrency(Number(pmt.amount))}</td>
+                      <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
+                      <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
+                      <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
+                      <td className="px-3 py-2.5 text-right">
+                        {!pmt.square_payment_id && (
                           <button
-                            onClick={() => handleUpdatePayment(pmt)}
-                            disabled={savingPaymentEdit}
-                            className="text-[11px] text-sage hover:text-sage/80 hover:underline disabled:opacity-50 mr-2"
+                            onClick={() => handleDeletePayment(pmt)}
+                            disabled={deletingPaymentId === pmt.id}
+                            className="text-[11px] text-red-400 hover:text-red-600 hover:underline disabled:opacity-50"
                           >
-                            {savingPaymentEdit ? "Saving..." : "Save"}
+                            {deletingPaymentId === pmt.id ? "Deleting..." : "Delete"}
                           </button>
-                          <button
-                            onClick={cancelEditPayment}
-                            disabled={savingPaymentEdit}
-                            className="text-[11px] text-stone hover:text-bark hover:underline disabled:opacity-50"
-                          >
-                            Cancel
-                          </button>
-                        </td>
-                      </tr>
-                    ) : (
-                      <tr key={pmt.id} className="hover:bg-parchment/20 transition-colors">
-                        <td className="px-4 py-2.5 text-espresso">
-                          {new Date(pmt.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-semibold text-sage">{formatCurrency(Number(pmt.amount))}</td>
-                        <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
-                        <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
-                        <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          {!pmt.square_payment_id && (
-                            <>
-                              <button
-                                onClick={() => startEditPayment(pmt)}
-                                className="text-[11px] text-slate-blue hover:text-slate-blue/80 hover:underline mr-2"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => handleDeletePayment(pmt)}
-                                disabled={deletingPaymentId === pmt.id}
-                                className="text-[11px] text-red-400 hover:text-red-600 hover:underline disabled:opacity-50"
-                              >
-                                {deletingPaymentId === pmt.id ? "Deleting..." : "Delete"}
-                              </button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  )}
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -12181,10 +12052,19 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         ) : (
                           <>
                             <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
-                              {inv.amount_due != null ? "Amount Due" : prevBal > 0 ? "Balance Due" : "Invoice Amount"}
+                              {inv.amount_due != null
+                                ? "Amount Due"
+                                : prevBal === 0
+                                  ? "Invoice Amount"
+                                  : currentBal < 0 ? "Credit Balance" : "Balance Due"}
                             </div>
                             <div className="text-[24px] font-extrabold text-[#2d1a00]">
-                              {formatCurrency(inv.amount_due != null ? Number(inv.amount_due) : prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
+                              {formatCurrency(
+                                inv.amount_due != null
+                                  ? Number(inv.amount_due)
+                                  : prevBal === 0 ? Number(inv.total) : Math.abs(currentBal),
+                                inv.currency
+                              )}
                             </div>
                           </>
                         )}
@@ -12287,6 +12167,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     { label: "Current Month's Amount", value: formatCurrency(Number(inv.total), inv.currency), accent: true },
                   ] : []),
                   ...(prevBal > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBal, inv.currency), tooltip: inv.previous_balance_note || "Balance carried over from a previous invoice" }] : []),
+                  ...(prevBal < 0 ? [{ label: "Credit Applied", value: `− ${formatCurrency(Math.abs(prevBal), inv.currency)}`, tooltip: inv.previous_balance_note || "Credit carried over from an overpaid invoice" }] : []),
                 ];
 
                 const renderGrid = (items: BItem[]) => (
@@ -12488,10 +12369,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     <span className="text-sage font-semibold">{formatCurrency(Number(inv.amount_paid))}</span>
                   </div>
                 )}
-                {inv.status !== "paid" && Number(inv.amount_paid || 0) > 0 && (
+                {amountOwed(inv) > 0 && Number(inv.amount_paid || 0) > 0 && (
                   <div className="flex justify-between text-[12px]">
                     <span className="font-semibold text-terracotta">Balance Due</span>
-                    <span className="font-semibold text-terracotta">{formatCurrency(Number(inv.total) - Number(inv.amount_paid || 0))}</span>
+                    <span className="font-semibold text-terracotta">{formatCurrency(amountOwed(inv), inv.currency)}</span>
+                  </div>
+                )}
+                {creditAmount(inv) > 0 && (
+                  <div className="flex justify-between text-[12px]">
+                    <span className="font-semibold text-sage">Credit (overpaid)</span>
+                    <span className="font-semibold text-sage">{formatCurrency(creditAmount(inv), inv.currency)}</span>
                   </div>
                 )}
                 {inv.status === "paid" && inv.paid_date && (
@@ -12683,11 +12570,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       {formatCurrency(Number(inv.total), inv.currency)}
                     </td>
                     <td className="px-3 py-3 text-right text-bark">
-                      {inv.status === "paid"
-                        ? <span className="text-sage font-semibold">{formatCurrency(0)}</span>
-                        : Number(inv.amount_paid || 0) > 0
-                          ? <span className="text-terracotta font-semibold">{formatCurrency(Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0))}</span>
-                          : formatCurrency(Number(inv.total) + Number(inv.previous_balance || 0))}
+                      {inv.carried_into_invoice_id != null
+                        ? <span className="text-slate-blue font-semibold" title="Balance rolled into a later invoice">carried →</span>
+                        : creditAmount(inv) > 0
+                        ? <span className="text-sage font-semibold" title="Overpaid — carries to the next invoice">+ {formatCurrency(creditAmount(inv), inv.currency)}</span>
+                        : amountOwed(inv) === 0
+                          ? <span className="text-sage font-semibold">{formatCurrency(0)}</span>
+                          : Number(inv.amount_paid || 0) > 0
+                            ? <span className="text-terracotta font-semibold">{formatCurrency(amountOwed(inv), inv.currency)}</span>
+                            : formatCurrency(amountOwed(inv), inv.currency)}
                     </td>
                     <td className="px-3 py-3 text-center">
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${statusBadge(inv.status)}`}>

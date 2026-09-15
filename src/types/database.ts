@@ -388,6 +388,9 @@ export interface Invoice {
   payment_template_id: number | null;
   dba: string | null;
   amount_due: number | null;
+  /** Set when a later invoice absorbed this one's open balance, so the same
+   *  money is neither carried forward twice nor counted as outstanding here. */
+  carried_into_invoice_id?: number | null;
   created_at: string;
   updated_at: string;
 }

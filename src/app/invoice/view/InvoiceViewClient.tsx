@@ -254,9 +254,12 @@ export default function InvoiceViewClient({ token }: { token: string }) {
   const hasSchedule = invoice.payment_schedule && invoice.payment_schedule.length > 0;
   let headerAmountLabel: string;
   let headerAmount: number;
-  if (prevBalance > 0) {
-    headerAmountLabel = "Balance Due";
-    headerAmount = currentBalance;
+  if (prevBalance !== 0) {
+    // previous_balance carries in either direction: money still owed from an
+    // earlier invoice, or a credit from one they overpaid. A credit bigger than
+    // this month's work leaves nothing due and the remainder rolls on again.
+    headerAmountLabel = currentBalance < 0 ? "Credit Balance" : "Balance Due";
+    headerAmount = Math.abs(currentBalance);
   } else if (hasSchedule) {
     const firstItem = invoice.payment_schedule![0];
     headerAmountLabel = firstItem.label || "Amount Due";
@@ -495,6 +498,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
                     { label: "Current Month's Amount", value: formatCurrency(Number(invoice.total), invoice.currency), accent: true },
                   ] : []),
                   ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency), tooltip: invoice.previous_balance_note || "Balance carried over from a previous invoice" }] : []),
+                  ...(prevBalance < 0 ? [{ label: "Credit Applied", value: `− ${formatCurrency(Math.abs(prevBalance), invoice.currency)}`, tooltip: invoice.previous_balance_note || "Credit carried over from an invoice you overpaid" }] : []),
                 ];
 
                 const renderGrid = (items: BItem[]) => (
@@ -527,10 +531,20 @@ export default function InvoiceViewClient({ token }: { token: string }) {
                   <>
                     {hoursItems.length > 0 && renderGrid(hoursItems)}
                     {moneyItems.length > 1 && renderGrid(moneyItems)}
-                    <div className="rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Balance Due</div>
-                      <div className="text-[20px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>
-                    </div>
+                    {currentBalance < 0 ? (
+                      /* Credit larger than this month's work: nothing is due and
+                         the remainder carries to the next invoice. */
+                      <div className="rounded-lg border-2 border-[#6b8f71] bg-[#f4f9f5] p-3 text-center">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Credit Carried Forward</div>
+                        <div className="text-[20px] font-extrabold text-[#6b8f71] mt-1">{formatCurrency(Math.abs(currentBalance), invoice.currency)}</div>
+                        <div className="text-[10px] text-[#6b5e52] mt-1">Nothing due this month</div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Balance Due</div>
+                        <div className="text-[20px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>
+                      </div>
+                    )}
                   </>
                 );
               })()}

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { amountOwed } from "@/lib/invoiceBalance";
 
 export const dynamic = "force-dynamic";
 
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
       open_tracking: true,
       click_tracking: true,
     }),
-  }, { log: { type: "invoice_reminder", label: invoice.invoice_number, sublabel: "Sent manually" } });
+  });
 
   if (!resendRes.ok) {
     const resendError = await resendRes.text();
@@ -205,7 +206,9 @@ function buildInvoiceEmail(
   let headerAmount: number;
   let headerAmountLabel: string;
   if (invoice.status === "partially_paid") {
-    headerAmount = finalTotal - amountPaid;
+    // Count anything carried in, and never dun for a negative — an overpaid
+    // invoice reads as paid and isn't reminded at all.
+    headerAmount = amountOwed(invoice);
     headerAmountLabel = "Remaining Balance";
   } else if (prevBalance > 0) {
     headerAmount = finalTotal + prevBalance;
