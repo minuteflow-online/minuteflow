@@ -1077,8 +1077,37 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       .map((p) => {
         const type = vaBudgetType(p);
         const outputBased = type === "output_based";
-        const unit: "hours" | "dollars" = outputBased ? "dollars" : "hours";
+        // A monthly-salaried person with NO budget limits configured (e.g.
+        // the Founder) isn't working against an hours cap at all — they're
+        // paid the same amount regardless of hours, so there's no "budget"
+        // to track, only their known salary. Being paid monthly alone isn't
+        // enough to qualify: some VAs are paid a monthly rate but still have
+        // a real hours budget configured (shift/daily/weekly/monthly limits)
+        // — those stay hours-tracked like anyone else.
+        const hasAnyLimit =
+          shiftHoursFromProfile(p) != null ||
+          p.daily_budget_limit != null ||
+          p.weekly_budget_limit != null ||
+          p.monthly_budget_limit != null;
+        const salaried = !outputBased && p.pay_rate_type === "monthly" && !hasAnyLimit;
+        const unit: "hours" | "dollars" = outputBased || salaried ? "dollars" : "hours";
         const hourlyRate = hourlyRateFromProfile(p);
+
+        if (salaried) {
+          const salary = p.pay_rate > 0 ? p.pay_rate : null;
+          return {
+            userId: p.id,
+            name: p.full_name,
+            type: "salaried" as const,
+            unit,
+            daily: null,
+            weekly: null,
+            monthly: salary,
+            hourlyRate: null,
+            projected: salary,
+            hasLimit: true,
+          };
+        }
 
         // Limits in their native unit (hours for time-based, $ for output-based)
         const daily = outputBased ? p.daily_budget_limit ?? null : shiftHoursFromProfile(p);
@@ -1150,8 +1179,19 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     }
 
     const outputBased = vaBudgetType(profile) === "output_based";
+    const hasAnyLimit =
+      shiftHoursFromProfile(profile) != null ||
+      profile.daily_budget_limit != null ||
+      profile.weekly_budget_limit != null ||
+      profile.monthly_budget_limit != null;
+    const salaried = !outputBased && profile.pay_rate_type === "monthly" && !hasAnyLimit;
+    // A salaried VA has no budget cap to edit — the "Monthly" cell here IS
+    // their salary, the same pay_rate Team Management edits, not a separate
+    // limit. Daily/Weekly aren't editable for them (see renderBudgetCell).
     const updates: Record<string, number | string | null> =
-      field === "daily"
+      salaried
+        ? { pay_rate: value }
+        : field === "daily"
         ? outputBased
           ? { daily_budget_limit: value }
           // Direct-hours entry, same as Team Management's "Hours" mode — clears
@@ -1183,6 +1223,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const renderBudgetCell = (row: (typeof budgetData.rows)[number], field: "daily" | "weekly" | "monthly") => {
     const value = field === "daily" ? row.daily : field === "weekly" ? row.weekly : row.monthly;
     const isEditing = editingBudgetCell?.userId === row.userId && editingBudgetCell.field === field;
+
+    // Salaried VAs have no daily/weekly concept — only Monthly (their salary) is editable.
+    if (row.type === "salaried" && field !== "monthly") {
+      return <span className="text-bark/40">—</span>;
+    }
 
     if (!isEditing) {
       return (
@@ -1504,6 +1549,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                 Expected monthly cost from each VA&apos;s assigned budget. Hours-based limits are
                 converted to $ using the VA&apos;s hourly-equivalent rate. Click any Daily/Weekly/Monthly
                 value to edit it directly — same fields as Team Management&apos;s Budget and Limit.
+                Salaried team members (Monthly pay rate) show their salary directly — click Monthly to
+                update it, same field Team Management uses.
               </p>
             </div>
             {budgetData.rows.length === 0 ? (
@@ -1529,9 +1576,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                           <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                             row.type === "output_based"
                               ? "bg-plum-soft text-plum"
+                              : row.type === "salaried"
+                              ? "bg-amber-soft text-amber"
                               : "bg-slate-blue-soft text-slate-blue"
                           }`}>
-                            {row.type === "output_based" ? "Output" : "Time"}
+                            {row.type === "output_based" ? "Output" : row.type === "salaried" ? "Salary" : "Time"}
                           </span>
                         </td>
                         <td className="px-3 py-3 text-right text-bark">{renderBudgetCell(row, "daily")}</td>
