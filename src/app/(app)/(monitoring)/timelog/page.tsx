@@ -1232,6 +1232,19 @@ export default function TimeLogPage() {
           </button>
         )}
 
+        {viewMode !== "custom" && (
+          <input
+            type="date"
+            value={dateToDateStr(anchorDate, orgTimezone)}
+            onChange={(e) => {
+              if (!e.target.value) return;
+              setAnchorDate(dateFromDateStr(e.target.value, orgTimezone));
+              setViewMode("day");
+            }}
+            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs font-semibold text-walnut outline-none transition-colors hover:border-terracotta focus:border-terracotta"
+          />
+        )}
+
         <div className="ml-auto flex gap-1">
           {(["day", "week", "month", "custom"] as ViewMode[]).map((mode) => (
             <button
