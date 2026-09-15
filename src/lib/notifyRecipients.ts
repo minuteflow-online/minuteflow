@@ -27,8 +27,22 @@ export async function notifyRecipients(opts: {
   telegramMessage?: string;
   topic?: string;
   telegram?: boolean;
+  /** The task this notification is about, if any — lets the bell link
+   *  straight back to it instead of leaving the reader to go find it. */
+  assignedTaskId?: number;
+  submissionId?: number;
 }): Promise<void> {
-  const { roles = [], departments = [], actorId, content, telegramMessage, topic = "mention", telegram = false } = opts;
+  const {
+    roles = [],
+    departments = [],
+    actorId,
+    content,
+    telegramMessage,
+    topic = "mention",
+    telegram = false,
+    assignedTaskId,
+    submissionId,
+  } = opts;
   if (roles.length === 0 && departments.length === 0) return;
 
   const supabase = serviceClient();
@@ -47,7 +61,15 @@ export async function notifyRecipients(opts: {
     if (p.id === actorId || seen.has(p.id)) continue;
     seen.add(p.id);
     try {
-      await supabase.from("messages").insert({ target_user_id: p.id, sender_id: actorId, content, read: false });
+      await supabase.from("messages").insert({
+        target_user_id: p.id,
+        sender_id: actorId,
+        content,
+        read: false,
+        kind: topic,
+        assigned_task_id: assignedTaskId ?? null,
+        submission_id: submissionId ?? null,
+      });
     } catch { /* ignore */ }
     if (telegram && telegramMessage) {
       try {

@@ -441,6 +441,26 @@ export async function GET(request: Request) {
     }
   }
 
+  // ── Unread indicator ─────────────────────────────────────────────────────
+  // Comments/notes on a thread notify the caller via a `messages` row stamped
+  // with the task it's about (see notifyOne in the submissions POST route).
+  // Counting those per task — for this viewer only — is what drives the ✉️
+  // badge and the "Unread" filter, without needing a second concept of
+  // "flagged" beyond the existing comment thread.
+  const unreadByTask: Record<number, number> = {};
+  if (taskIds.length > 0) {
+    const { data: unread } = await admin
+      .from("messages")
+      .select("assigned_task_id")
+      .eq("target_user_id", user.id)
+      .eq("read", false)
+      .in("assigned_task_id", taskIds);
+    for (const row of (unread ?? []) as Array<{ assigned_task_id: number | null }>) {
+      if (row.assigned_task_id == null) continue;
+      unreadByTask[row.assigned_task_id] = (unreadByTask[row.assigned_task_id] ?? 0) + 1;
+    }
+  }
+
   // `seesAll` is the broader admin-equivalent tier (who may view everyone's
   // submissions); `canReview` is the narrower Admin/CEO/Founder tier the POST
   // route actually enforces — returning the same flag for both would render
@@ -450,6 +470,7 @@ export async function GET(request: Request) {
     expected,
     roundDurations,
     reviewState,
+    unreadByTask,
     seesAll: isAdminEquivalent,
     canReview: canReviewSubmissions(profile),
     canEmptyTrash: canEmptySubmissionTrash(profile),
