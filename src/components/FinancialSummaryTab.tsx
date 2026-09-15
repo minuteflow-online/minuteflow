@@ -1832,9 +1832,15 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                   label="Net Profit"
                   value={fmtMoney(profitData.netCash)}
                   sub={
-                    profitData.revenue > 0
-                      ? `after VA pay & expenses · ${profitData.marginCash.toFixed(1)}% margin`
-                      : "nothing billed this month"
+                    profitData.revenue <= 0
+                      ? "nothing billed this month"
+                      : profitData.vaPayable > 0.01
+                        // Profit counts what actually went out this month, so
+                        // work already done but not yet paid for isn't in it.
+                        // Say so on the tile rather than leaving the figure to
+                        // look like the final answer.
+                        ? `${profitData.marginCash.toFixed(1)}% margin · ${fmtMoney(profitData.vaPayable)} still owed to VAs`
+                        : `after VA pay & expenses · ${profitData.marginCash.toFixed(1)}% margin`
                   }
                   color={profitData.netCash >= 0 ? "text-sage" : "text-red-500"}
                 />
