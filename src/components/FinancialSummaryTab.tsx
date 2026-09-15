@@ -1110,12 +1110,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const receivable = revenueData.rows.reduce((sum, row) => sum + (row.balance ?? 0), 0); // sum the same row balances shown below
     const vaPaid = vaCostData.totalVaPaid;
     const vaPayable = cost - vaPaid; // what you still owe VAs
-    // Net Margin sits in the "Paid & Collected" row, so it has to be money in
-    // less money out — not billed less earned. The accrual figure there had a
-    // month reading "$0.00 collected" and "$6,334.19 net margin" side by side:
-    // a profit on cash that hadn't arrived, against VA pay that had gone out.
-    const netCash = collected - vaPaid - expenseTotal;
-    const marginCash = collected > 0 ? (netCash / collected) * 100 : 0;
+    // What the month billed, less what the month actually cost to run:
+    // invoices issued this month, minus the VA payments and expenses paid out
+    // this month. The old figure subtracted what VAs had *earned* rather than
+    // what was paid them, so a month showed a cost that had not left the
+    // account — August read $3,971.51 against $6,306.39 "earned" when $2,321.66
+    // had gone out.
+    const netCash = revenue - vaPaid - expenseTotal;
+    const marginCash = revenue > 0 ? (netCash / revenue) * 100 : 0;
     return { revenue, cost, net, margin, expenseTotal, collected, receivable, vaPaid, vaPayable, netCash, marginCash };
   }, [revenueData, vaCostData, expenseData]);
 
@@ -1826,9 +1828,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                   label="Net Margin"
                   value={fmtMoney(profitData.netCash)}
                   sub={
-                    profitData.collected > 0
-                      ? `${profitData.marginCash.toFixed(1)}% of collected`
-                      : "nothing collected yet"
+                    profitData.revenue > 0
+                      ? `${profitData.marginCash.toFixed(1)}% of billed`
+                      : "nothing billed this month"
                   }
                   color={profitData.netCash >= 0 ? "text-sage" : "text-red-500"}
                 />
