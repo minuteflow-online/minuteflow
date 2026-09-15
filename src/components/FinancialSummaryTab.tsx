@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { createClient } from "@/lib/supabase/client";
 import CSVUploadModal from "@/components/CSVUploadModal";
 import { computeHourlyGross, type PayRateHistoryRow } from "@/lib/payroll";
+import { isPayrollEligible } from "@/lib/payrollHours";
 import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
 
 
@@ -286,6 +287,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [vaPayments, setVaPayments] = useState<VaPaymentRow[]>([]);
   const [clientPayments, setClientPayments] = useState<ClientPaymentRow[]>([]);
+  const [billedInvoices, setBilledInvoices] = useState<
+    { account: string; amount: number }[]
+  >([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [vaFixedAssignments, setVaFixedAssignments] = useState<VaFixedAssignment[]>([]);
   // Custom paystub line items per VA (from paystub_snapshots) — fallback when a VA
@@ -357,7 +361,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, invoicePayRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, invoicePayRes, invoiceRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
@@ -397,6 +401,15 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .from("invoice_payments")
         .select("id, amount, payment_date, payment_method, reference_number, notes, invoices(account_name, to_name, issue_date)")
         .order("payment_date", { ascending: false }),
+      // Real "billed" figure — the invoice's own total, not an hours×rate
+      // estimate. Attributed by issue_date within the range, same as
+      // "Collected" above and the Invoices page's own period filter, so the
+      // two pages agree. Draft/trash invoices aren't real bills yet.
+      supabase
+        .from("invoices")
+        .select("account_name, to_name, issue_date, total, status")
+        .gte("issue_date", startDate)
+        .lte("issue_date", endDate),
       supabase
         .from("financial_expenses")
         .select("id, account, description, amount, expense_date, category, is_reimbursable, reimbursed, notes, settled_date, date_recorded, date_billed, is_recurring, recurrence_end_date")
@@ -491,6 +504,16 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         source: "invoice",
       }));
     setClientPayments([...manualPayments, ...invoiceDerivedPayments]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const invoiceRows = (invoiceRes.data ?? []) as any[];
+    setBilledInvoices(
+      invoiceRows
+        .filter((inv) => ["sent", "paid", "partially_paid", "overdue", "archived"].includes(inv.status))
+        .map((inv) => ({
+          account: inv.account_name || inv.to_name || "Personal / Unbilled",
+          amount: Number(inv.total) || 0,
+        }))
+    );
     setExpenses((expRes.data as ExpenseRow[]) ?? []);
 
     // Parse VA fixed assignments into flat structure
@@ -645,9 +668,22 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     return map;
   }, [clientPayments]);
 
+  // Real invoiced totals per account, issue-date attributed — see the
+  // billedInvoices fetch above.
+  const billedByAccount = useMemo(() => {
+    const map: Record<string, number> = {};
+    billedInvoices.forEach((inv) => {
+      map[inv.account] = (map[inv.account] ?? 0) + inv.amount;
+    });
+    return map;
+  }, [billedInvoices]);
+
   /* ── Revenue Calculation ─────────────────────────────── */
-  // Revenue = billable hours per account × account billing rate
-  // Break & Sorting Tasks get billed to Virtual Concierge
+  // "Billed" = real invoice totals (billedByAccount), not an hours×rate
+  // estimate — invoices don't always land on the same period their hours
+  // were logged in. Hours are still tracked here for the hours column and
+  // the "rate not set" hint. Break & Sorting Tasks get billed to Virtual
+  // Concierge for that hours grouping.
 
   const revenueData = useMemo(() => {
     const accountTotals: Record<
@@ -681,7 +717,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       .map(([account, data]) => {
         const rate = accountRateMap[account] ?? null;
         const hours = msToHours(data.ms);
-        const amount = rate != null ? hours * rate : null;
+        const amount = billedByAccount[account] ?? null;
         const payments = clientPaymentsByAccount[account] ?? [];
         const collected = payments.reduce((s, p) => s + Number(p.amount), 0);
         return {
@@ -698,37 +734,42 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       })
       .sort((a, b) => b.ms - a.ms);
 
-    // A payment can land on an account with no logged hours this period at
-    // all — an invoice paid late for older work, or one billed "by client"
-    // whose account name never matches a time-logged account string. Without
-    // this, that money vanished from both the table and the total instead of
-    // just having no "billed" estimate to compare against.
+    // An invoice or a payment can land on an account with no logged hours
+    // this period at all — an invoice issued for older work, a late payment,
+    // or one billed "by client" whose account name never matches a
+    // time-logged account string. Without this, that money vanished from
+    // both the table and the total instead of just having no hours to show.
     const accountsWithRows = new Set(rows.map((r) => r.account));
-    const paymentOnlyRows = Object.entries(clientPaymentsByAccount)
-      .filter(([account]) => !accountsWithRows.has(account))
-      .map(([account, payments]) => ({
-        account,
-        clients: "—",
-        ms: 0,
-        hours: 0,
-        rate: null,
-        amount: null,
-        collected: payments.reduce((s, p) => s + Number(p.amount), 0),
-        balance: null,
-        payments,
-      }));
+    const extraAccounts = new Set([
+      ...Object.keys(clientPaymentsByAccount),
+      ...Object.keys(billedByAccount),
+    ]);
+    const paymentOnlyRows = Array.from(extraAccounts)
+      .filter((account) => !accountsWithRows.has(account))
+      .map((account) => {
+        const payments = clientPaymentsByAccount[account] ?? [];
+        const amount = billedByAccount[account] ?? null;
+        return {
+          account,
+          clients: "—",
+          ms: 0,
+          hours: 0,
+          rate: null,
+          amount,
+          collected: payments.reduce((s, p) => s + Number(p.amount), 0),
+          balance: amount != null ? amount - payments.reduce((s, p) => s + Number(p.amount), 0) : null,
+          payments,
+        };
+      });
     const allRows = [...rows, ...paymentOnlyRows];
 
     const totalMs = rows.reduce((s, r) => s + r.ms, 0);
-    const totalAmount = rows.reduce(
-      (s, r) => s + (r.amount ?? 0),
-      0
-    );
+    const totalAmount = allRows.reduce((s, r) => s + (r.amount ?? 0), 0);
     const totalCollected = allRows.reduce((s, r) => s + r.collected, 0);
     const hasUnsetRates = rows.some((r) => r.rate == null);
 
     return { rows: allRows, totalMs, totalAmount, totalCollected, hasUnsetRates };
-  }, [filteredLogs, accountRateMap, clientPaymentsByAccount]);
+  }, [filteredLogs, accountRateMap, clientPaymentsByAccount, billedByAccount]);
 
   /* ── VA Costs Calculation (Enhanced with day breakdown + fixed tasks from assignments) ── */
 
@@ -745,6 +786,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       }
     > = {};
 
+    const profileMap: Record<string, ProfileRow> = {};
+    profiles.forEach((p) => (profileMap[p.id] = p));
+
     filteredLogs.forEach((log) => {
       if (!userTotals[log.user_id]) {
         userTotals[log.user_id] = {
@@ -759,8 +803,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       ut.totalMs += log.duration_ms;
 
       const day = log.session_date || log.start_time.slice(0, 10);
-      // Payable follows the billable flag directly — breaks are always billable:false.
-      const isUnpaid = UNPAID_CATEGORIES.includes(log.category) || !log.billable;
+      // Payable eligibility mirrors the real paystub calc (lib/payrollHours.ts) —
+      // NOT the client-billable flag, which is a different question.
+      const isUnpaid = !isPayrollEligible(log, profileMap[log.user_id]?.position);
 
       if (!isUnpaid) {
         ut.paidMs += log.duration_ms;
@@ -801,9 +846,6 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         earned,
       });
     });
-
-    const profileMap: Record<string, ProfileRow> = {};
-    profiles.forEach((p) => (profileMap[p.id] = p));
 
     const activeVaIds = new Set(vaProfiles.map((p) => p.id));
 
