@@ -1510,7 +1510,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <div className="mt-2 rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark space-y-1">
                       <div className="flex justify-between"><span>Already sent (advance)</span><span>{formatCurrency(adv)}</span></div>
                       <div className="flex justify-between"><span>Paying now</span><span>{formatCurrency(now)}</span></div>
-                      <div className="flex justify-between border-t border-bark/10 pt-1"><span>Remaining after this</span><span className={Math.abs(remaining) < 0.005 ? "text-sage" : "text-terracotta"}>{formatCurrency(remaining)}</span></div>
+                      {/* A negative remainder means the advance and this
+                          payment together come to more than the paystub — an
+                          overpayment, not a debt. Showing it as "Remaining
+                          −$33.92" reads as money still owed, which is the
+                          opposite of what happened. */}
+                      <div className="flex justify-between border-t border-bark/10 pt-1">
+                        <span>
+                          {Math.abs(remaining) < 0.005
+                            ? "Remaining after this"
+                            : remaining < 0
+                              ? "Overpaid by"
+                              : "Remaining after this"}
+                        </span>
+                        <span className={Math.abs(remaining) < 0.005 ? "text-sage" : remaining < 0 ? "text-sage" : "text-terracotta"}>
+                          {formatCurrency(Math.abs(remaining))}
+                        </span>
+                      </div>
                     </div>
                   );
                 })()}
