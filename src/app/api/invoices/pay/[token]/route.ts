@@ -91,7 +91,7 @@ export async function POST(
   // Load invoice
   const { data: invoice, error: invError } = await serviceClient
     .from("invoices")
-    .select("id, invoice_number, to_name, to_email, total, previous_balance, currency, status, amount_paid, allow_custom_amount, payment_schedule")
+    .select("id, invoice_number, to_name, to_email, total, previous_balance, currency, status, amount_paid, allow_custom_amount, payment_schedule, from_name, dba")
     .eq("share_token", token)
     .single();
 
@@ -214,6 +214,17 @@ export async function POST(
 
   // Send receipt email to client (fire-and-forget)
   if (invoice.to_email && process.env.RESEND_API_KEY) {
+    // Same branding source as the invoice send/reminder emails and the
+    // manually-recorded-payment receipt — clients should see the business
+    // they hired, not the internal tool name.
+    const { data: orgSettings } = await serviceClient
+      .from("organization_settings")
+      .select("registered_business_name, dba")
+      .limit(1)
+      .single();
+    const fromName = invoice.from_name || "Toni Colina";
+    const brandName = invoice.dba || orgSettings?.dba || orgSettings?.registered_business_name || fromName;
+
     const receiptUrl = squarePayment?.receipt_url ?? null;
     const balanceRemaining = Math.max(0, grandTotal - newAmountPaid);
     const isPaid = newStatus === "paid";
@@ -226,6 +237,7 @@ export async function POST(
       isPaid,
       receiptUrl,
       currency: invoice.currency || "USD",
+      brandName,
     });
     sendResendEmail({
       method: "POST",
@@ -234,9 +246,9 @@ export async function POST(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "MinuteFlow <noreply@minuteflow.click>",
+        from: `${fromName} <noreply@minuteflow.click>`,
         to: [invoice.to_email],
-        subject: `Payment Receipt — Invoice ${invoice.invoice_number}`,
+        subject: `Payment Receipt — Invoice ${invoice.invoice_number} — ${fromName}`,
         html: receiptHtml,
       }),
     }).catch(() => {/* non-fatal */});
@@ -263,6 +275,7 @@ interface ReceiptEmailParams {
   isPaid: boolean;
   receiptUrl: string | null;
   currency: string;
+  brandName: string;
 }
 
 function buildReceiptEmail(p: ReceiptEmailParams): string {
@@ -275,7 +288,7 @@ function buildReceiptEmail(p: ReceiptEmailParams): string {
   <div style="max-width:560px;margin:0 auto;padding:32px 16px;">
     <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
       <div style="background:#1a1a2e;padding:28px 32px;text-align:center;">
-        <p style="margin:0;font-size:13px;color:#9ca3af;letter-spacing:0.05em;text-transform:uppercase;">MinuteFlow</p>
+        <p style="margin:0;font-size:13px;color:#9ca3af;letter-spacing:0.05em;text-transform:uppercase;">${p.brandName}</p>
         <h1 style="margin:8px 0 0;font-size:24px;color:#fff;font-weight:700;">Payment ${p.isPaid ? "Received" : "Recorded"}</h1>
       </div>
       <div style="padding:32px;">
