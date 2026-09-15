@@ -145,6 +145,11 @@ export async function POST(request: Request) {
   // with every other page that shows "how many hours does this person get
   // paid for" so they can't drift from what this route actually pays out.
   const byDate: Record<string, number> = {};
+  // What was actually worked on, alongside how long it took. Hours alone say
+  // nothing on a paystub for someone paid per task, or for anyone whose
+  // entries carry little or no duration — Rhealin's stub showed 0.58 hrs
+  // against $137.50 paid, with the 49 tasks behind it nowhere on the document.
+  const byTask: Record<string, { ms: number; entries: number; firstDate: string }> = {};
   let totalMs = 0;
 
   for (const log of entries) {
@@ -152,10 +157,21 @@ export async function POST(request: Request) {
     const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];
     const ms = Number(log.duration_ms);
     byDate[dateKey] = (byDate[dateKey] || 0) + ms;
+    const taskKey = ((log.task_name as string) || "Untitled task").trim();
+    if (!byTask[taskKey]) byTask[taskKey] = { ms: 0, entries: 0, firstDate: dateKey };
+    byTask[taskKey].ms += ms;
+    byTask[taskKey].entries += 1;
+    if (dateKey < byTask[taskKey].firstDate) byTask[taskKey].firstDate = dateKey;
     totalMs += ms;
   }
 
   const totalHours = totalMs / 3_600_000;
+
+  // Most time on top, so the biggest pieces of work read first; entries with
+  // no duration still appear, ordered by when they started.
+  const taskBreakdown = Object.entries(byTask)
+    .map(([task, t]) => ({ task, ms: t.ms, entries: t.entries, firstDate: t.firstDate }))
+    .sort((a, b) => b.ms - a.ms || a.firstDate.localeCompare(b.firstDate));
   const payRate = Number(vaProfile.pay_rate) || 0;
 
   // Rate-history-aware gross: each day is paid at the rate in effect that day.
@@ -311,6 +327,7 @@ export async function POST(request: Request) {
       monthWeekdays,
       attendance,
       suggestedGross,
+      taskBreakdown,
       // The client recomputes the suggestion locally as days are excused or
       // docked, so toggling a day doesn't cost a round trip (and doesn't have
       // to discard line items typed since the calculate). Same function, same
@@ -415,6 +432,7 @@ export async function POST(request: Request) {
       periodWeekdays,
       monthWeekdays,
       attendance,
+      taskBreakdown,
       grossPay,
       rateByDate,
       rateSegments: segments,
@@ -611,6 +629,7 @@ interface PaystubData {
   periodWeekdays?: number;
   monthWeekdays?: number;
   attendance?: AttendancePay | null;
+  taskBreakdown?: Array<{ task: string; ms: number; entries: number; firstDate: string }>;
   grossPay: number;
   rateByDate: Record<string, number>;
   rateSegments: RateSegment[];
@@ -640,7 +659,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, taskBreakdown, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
 
   // A salaried day has no per-day $ amount — hours are shown, the dollar
   // column is not, rather than misrepresenting the salary as an hourly price.
@@ -723,6 +742,29 @@ function buildPaystubEmail(data: PaystubData): string {
           </tbody>
         </table>
       </div>
+
+      ${(taskBreakdown ?? []).length > 0 ? `
+      <!-- Work Covered — what the pay was for, which hours alone don't say -->
+      <div style="padding: 24px 32px 0;">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Work Covered</div>
+        <table style="width: 100%; border-collapse: collapse; border: 1px solid #e8e0d4; border-radius: 8px; overflow: hidden;">
+          <thead>
+            <tr style="background: #faf6f0;">
+              <th style="padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Task</th>
+              <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Times</th>
+              <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Hours</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(taskBreakdown ?? []).map((t) => `
+            <tr>
+              <td style="padding: 9px 12px; font-size: 12px; color: #3d2b1f; border-bottom: 1px solid #f0e8dc;">${t.task}</td>
+              <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; text-align: right; border-bottom: 1px solid #f0e8dc;">${t.entries}&times;</td>
+              <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; text-align: right; border-bottom: 1px solid #f0e8dc;">${(t.ms / 3_600_000).toFixed(2)}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>` : ""}
 
       ${fixedAssignments.length > 0 ? `
       <!-- Output Based Assignments -->

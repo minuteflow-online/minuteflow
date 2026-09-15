@@ -59,6 +59,8 @@ interface PreviewData {
   grossPay: number;
   /** What the period calculates to, before any typed-in override. */
   suggestedGross?: number;
+  /** What was worked on in the period: task, how many times, how long. */
+  taskBreakdown?: Array<{ task: string; ms: number; entries: number; firstDate: string }>;
   byDate: Record<string, number>;
   rateByDate?: Record<string, number>;
   rateSegments?: RateSegment[];
@@ -1205,6 +1207,33 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   </table>
                 )}
               </div>
+
+              {/* Work Covered — what the pay was for. Hours alone say nothing
+                  on a stub for someone paid per task, or for anyone whose
+                  entries carry little duration. */}
+              {(preview.taskBreakdown ?? []).length > 0 && (
+                <div className="px-5 py-3 border-t border-linen">
+                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Work Covered</div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-bark/40 border-b border-linen">
+                        <th className="text-left pb-1.5 font-semibold">Task</th>
+                        <th className="text-right pb-1.5 font-semibold">Times</th>
+                        <th className="text-right pb-1.5 font-semibold">Hours</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(preview.taskBreakdown ?? []).map((t) => (
+                        <tr key={t.task} className="border-b border-linen/50">
+                          <td className="py-1.5 text-bark/70">{t.task}</td>
+                          <td className="py-1.5 text-right text-bark/50">{t.entries}&times;</td>
+                          <td className="py-1.5 text-right text-bark/70">{formatHours(t.ms)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* Fixed-Rate Assignments (legacy va_task_assignments) — always
                   included, no checkbox: this flow only ever fetches
