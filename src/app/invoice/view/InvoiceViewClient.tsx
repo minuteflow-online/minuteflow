@@ -64,10 +64,11 @@ interface OrgSettings {
   timezone: string | null;
 }
 
-type Tab = "summary" | "tasks" | "deliverables" | "time";
+type Tab = "summary" | "expenses" | "tasks" | "deliverables" | "time";
 
 const ALL_TABS: { id: Tab; label: string; icon?: string }[] = [
   { id: "summary", label: "Summary" },
+  { id: "expenses", label: "Reimbursables" },
   { id: "tasks", label: "Task Summary" },
   { id: "deliverables", label: "Deliverables" },
   { id: "time", label: "Time Allocation", icon: "⏱" },
@@ -212,9 +213,12 @@ export default function InvoiceViewClient({ token }: { token: string }) {
   /* ── Computed values ─────────────────────────────────── */
 
   const isCustomInvoice = invoice.invoice_type === "custom";
+  const hasExpenses = lineItems.some((li) => li.expense_id);
+  // Reimbursables get their own tab rather than a block under the Summary
+  // breakdown, but only on invoices that actually carry expenses.
   const TABS = isCustomInvoice
     ? ALL_TABS.filter((t) => t.id === "summary")
-    : ALL_TABS;
+    : ALL_TABS.filter((t) => t.id !== "expenses" || hasExpenses);
 
   // Separate time entries from expense line items
   const timeItems = lineItems.filter((li) => !li.expense_id);
@@ -588,56 +592,6 @@ export default function InvoiceViewClient({ token }: { token: string }) {
               </div>
             )}
 
-            {/* Reimbursable Expenses — shown in Summary tab above task/deliverable tabs */}
-            {lineItems.some((li) => li.expense_id) && (
-              <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-[#8a6a10] mb-3">Reimbursable Expenses</div>
-                <table className="w-full text-[12px]">
-                  <thead>
-                    <tr className="border-b border-[#f0e8d0] text-[10px] font-semibold uppercase tracking-wider text-[#8a6a10]">
-                      <th className="pb-2 text-left px-1">Date</th>
-                      <th className="pb-2 text-left px-2">Description</th>
-                      <th className="pb-2 text-right px-1">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lineItems.filter((li) => li.expense_id).map((li, i) => (
-                      <tr key={i} className="border-b border-[#faf6f0] last:border-0">
-                        <td className="py-2 px-1 text-[#6b5e52] text-[11px] whitespace-nowrap">{li.service_date || "—"}</td>
-                        <td className="py-2 px-2 text-[#3d2b1f]">
-                          <span className="flex items-center gap-1">
-                            {li.description}
-                            {li.client_memo && (
-                              <span className="relative inline-block flex-shrink-0">
-                                <button
-                                  onClick={() => setOpenExpenseNoteIdx(openExpenseNoteIdx === i ? null : i)}
-                                  className="w-4 h-4 rounded-full bg-[#e8d8a0] text-[#8a6a10] text-[9px] font-bold inline-flex items-center justify-center hover:bg-[#d4c070] cursor-pointer leading-none"
-                                >?</button>
-                                {openExpenseNoteIdx === i && (
-                                  <div className="absolute z-20 left-5 top-0 bg-white border border-[#e8d8a0] rounded-lg shadow-lg p-2.5 text-[11px] text-[#3d2b1f] w-52 whitespace-pre-wrap">
-                                    {li.client_memo}
-                                  </div>
-                                )}
-                              </span>
-                            )}
-                          </span>
-                        </td>
-                        <td className="py-2 px-1 text-right font-semibold text-[#3d2b1f]">{formatCurrency(Number(li.amount), invoice.currency)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t border-[#e8d8a0]">
-                      <td colSpan={2} className="pt-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-[#8a6a10]">Total Reimbursable</td>
-                      <td className="pt-2 px-1 text-right font-bold text-[#3d2b1f]">
-                        {formatCurrency(lineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0), invoice.currency)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-
             {/* Notes */}
             {invoice.notes && (
               <div className="bg-white border-x border-[#e8e0d4] px-8 py-4">
@@ -649,6 +603,58 @@ export default function InvoiceViewClient({ token }: { token: string }) {
             {/* Bottom border */}
             <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl h-4" />
         </div>
+
+        {/* ── Tab: Reimbursables ── */}
+        {hasExpenses && (
+          <div className={`invoice-tab-section ${activeTab === "expenses" ? "" : "hidden"}`}>
+            <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl px-6 py-5">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-[#8a6a10] mb-3">Reimbursable Expenses</div>
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="border-b border-[#f0e8d0] text-[10px] font-semibold uppercase tracking-wider text-[#8a6a10]">
+                    <th className="pb-2 text-left px-1">Date</th>
+                    <th className="pb-2 text-left px-2">Description</th>
+                    <th className="pb-2 text-right px-1">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.filter((li) => li.expense_id).map((li, i) => (
+                    <tr key={i} className="border-b border-[#faf6f0] last:border-0">
+                      <td className="py-2 px-1 text-[#6b5e52] text-[11px] whitespace-nowrap">{li.service_date || "—"}</td>
+                      <td className="py-2 px-2 text-[#3d2b1f]">
+                        <span className="flex items-center gap-1">
+                          {li.description}
+                          {li.client_memo && (
+                            <span className="relative inline-block flex-shrink-0">
+                              <button
+                                onClick={() => setOpenExpenseNoteIdx(openExpenseNoteIdx === i ? null : i)}
+                                className="w-4 h-4 rounded-full bg-[#e8d8a0] text-[#8a6a10] text-[9px] font-bold inline-flex items-center justify-center hover:bg-[#d4c070] cursor-pointer leading-none"
+                              >?</button>
+                              {openExpenseNoteIdx === i && (
+                                <div className="absolute z-20 left-5 top-0 bg-white border border-[#e8d8a0] rounded-lg shadow-lg p-2.5 text-[11px] text-[#3d2b1f] w-52 whitespace-pre-wrap">
+                                  {li.client_memo}
+                                </div>
+                              )}
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="py-2 px-1 text-right font-semibold text-[#3d2b1f]">{formatCurrency(Number(li.amount), invoice.currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-[#e8d8a0]">
+                    <td colSpan={2} className="pt-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-[#8a6a10]">Total Reimbursable</td>
+                    <td className="pt-2 px-1 text-right font-bold text-[#3d2b1f]">
+                      {formatCurrency(lineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0), invoice.currency)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* ── Tab: Task Summary ── */}
         <div className={`invoice-tab-section ${activeTab === "tasks" ? "" : "hidden"}`}>
