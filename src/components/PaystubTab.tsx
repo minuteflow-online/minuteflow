@@ -57,6 +57,8 @@ interface PreviewData {
   periodStart?: string;
   periodEnd?: string;
   grossPay: number;
+  /** What the period calculates to, before any typed-in override. */
+  suggestedGross?: number;
   byDate: Record<string, number>;
   rateByDate?: Record<string, number>;
   rateSegments?: RateSegment[];
@@ -284,6 +286,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   // Per-day payroll decisions for a salaried VA: excused (no effect either
   // way) or unpaid (docked). Cleared whenever the VA or period changes.
   const [dayDecisions, setDayDecisions] = useState<Record<string, DayDecision>>({});
+  // Typed-in Gross Pay. Empty means "use the calculated figure".
+  const [grossOverride, setGrossOverride] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -433,7 +437,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const handleCalculate = useCallback(async (opts?: { resetOutputSelections?: boolean }) => {
     setError(null);
     setPreview(null);
-    setDayDecisions({});
+    setDayDecisions({}); setGrossOverride("");
     setSent(false);
     setDraftSaved(false);
     // Default true: a fresh calculate is normally a new VA or period, so any
@@ -656,6 +660,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           // Days excused or docked in the preview, so the route recomputes the
           // salary the same way and the emailed stub agrees with what was shown.
           day_decisions: dayDecisions,
+          // Empty means take the calculated figure; a number means pay that.
+          gross_override: grossOverride === "" ? null : parseFloat(grossOverride),
           custom_amount: (() => {
             const outputItems = (preview?.fixedAssignments ?? []).filter((a) => a.source === "fixed_pay_task");
             const checkedTotal = outputItems
@@ -707,7 +713,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds, dayDecisions]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds, dayDecisions, grossOverride]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -917,7 +923,14 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
   // A day excused or docked changes the salary, and everything downstream of
   // it, before anything is sent.
-  const salaryGross = attendance ? attendance.suggestedGross : preview?.grossPay ?? 0;
+  // What the calculation suggests, and what it's actually worth. They differ
+  // whenever the logged time isn't the basis of the pay — hours logged short of
+  // what was agreed, a flat amount, part of another cycle settled here. The
+  // typed figure wins, and it's what goes on the stub, the email and the PDF.
+  const suggestedGross = attendance ? attendance.suggestedGross : preview?.suggestedGross ?? preview?.grossPay ?? 0;
+  const salaryGross = grossOverride !== "" && Number.isFinite(parseFloat(grossOverride))
+    ? parseFloat(grossOverride)
+    : suggestedGross;
   const effectiveTotalGrossPay = preview
     ? (preview.totalGrossPay ?? preview.grossPay) -
       (preview.grossPay ?? 0) +
@@ -946,7 +959,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </label>
             <select
               value={selectedUserId}
-              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); setPersonalMessage(""); }}
+              onChange={(e) => { setSelectedUserId(e.target.value); setPreview(null); setDayDecisions({}); setGrossOverride(""); setSent(false); setDraftSaved(false); setPersonalMessage(""); }}
               className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
             >
               <option value="">— Select VA —</option>
@@ -965,7 +978,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </label>
             <select
               value={preset}
-              onChange={(e) => { setPreset(e.target.value as PeriodPreset); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); }}
+              onChange={(e) => { setPreset(e.target.value as PeriodPreset); setPreview(null); setDayDecisions({}); setGrossOverride(""); setSent(false); setDraftSaved(false); }}
               className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
             >
               {PRESET_OPTIONS.map((o) => (
@@ -982,7 +995,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 <input
                   type="date"
                   value={customStart}
-                  onChange={(e) => { setCustomStart(e.target.value); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); }}
+                  onChange={(e) => { setCustomStart(e.target.value); setPreview(null); setDayDecisions({}); setGrossOverride(""); setSent(false); setDraftSaved(false); }}
                   className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                 />
               </div>
@@ -991,7 +1004,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 <input
                   type="date"
                   value={customEnd}
-                  onChange={(e) => { setCustomEnd(e.target.value); setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); }}
+                  onChange={(e) => { setCustomEnd(e.target.value); setPreview(null); setDayDecisions({}); setGrossOverride(""); setSent(false); setDraftSaved(false); }}
                   className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                 />
               </div>
@@ -1055,7 +1068,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
               </div>
               <button
-                onClick={() => { setPreview(null); setDayDecisions({}); setSent(false); setDraftSaved(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); setPersonalMessage(""); setConfirmationNumber(""); lastMessageOwnerRef.current = null; }}
+                onClick={() => { setPreview(null); setDayDecisions({}); setGrossOverride(""); setSent(false); setDraftSaved(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); setPersonalMessage(""); setConfirmationNumber(""); lastMessageOwnerRef.current = null; }}
                 className="text-xs text-terracotta underline underline-offset-2 shrink-0"
               >
                 Send another
@@ -1424,8 +1437,36 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                         ? `Prorated Pay (${preview.periodWeekdays} of ${preview.monthWeekdays} weekdays)`
                         : "Time-based Pay"}
                   </span>
-                  <span>{formatCurrency(salaryGross)}</span>
+                  <span className="flex items-center gap-1">
+                    <span className="text-bark/40">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={grossOverride}
+                      onChange={(e) => setGrossOverride(e.target.value)}
+                      placeholder={suggestedGross.toFixed(2)}
+                      title="Calculated from the period. Type a figure to pay something else."
+                      className="w-24 rounded-lg border border-sand bg-white px-2 py-1 text-right text-[12px] text-espresso outline-none focus:border-terracotta"
+                    />
+                  </span>
                 </div>
+                {/* Only worth saying when the two disagree — otherwise the
+                    placeholder already shows the calculated figure. */}
+                {grossOverride !== "" && Math.abs(salaryGross - suggestedGross) > 0.005 && (
+                  <div className="flex justify-between items-center text-[10px] text-bark/40 mb-1">
+                    <span>calculated from logged time</span>
+                    <span className="flex items-center gap-2">
+                      {formatCurrency(suggestedGross)}
+                      <button
+                        onClick={() => setGrossOverride("")}
+                        className="underline hover:text-terracotta cursor-pointer"
+                      >
+                        use this
+                      </button>
+                    </span>
+                  </div>
+                )}
                 {effectiveFixedTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                     <span>Output Based Assignments</span>

@@ -66,6 +66,11 @@ export async function POST(request: Request) {
     // "excused" (neither pays nor deducts) or "unpaid" (deducts regardless of
     // logged time). Anything absent is decided by whether they clocked in.
     day_decisions = {},
+    // What the pay is actually worth this period, when the computed figure
+    // isn't it — hours logged short of what was agreed, a flat amount, part of
+    // another cycle settled here. The calculation is a suggestion; this is the
+    // decision. Absent or null means take the computed figure.
+    gross_override,
   } = body;
   const includedOutputItemIds = new Set<number>(
     Array.isArray(included_output_item_ids) ? included_output_item_ids.map((id: number) => Number(id)) : []
@@ -179,7 +184,13 @@ export async function POST(request: Request) {
         decisions: day_decisions as Record<string, DayDecision>,
       })
     : null;
-  const grossPay = attendance ? attendance.suggestedGross : rateBasedGross;
+  const suggestedGross = attendance ? attendance.suggestedGross : rateBasedGross;
+  const overrideGross = gross_override === null || gross_override === undefined || gross_override === ""
+    ? null
+    : Number(gross_override);
+  const grossPay = overrideGross != null && Number.isFinite(overrideGross) && overrideGross >= 0
+    ? overrideGross
+    : suggestedGross;
 
   // Snapshot by_date carries the per-day rate so portal/print can display
   // correct amounts without re-querying history. Legacy snapshots hold
@@ -299,6 +310,7 @@ export async function POST(request: Request) {
       periodWeekdays,
       monthWeekdays,
       attendance,
+      suggestedGross,
       // The client recomputes the suggestion locally as days are excused or
       // docked, so toggling a day doesn't cost a round trip (and doesn't have
       // to discard line items typed since the calculate). Same function, same
