@@ -193,13 +193,21 @@ export async function POST(request: Request) {
   }));
   const previousTotal = previousPayments.reduce((sum, p) => sum + p.amount, 0);
 
+  // Upper bound only — old unpaid work is meant to keep surfacing until it's
+  // paid (see comment below), but nothing dated after the period being run
+  // belongs in it. Without this, generating Rhea's August paystub pulled in
+  // September items too, since neither Output Based query filtered by date
+  // at all.
+  const outputItemDateCutoff = `${end_date}T23:59:59.999`;
+
   // Fetch fixed-rate assignments that are approved or completed (not yet paid)
   const { data: fixedAssignmentsRaw } = await adminClient
     .from("va_task_assignments")
     .select("id, rate, quantity_claimed, status, assigned_at, project_task_assignments(task_library(task_name), project_tags(account, project_name))")
     .eq("va_id", user_id)
     .eq("billing_type", "fixed")
-    .in("status", ["approved", "completed"]);
+    .in("status", ["approved", "completed"])
+    .lte("assigned_at", outputItemDateCutoff);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fixedAssignments = (fixedAssignmentsRaw ?? []).map((a: any) => ({
@@ -231,7 +239,8 @@ export async function POST(request: Request) {
     .select("id, task_name, account, category, rate, status, updated_at")
     .eq("claimed_by", user_id)
     .not("status", "in", '("cancelled","paid")')
-    .is("deleted_at", null);
+    .is("deleted_at", null)
+    .lte("updated_at", outputItemDateCutoff);
 
   const fixedPayTaskItems = (fixedPayTasksRaw ?? []).map((t) => ({
     id: t.id as number,
