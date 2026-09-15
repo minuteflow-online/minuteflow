@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
   const { data: invoice, error } = await serviceClient
     .from("invoices")
-    .select("invoice_number, to_name, to_email, total, currency")
+    .select("invoice_number, to_name, to_email, total, currency, from_name, dba")
     .eq("id", invoiceId)
     .single();
 
@@ -59,6 +59,16 @@ export async function POST(request: Request) {
   if (!invoice.to_email) {
     return Response.json({ ok: true, skipped: "no client email on invoice" });
   }
+
+  // Same branding source as the invoice send/reminder emails — clients should
+  // see the business they hired, not the internal tool name.
+  const { data: orgSettings } = await serviceClient
+    .from("organization_settings")
+    .select("registered_business_name, dba")
+    .limit(1)
+    .single();
+  const fromName = invoice.from_name || "Toni Colina";
+  const brandName = invoice.dba || orgSettings?.dba || orgSettings?.registered_business_name || fromName;
 
   const total = Number(invoice.total);
   const paid = Number(newAmountPaid ?? amountPaid ?? 0);
@@ -76,7 +86,7 @@ export async function POST(request: Request) {
   <div style="max-width:560px;margin:0 auto;padding:32px 16px;">
     <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
       <div style="background:#1a1a2e;padding:28px 32px;text-align:center;">
-        <p style="margin:0;font-size:13px;color:#9ca3af;letter-spacing:0.05em;text-transform:uppercase;">MinuteFlow</p>
+        <p style="margin:0;font-size:13px;color:#9ca3af;letter-spacing:0.05em;text-transform:uppercase;">${brandName}</p>
         <h1 style="margin:8px 0 0;font-size:24px;color:#fff;font-weight:700;">Payment ${isPaid ? "Received" : "Recorded"}</h1>
       </div>
       <div style="padding:32px;">
@@ -122,9 +132,9 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "MinuteFlow <noreply@minuteflow.click>",
+      from: `${fromName} <noreply@minuteflow.click>`,
       to: [invoice.to_email],
-      subject: `Payment Receipt — Invoice ${invoice.invoice_number}`,
+      subject: `Payment Receipt — Invoice ${invoice.invoice_number} — ${fromName}`,
       html,
     }),
   });
