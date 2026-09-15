@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
@@ -307,6 +307,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [personalMessage, setPersonalMessage] = useState<string>("");
   const [confirmationNumber, setConfirmationNumber] = useState<string>("");
   const [paymentDate, setPaymentDate] = useState<string>(todayIso);
+  // Which VA the Personal Message / Confirmation # currently in the boxes
+  // belong to — cleared only when that actually changes, so recalculating
+  // for the SAME VA (e.g. after adding a line item) never wipes a message
+  // she's mid-typing, but pulling up a different VA never carries over the
+  // last person's thank-you note or payment confirmation code either.
+  const lastMessageOwnerRef = useRef<string | null>(null);
 
   // Paystub history
   const [history, setHistory] = useState<PaystubSnapshot[]>([]);
@@ -426,6 +432,16 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     if (!selectedUserId) { setError("Please select a VA."); return; }
     const range = getRange();
     if (!range || !range.start || !range.end) { setError("Please select a valid pay period."); return; }
+
+    // A different VA than whoever the boxes were last filled in for — clear
+    // both before this pull, so the previous person's note/confirmation code
+    // never lands on the wrong paystub. Same VA (recalculating after a line
+    // item edit, etc.) leaves them alone.
+    if (lastMessageOwnerRef.current !== selectedUserId) {
+      setPersonalMessage("");
+      setConfirmationNumber("");
+    }
+    lastMessageOwnerRef.current = selectedUserId;
 
     setCustomLineItems([]);
     setFee("");
@@ -998,7 +1014,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
               </div>
               <button
-                onClick={() => { setPreview(null); setSent(false); setDraftSaved(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); }}
+                onClick={() => { setPreview(null); setSent(false); setDraftSaved(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); setPersonalMessage(""); setConfirmationNumber(""); lastMessageOwnerRef.current = null; }}
                 className="text-xs text-terracotta underline underline-offset-2 shrink-0"
               >
                 Send another
