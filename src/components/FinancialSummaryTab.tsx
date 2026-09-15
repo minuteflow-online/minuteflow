@@ -116,6 +116,8 @@ interface ExpenseRow {
   settled_date: string | null;
   date_recorded: string | null;
   date_billed: string | null;
+  is_recurring: boolean;
+  recurrence_end_date: string | null;
 }
 
 /* ── Constants ──────────────────────────────────────────── */
@@ -281,6 +283,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const [editingVaPayment, setEditingVaPayment] = useState<VaPaymentRow | null>(null);
   const [showClientPaymentModal, setShowClientPaymentModal] = useState<string | null>(null); // account name
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<ExpenseRow | null>(null);
   const [showExpenseUpload, setShowExpenseUpload] = useState(false);
   const [showTimeLogUpload, setShowTimeLogUpload] = useState(false);
 
@@ -374,7 +377,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .order("payment_date", { ascending: false }),
       supabase
         .from("financial_expenses")
-        .select("id, account, description, amount, expense_date, category, is_reimbursable, reimbursed, notes, settled_date, date_recorded, date_billed")
+        .select("id, account, description, amount, expense_date, category, is_reimbursable, reimbursed, notes, settled_date, date_recorded, date_billed, is_recurring, recurrence_end_date")
         .gte("expense_date", startDate)
         .lte("expense_date", endDate)
         .order("expense_date", { ascending: false }),
@@ -1218,24 +1221,32 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     settled_date: string; date_recorded: string; date_billed: string;
     is_recurring: boolean; recurrence_end_date: string;
   }) => {
-    const { error } = await supabase.from("financial_expenses").insert({
+    const payload = {
       account: form.account || null,
       description: form.description,
       amount: parseFloat(form.amount),
       expense_date: form.expense_date,
       category: form.category,
       is_reimbursable: form.is_reimbursable,
-      reimbursed: false,
       notes: form.notes || null,
       settled_date: form.settled_date || null,
       date_recorded: form.date_recorded || null,
       date_billed: form.date_billed || null,
       is_recurring: form.is_recurring,
       recurrence_end_date: form.recurrence_end_date || null,
-    });
+    };
+    const { error } = editingExpense
+      ? await supabase.from("financial_expenses").update(payload).eq("id", editingExpense.id)
+      : await supabase.from("financial_expenses").insert({ ...payload, reimbursed: false });
     if (error) { alert("Error saving expense: " + error.message); return; }
     setShowExpenseModal(false);
+    setEditingExpense(null);
     fetchData();
+  };
+
+  const startEditExpense = (exp: ExpenseRow) => {
+    setEditingExpense(exp);
+    setShowExpenseModal(true);
   };
 
   const deleteVaPayment = async (paymentId: number) => {
@@ -2182,7 +2193,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                   ↑ Upload CSV
                 </button>
                 <button
-                  onClick={() => setShowExpenseModal(true)}
+                  onClick={() => { setEditingExpense(null); setShowExpenseModal(true); }}
                   className="rounded-lg bg-amber-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-amber-700 transition-colors cursor-pointer"
                 >
                   + Add Expense
@@ -2313,7 +2324,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                 <span className="text-bark/40 text-[10px]">—</span>
                               )}
                             </td>
-                            <td className="px-3 py-3">
+                            <td className="px-3 py-3 whitespace-nowrap">
+                              <button
+                                onClick={() => startEditExpense(exp)}
+                                className="text-bark/40 hover:text-terracotta text-[10px] cursor-pointer mr-2"
+                                title="Edit"
+                              >
+                                ✏️
+                              </button>
                               <button
                                 onClick={() => deleteExpense(exp.id)}
                                 className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
@@ -2489,7 +2507,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
           accounts={activeAccountNames}
           accountToClientName={accountNameToClientName}
           defaultDate={new Date().toISOString().slice(0, 10)}
-          onClose={() => setShowExpenseModal(false)}
+          initialExpense={editingExpense}
+          onClose={() => { setShowExpenseModal(false); setEditingExpense(null); }}
           onSave={saveExpense}
         />
       )}
@@ -2820,12 +2839,14 @@ function ExpenseModal({
   accounts,
   accountToClientName,
   defaultDate,
+  initialExpense,
   onClose,
   onSave,
 }: {
   accounts: string[];
   accountToClientName: Record<string, string>;
   defaultDate: string;
+  initialExpense?: ExpenseRow | null;
   onClose: () => void;
   onSave: (form: {
     description: string; amount: string; expense_date: string;
@@ -2834,19 +2855,24 @@ function ExpenseModal({
     is_recurring: boolean; recurrence_end_date: string;
   }) => void;
 }) {
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [expenseDate, setExpenseDate] = useState(defaultDate);
-  const [settledDate, setSettledDate] = useState("");
-  const [dateRecorded, setDateRecorded] = useState(defaultDate);
-  const [dateBilled, setDateBilled] = useState("");
-  const [category, setCategory] = useState("other");
-  const [customCategory, setCustomCategory] = useState("");
-  const [account, setAccount] = useState("");
-  const [isReimbursable, setIsReimbursable] = useState(false);
-  const [notes, setNotes] = useState("");
-  const [isRecurring, setIsRecurring] = useState(false);
-  const [recurrenceEndDate, setRecurrenceEndDate] = useState("");
+  const isEditing = Boolean(initialExpense);
+  const [description, setDescription] = useState(initialExpense?.description ?? "");
+  const [amount, setAmount] = useState(initialExpense ? String(initialExpense.amount) : "");
+  const [expenseDate, setExpenseDate] = useState(initialExpense?.expense_date ?? defaultDate);
+  const [settledDate, setSettledDate] = useState(initialExpense?.settled_date ?? "");
+  const [dateRecorded, setDateRecorded] = useState(initialExpense?.date_recorded ?? defaultDate);
+  const [dateBilled, setDateBilled] = useState(initialExpense?.date_billed ?? "");
+  const [category, setCategory] = useState(
+    initialExpense && !EXPENSE_CATEGORIES.some((c) => c.value === initialExpense.category) ? "custom" : (initialExpense?.category ?? "other")
+  );
+  const [customCategory, setCustomCategory] = useState(
+    initialExpense && !EXPENSE_CATEGORIES.some((c) => c.value === initialExpense.category) ? initialExpense.category : ""
+  );
+  const [account, setAccount] = useState(initialExpense?.account ?? "");
+  const [isReimbursable, setIsReimbursable] = useState(initialExpense?.is_reimbursable ?? false);
+  const [notes, setNotes] = useState(initialExpense?.notes ?? "");
+  const [isRecurring, setIsRecurring] = useState(initialExpense?.is_recurring ?? false);
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState(initialExpense?.recurrence_end_date ?? "");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -2866,7 +2892,7 @@ function ExpenseModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-full max-w-md rounded-xl border border-sand bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-bold text-espresso mb-4">Add Expense</h3>
+        <h3 className="text-sm font-bold text-espresso mb-4">{isEditing ? "Edit Expense" : "Add Expense"}</h3>
         <div className="space-y-3">
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Description</label>
@@ -2967,7 +2993,7 @@ function ExpenseModal({
           </button>
           <button onClick={handleSave} disabled={saving}
             className="rounded-lg bg-amber-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-amber-700 transition-colors disabled:opacity-50 cursor-pointer">
-            {saving ? "Saving..." : "Save Expense"}
+            {saving ? "Saving..." : isEditing ? "Save Changes" : "Save Expense"}
           </button>
         </div>
       </div>
