@@ -1825,11 +1825,15 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                   color="text-amber-600"
                 />
                 <SummaryCard
-                  label="Net Margin"
+                  // "Net Margin" and "Revenue" are the right accounting words
+                  // and the wrong dashboard ones: revenue reads as takings
+                  // after costs to most people, which is what profit is. Say
+                  // which is which instead of assuming the vocabulary.
+                  label="Net Profit"
                   value={fmtMoney(profitData.netCash)}
                   sub={
                     profitData.revenue > 0
-                      ? `${profitData.marginCash.toFixed(1)}% of billed`
+                      ? `after VA pay & expenses · ${profitData.marginCash.toFixed(1)}% margin`
                       : "nothing billed this month"
                   }
                   color={profitData.netCash >= 0 ? "text-sage" : "text-red-500"}
@@ -1853,9 +1857,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                   color={profitData.vaPayable > 0.01 ? "text-amber-600" : "text-sage"}
                 />
                 <SummaryCard
-                  label="Revenue"
+                  label="Billed This Month"
                   value={fmtMoney(profitData.revenue)}
-                  sub={revenueData.hasUnsetRates ? "Some rates not set" : fmtHours(revenueData.totalMs) + " billed"}
+                  sub={revenueData.hasUnsetRates ? "before costs · some rates not set" : "invoices issued, before costs"}
                   color="text-sage"
                 />
                 <SummaryCard
