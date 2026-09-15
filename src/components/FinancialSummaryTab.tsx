@@ -1157,6 +1157,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     description: string; amount: string; expense_date: string;
     category: string; account: string; is_reimbursable: boolean; notes: string;
     settled_date: string; date_recorded: string; date_billed: string;
+    is_recurring: boolean; recurrence_end_date: string;
   }) => {
     const { error } = await supabase.from("financial_expenses").insert({
       account: form.account || null,
@@ -1170,6 +1171,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       settled_date: form.settled_date || null,
       date_recorded: form.date_recorded || null,
       date_billed: form.date_billed || null,
+      is_recurring: form.is_recurring,
+      recurrence_end_date: form.recurrence_end_date || null,
     });
     if (error) { alert("Error saving expense: " + error.message); return; }
     setShowExpenseModal(false);
@@ -2763,6 +2766,7 @@ function ExpenseModal({
     description: string; amount: string; expense_date: string;
     category: string; account: string; is_reimbursable: boolean; notes: string;
     settled_date: string; date_recorded: string; date_billed: string;
+    is_recurring: boolean; recurrence_end_date: string;
   }) => void;
 }) {
   const [description, setDescription] = useState("");
@@ -2776,6 +2780,8 @@ function ExpenseModal({
   const [account, setAccount] = useState("");
   const [isReimbursable, setIsReimbursable] = useState(false);
   const [notes, setNotes] = useState("");
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState("");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -2784,7 +2790,11 @@ function ExpenseModal({
     const finalCategory = category === "custom" ? (customCategory.trim().toLowerCase() || "other") : category;
     if (category === "custom" && !customCategory.trim()) { alert("Please enter a custom category name."); return; }
     setSaving(true);
-    await onSave({ description, amount, expense_date: expenseDate, category: finalCategory, account, is_reimbursable: isReimbursable, notes, settled_date: settledDate, date_recorded: dateRecorded, date_billed: dateBilled });
+    await onSave({
+      description, amount, expense_date: expenseDate, category: finalCategory, account, is_reimbursable: isReimbursable, notes,
+      settled_date: settledDate, date_recorded: dateRecorded, date_billed: dateBilled,
+      is_recurring: isRecurring, recurrence_end_date: isRecurring ? recurrenceEndDate : "",
+    });
     setSaving(false);
   };
 
@@ -2863,6 +2873,22 @@ function ExpenseModal({
             <label htmlFor="reimbursable" className="text-[12px] text-bark cursor-pointer">
               This is reimbursable (can be billed to client)
             </label>
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="recurring" checked={isRecurring} onChange={(e) => setIsRecurring(e.target.checked)}
+                className="rounded border-sand" />
+              <label htmlFor="recurring" className="text-[12px] text-bark cursor-pointer">
+                Repeat monthly (auto-adds a new one on this same day each month)
+              </label>
+            </div>
+            {isRecurring && (
+              <div className="mt-2">
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Stop repeating after (optional)</label>
+                <input type="date" value={recurrenceEndDate} onChange={(e) => setRecurrenceEndDate(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Notes</label>

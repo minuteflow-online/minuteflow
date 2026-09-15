@@ -22,6 +22,10 @@
       "schedule": "0 8 1 * *"
     },
     {
+      "path": "/api/cron/generate-recurring-expenses",
+      "schedule": "0 8 1 * *"
+    },
+    {
       "path": "/api/cron/generate-paystubs",
       "schedule": "0 8 1,16 * *"
     },
