@@ -61,6 +61,9 @@ interface PreviewData {
   suggestedGross?: number;
   /** What was worked on in the period: task, how many times, how long. */
   taskBreakdown?: Array<{ task: string; ms: number; entries: number; firstDate: string }>;
+  /** Output work already settled inside the period — shown, never re-paid. */
+  paidOutputItems?: Array<{ id: number; task_name: string; account: string; rate: number; amount: number; settled_on: string | null }>;
+  paidOutputTotal?: number;
   byDate: Record<string, number>;
   rateByDate?: Record<string, number>;
   rateSegments?: RateSegment[];
@@ -1228,6 +1231,29 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           <td className="py-1.5 text-bark/70">{t.task}</td>
                           <td className="py-1.5 text-right text-bark/50">{t.entries}&times;</td>
                           <td className="py-1.5 text-right text-bark/70">{formatHours(t.ms)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Output work already settled in this period — listed so the
+                  stub shows what the money was for, not added to the total,
+                  which would pay it a second time. */}
+              {(preview.paidOutputItems ?? []).length > 0 && (
+                <div className="px-5 py-3 border-t border-linen">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-bark/50 uppercase tracking-wide">Output Based Work — Already Paid</span>
+                    <span className="text-xs font-semibold text-bark/70">{formatCurrency(preview.paidOutputTotal ?? 0)}</span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {(preview.paidOutputItems ?? []).map((t) => (
+                        <tr key={t.id} className="border-b border-linen/50">
+                          <td className="py-1.5 text-bark/70">{t.task_name}</td>
+                          <td className="py-1.5 text-right text-bark/40 whitespace-nowrap">{t.settled_on ?? "—"}</td>
+                          <td className="py-1.5 text-right text-bark/70 w-20">{formatCurrency(t.amount)}</td>
                         </tr>
                       ))}
                     </tbody>

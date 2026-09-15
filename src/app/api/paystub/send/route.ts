@@ -289,6 +289,30 @@ export async function POST(request: Request) {
     .is("deleted_at", null)
     .lte("updated_at", outputItemDateCutoff);
 
+  // Output work already marked paid, settled inside this period. It is
+  // deliberately kept out of the payable items above — paying it twice is the
+  // thing that filter exists to prevent — but leaving it off the document
+  // entirely meant an output-based VA got a paystub showing no work at all.
+  // Rhealin's covered 19 paid tasks worth $135.38 and listed none of them.
+  const { data: paidOutputRaw } = await adminClient
+    .from("fixed_pay_tasks")
+    .select("id, task_name, account, category, rate, status, updated_at")
+    .eq("claimed_by", user_id)
+    .eq("status", "paid")
+    .is("deleted_at", null)
+    .gte("updated_at", `${start_date}T00:00:00.000`)
+    .lte("updated_at", outputItemDateCutoff);
+
+  const paidOutputItems = (paidOutputRaw ?? []).map((t) => ({
+    id: t.id as number,
+    task_name: (t.task_name as string) ?? "Output Based Task",
+    account: (t.account as string) ?? "",
+    rate: Number(t.rate) || 0,
+    amount: Number(t.rate) || 0,
+    settled_on: (t.updated_at as string)?.slice(0, 10) ?? null,
+  }));
+  const paidOutputTotal = paidOutputItems.reduce((sum, t) => sum + t.amount, 0);
+
   const fixedPayTaskItems = (fixedPayTasksRaw ?? []).map((t) => ({
     id: t.id as number,
     task_name: (t.task_name as string) ?? "Output Based Task",
@@ -328,6 +352,8 @@ export async function POST(request: Request) {
       attendance,
       suggestedGross,
       taskBreakdown,
+      paidOutputItems,
+      paidOutputTotal,
       // The client recomputes the suggestion locally as days are excused or
       // docked, so toggling a day doesn't cost a round trip (and doesn't have
       // to discard line items typed since the calculate). Same function, same
@@ -433,6 +459,8 @@ export async function POST(request: Request) {
       monthWeekdays,
       attendance,
       taskBreakdown,
+      paidOutputItems,
+      paidOutputTotal,
       grossPay,
       rateByDate,
       rateSegments: segments,
@@ -630,6 +658,8 @@ interface PaystubData {
   monthWeekdays?: number;
   attendance?: AttendancePay | null;
   taskBreakdown?: Array<{ task: string; ms: number; entries: number; firstDate: string }>;
+  paidOutputItems?: Array<{ id: number; task_name: string; account: string; rate: number; amount: number; settled_on: string | null }>;
+  paidOutputTotal?: number;
   grossPay: number;
   rateByDate: Record<string, number>;
   rateSegments: RateSegment[];
@@ -659,7 +689,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, taskBreakdown, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, taskBreakdown, paidOutputItems, paidOutputTotal, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
 
   // A salaried day has no per-day $ amount — hours are shown, the dollar
   // column is not, rather than misrepresenting the salary as an hourly price.
@@ -762,6 +792,34 @@ function buildPaystubEmail(data: PaystubData): string {
               <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; text-align: right; border-bottom: 1px solid #f0e8dc;">${t.entries}&times;</td>
               <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; text-align: right; border-bottom: 1px solid #f0e8dc;">${(t.ms / 3_600_000).toFixed(2)}</td>
             </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>` : ""}
+
+      ${(paidOutputItems ?? []).length > 0 ? `
+      <!-- Output work already settled in this period. Listed, not added: it is
+           already paid, and the total below must not bill it twice. -->
+      <div style="padding: 24px 32px 0;">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Output Based Work — Already Paid</div>
+        <table style="width: 100%; border-collapse: collapse; border: 1px solid #e8e0d4; border-radius: 8px; overflow: hidden;">
+          <thead>
+            <tr style="background: #faf6f0;">
+              <th style="padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Task</th>
+              <th style="padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Settled</th>
+              <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(paidOutputItems ?? []).map((t) => `
+            <tr>
+              <td style="padding: 9px 12px; font-size: 12px; color: #3d2b1f; border-bottom: 1px solid #f0e8dc;">${t.task_name}</td>
+              <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; border-bottom: 1px solid #f0e8dc;">${t.settled_on ?? "—"}</td>
+              <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; text-align: right; border-bottom: 1px solid #f0e8dc;">${formatCurrency(t.amount)}</td>
+            </tr>`).join("")}
+            <tr style="background: #faf6f0;">
+              <td colspan="2" style="padding: 9px 12px; font-size: 11px; font-weight: 600; color: #6b5e52;">Total Output Work Paid</td>
+              <td style="padding: 9px 12px; font-size: 12px; font-weight: 600; color: #3d2b1f; text-align: right;">${formatCurrency(paidOutputTotal ?? 0)}</td>
+            </tr>
           </tbody>
         </table>
       </div>` : ""}
