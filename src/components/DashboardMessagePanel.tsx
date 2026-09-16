@@ -14,6 +14,7 @@
 //               place to reach the same oversight, not a different feature.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getInitials, getAvatarColor } from "@/lib/utils";
 import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachment } from "@/components/AttachmentComposer";
@@ -119,6 +120,12 @@ function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; s
 }
 
 export default function DashboardMessagePanel({ currentUserId, canModerate = false }: { currentUserId: string; canModerate?: boolean }) {
+  // A "sent you a message" bell notification carries no conversation id of
+  // its own (a DM notification only knows who sent it) — this resolves that
+  // via the same find-or-create-a-1:1 call startChat already uses, then
+  // opens it, so clicking the notification lands you in the actual thread
+  // instead of just the Personal tab's conversation list.
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("general");
   // Expanded moves this exact panel into an overlay rather than rendering a
   // second copy, so whatever you were reading or typing survives the switch.
@@ -561,6 +568,39 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
     void loadConvs();
     setTimeout(() => dmEndRef.current?.scrollIntoView({ block: "end" }), 50);
   }, [loadConvs]);
+
+  // Same find-or-reuse-a-1:1 call startChat makes when composing a new DM —
+  // here it's driven by a userId (from a notification) instead of a picked
+  // contact, so there's no group/title path to worry about.
+  const openConversationWithUser = useCallback(
+    async (userId: string) => {
+      const r = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ member_ids: [userId] }),
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      const list = (await fetch("/api/conversations", { cache: "no-store" }).then((x) => x.json()).catch(() => ({}))).conversations as
+        | Conversation[]
+        | undefined;
+      const conv = list?.find((c) => c.id === d.conversation_id);
+      if (conv) void openConv(conv);
+    },
+    [openConv]
+  );
+
+  // A "sent you a message" notification links here as
+  // /dashboard?dmUserId=<sender>. Runs once per link click — the query
+  // param doesn't change again after that, so re-navigating to the same
+  // conversation manually afterward isn't fought by this effect.
+  useEffect(() => {
+    const dmUserId = searchParams.get("dmUserId");
+    if (!dmUserId) return;
+    setTab("personal");
+    void openConversationWithUser(dmUserId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Poll the open conversation's messages.
   useEffect(() => {
