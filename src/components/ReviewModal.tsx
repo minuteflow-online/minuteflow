@@ -168,14 +168,20 @@ export default function ReviewModal({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/assigned-tasks/${taskId}`, { cache: "no-store" });
+        // The dedicated to-do endpoint, not the embedded task_todos on the
+        // general task-detail route — that embed goes through the RLS-subject
+        // client, and task_todos has RLS enabled with no policies on it, so
+        // it silently comes back empty there. This endpoint routes admin-
+        // equivalent reads through the service-role client instead, which
+        // actually works.
+        const res = await fetch(`/api/assigned-tasks/${taskId}/todos`, { cache: "no-store" });
         if (!res.ok) {
           if (!cancelled) setTodosError("Couldn't load the to-do list.");
           return;
         }
         const data = await res.json();
         if (cancelled) return;
-        const list: Todo[] = (data.task?.task_todos ?? [])
+        const list: Todo[] = (data.todos ?? [])
           .slice()
           .sort((a: Todo, b: Todo) => a.sort_order - b.sort_order);
         setTodos(list);
