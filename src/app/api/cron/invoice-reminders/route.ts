@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/cron/invoice-reminders
- * Daily cron: send gentle reminder emails for invoices with daily_reminder=true
+ * Daily cron: send gentle reminder emails for invoices with reminder_enabled=true
  * that are NOT paid, cancelled, or trash.
  * Secured by CRON_SECRET (set in Vercel env + vercel.json crons).
  */
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
   const { data: invoices, error } = await serviceClient
     .from("invoices")
     .select("*")
-    .eq("daily_reminder", true)
+    .eq("reminder_enabled", true)
     .not("status", "in", '("paid","cancelled","trash")')
     .not("to_email", "is", null);
 
