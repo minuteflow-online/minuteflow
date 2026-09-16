@@ -40,16 +40,16 @@ type Outcome = "approval" | "revision";
  * Consolidates submission review into two gates, run in order:
  *
  * 1. Completeness — does the work cover everything the task asked for? A
- *    reviewer checks it against the task's to-do list. Anything missing sends
- *    it back immediately as a revision, with the missing items as the reason,
- *    and Quality is never reached.
- * 2. Quality — Approve or Revision Needed, same outcome and API call the
- *    submissions page already made from its inline buttons.
+ *    reviewer checks off each to-do item that's actually present — "Check
+ *    all" when everything obviously is. Anything left unchecked becomes the
+ *    reason on an immediate revision, and Quality is never reached.
+ * 2. Quality — Approve or Revise, same outcome and API call the submissions
+ *    page already made from its inline buttons.
  *
  * Deliberately not in scope here: open Q&A visibility (no Q&A feature exists
- * yet — see the build plan) and a VA-side self-check per to-do (this gate is
- * the reviewer's read of the existing to-do list, not a new per-item ticked
- * state — that's a fuller version to build later if it's wanted).
+ * yet — see the build plan) and a VA-side self-check at submission time (this
+ * gate is the reviewer's own confirmation, not a second layer on top of one
+ * the VA already did — that's a fuller version to build later if it's wanted).
  */
 export default function ReviewModal({
   submission,
@@ -71,7 +71,11 @@ export default function ReviewModal({
   const [todosError, setTodosError] = useState("");
 
   const [step, setStep] = useState<"completeness" | "quality">("completeness");
-  const [missing, setMissing] = useState<Set<number>>(new Set());
+  // Checked = confirmed present. Anything left unchecked is what's missing —
+  // the opposite of a "flag problems" checklist, so a reviewer's default
+  // state (nothing checked yet) reads as "nothing confirmed yet," not as
+  // "everything's wrong."
+  const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
   const [incompleteNote, setIncompleteNote] = useState("");
 
   const [qualityMode, setQualityMode] = useState<null | "revision">(null);
@@ -175,6 +179,11 @@ export default function ReviewModal({
           .slice()
           .sort((a: Todo, b: Todo) => a.sort_order - b.sort_order);
         setTodos(list);
+        // Nothing's confirmed yet, so the reason box starts pre-filled with
+        // every item rather than sitting empty until the first click.
+        if (list.length > 0) {
+          setIncompleteNote(`Missing: ${list.map((t) => t.text).join("; ")}`);
+        }
       } catch {
         if (!cancelled) setTodosError("Couldn't load the to-do list.");
       }
@@ -184,19 +193,28 @@ export default function ReviewModal({
     };
   }, [taskId]);
 
-  // The reason box pre-fills from whatever's checked missing, so a reviewer
-  // rarely has to type from scratch — but it stays editable, since a to-do's
-  // stored text isn't always the clearest way to say what's wrong.
-  function toggleMissing(id: number) {
-    setMissing((prev) => {
+  // The reason box pre-fills from whatever's still unconfirmed, so a
+  // reviewer rarely has to type from scratch — but it stays editable, since a
+  // to-do's stored text isn't always the clearest way to say what's missing.
+  function fillReasonFrom(next: Set<number>) {
+    const items = (todos ?? []).filter((t) => !next.has(t.id)).map((t) => t.text);
+    setIncompleteNote(items.length > 0 ? `Missing: ${items.join("; ")}` : "");
+  }
+
+  function toggleConfirmed(id: number) {
+    setConfirmed((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-
-      const items = (todos ?? []).filter((t) => next.has(t.id)).map((t) => t.text);
-      setIncompleteNote(items.length > 0 ? `Missing: ${items.join("; ")}` : "");
+      fillReasonFrom(next);
       return next;
     });
+  }
+
+  function confirmAll() {
+    const next = new Set((todos ?? []).map((t) => t.id));
+    setConfirmed(next);
+    fillReasonFrom(next);
   }
 
   const who = submission.profiles?.full_name || submission.profiles?.username || "This VA";
@@ -295,6 +313,20 @@ export default function ReviewModal({
             )}
             {!todosError && todos !== null && todos.length > 0 && (
               <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-stone">
+                    Check off what&apos;s actually there.
+                  </p>
+                  {step === "completeness" && confirmed.size < todos.length && (
+                    <button
+                      onClick={confirmAll}
+                      disabled={busy}
+                      className="text-[10px] font-semibold text-stone transition-colors hover:text-espresso disabled:opacity-50"
+                    >
+                      Check all
+                    </button>
+                  )}
+                </div>
                 {todos.map((todo) => (
                   <label
                     key={todo.id}
@@ -302,25 +334,22 @@ export default function ReviewModal({
                   >
                     <input
                       type="checkbox"
-                      checked={missing.has(todo.id)}
-                      onChange={() => toggleMissing(todo.id)}
+                      checked={confirmed.has(todo.id)}
+                      onChange={() => toggleConfirmed(todo.id)}
                       disabled={step === "quality"}
-                      className="mt-0.5 cursor-pointer accent-terracotta disabled:cursor-default"
+                      className="mt-0.5 cursor-pointer accent-sage disabled:cursor-default"
                     />
-                    <span className={missing.has(todo.id) ? "text-terracotta" : undefined}>
+                    <span className={confirmed.has(todo.id) ? "text-sage" : undefined}>
                       {todo.text}
                     </span>
                   </label>
                 ))}
-                <p className="pt-0.5 text-[10px] text-stone">
-                  Check anything missing or wrong — it fills the reason below.
-                </p>
               </div>
             )}
 
             {step === "completeness" && (
               <div className="mt-2">
-                {missing.size > 0 && (
+                {(todos?.length ?? 0) > confirmed.size && (
                   <textarea
                     value={incompleteNote}
                     onChange={(e) => setIncompleteNote(e.target.value)}
@@ -341,9 +370,15 @@ export default function ReviewModal({
                       if (!incompleteNote.trim()) return;
                       onReview("revision", `Incomplete — ${incompleteNote.trim()}`);
                     }}
-                    disabled={busy || missing.size === 0 || !incompleteNote.trim()}
+                    disabled={
+                      busy || (todos?.length ?? 0) <= confirmed.size || !incompleteNote.trim()
+                    }
                     className="rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:opacity-50"
-                    title={missing.size === 0 ? "Check at least one missing item first" : undefined}
+                    title={
+                      (todos?.length ?? 0) <= confirmed.size
+                        ? "Nothing left unconfirmed — everything's checked"
+                        : undefined
+                    }
                   >
                     Incomplete — send back
                   </button>
@@ -461,7 +496,7 @@ export default function ReviewModal({
                     disabled={busy}
                     className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
                   >
-                    Revision Needed
+                    Revise
                   </button>
                   <button
                     onClick={() => setStep("completeness")}
