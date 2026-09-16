@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { TaskSubmissionAttachment } from "@/lib/submissions";
 
@@ -91,6 +91,11 @@ export default function ReviewModal({
   const [revisionUploading, setRevisionUploading] = useState(false);
   const [revisionUploadError, setRevisionUploadError] = useState("");
   const [revisionProgress, setRevisionProgress] = useState("");
+  const [revisionDragActive, setRevisionDragActive] = useState(false);
+  // Enter/leave fire for every child element a drag passes over, not just the
+  // container's own edge — a counter is what keeps the highlight from
+  // flickering off mid-drag as the pointer crosses a label or the textarea.
+  const revisionDragCounter = useRef(0);
   const revisionSupabase = useMemo(() => createClient(), []);
 
   const addRevisionFiles = (list: FileList | null) => {
@@ -118,6 +123,27 @@ export default function ReviewModal({
     if (picked.length === 0) return;
     e.preventDefault();
     setRevisionFiles((prev) => [...prev, ...picked]);
+  };
+  const handleRevisionDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    revisionDragCounter.current += 1;
+    setRevisionDragActive(true);
+  };
+  const handleRevisionDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    revisionDragCounter.current -= 1;
+    if (revisionDragCounter.current <= 0) {
+      revisionDragCounter.current = 0;
+      setRevisionDragActive(false);
+    }
+  };
+  const handleRevisionDragOver = (e: React.DragEvent) => e.preventDefault();
+  const handleRevisionDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    revisionDragCounter.current = 0;
+    setRevisionDragActive(false);
+    if (busy || revisionUploading) return;
+    addRevisionFiles(e.dataTransfer.files);
   };
 
   /** Uploads any attached files, then posts the revision request. */
@@ -411,7 +437,20 @@ export default function ReviewModal({
               </p>
 
               {qualityMode === "revision" ? (
-                <div>
+                <div
+                  onDragEnter={handleRevisionDragEnter}
+                  onDragLeave={handleRevisionDragLeave}
+                  onDragOver={handleRevisionDragOver}
+                  onDrop={handleRevisionDrop}
+                  className={`rounded-lg border-2 border-dashed p-1.5 transition-colors ${
+                    revisionDragActive ? "border-terracotta bg-terracotta-soft" : "border-transparent"
+                  }`}
+                >
+                  {revisionDragActive && (
+                    <p className="mb-1.5 text-center text-[10px] font-semibold text-terracotta">
+                      Drop to attach
+                    </p>
+                  )}
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
                     What needs changing?
                   </label>
@@ -451,7 +490,7 @@ export default function ReviewModal({
                       className="block w-full text-[10px] text-stone file:mr-2 file:rounded-lg file:border-0 file:bg-parchment file:px-2 file:py-1 file:text-[10px] file:font-semibold file:text-espresso hover:file:bg-sand disabled:opacity-50"
                     />
                     <p className="mt-0.5 text-[10px] text-stone/70">
-                      or paste a screenshot (Ctrl/Cmd+V) into the note above
+                      or drag a file onto this box, or paste a screenshot (Ctrl/Cmd+V)
                     </p>
                     {revisionFiles.length > 0 && (
                       <div className="mt-1 space-y-1">
