@@ -71,21 +71,6 @@ let currentTaskLogId = null; // The active time_log.id we're tracking
 let isClockedIn = false;     // Capture runs for the whole shift, not just while a task is open
 
 // ---------------------------------------------------------------------------
-// MinuteFlow URL Detection
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true if the given URL belongs to the MinuteFlow app.
- * Progress captures are skipped when the VA is on MinuteFlow — we only
- * want to capture their actual work, not the time-tracking app itself.
- * (Start/end captures are still allowed regardless of active tab.)
- */
-function isMinuteFlowUrl(url) {
-  if (!url) return false;
-  return url.includes('minuteflow.click') || url.includes('minuteflow.online');
-}
-
-// ---------------------------------------------------------------------------
 // Screenshot Capture
 // ---------------------------------------------------------------------------
 
@@ -425,19 +410,12 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
       return;
     }
 
-    try {
-      const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
-      if (win && win.id) {
-        const [activeTab] = await chrome.tabs.query({ active: true, windowId: win.id });
-        if (activeTab && activeTab.url && isMinuteFlowUrl(activeTab.url)) {
-          console.log('[MinuteFlow] Progress capture skipped — VA is on MinuteFlow tab');
-          await queueMarker(session.user.id, resolvedLogId, 'On MinuteFlow — not captured');
-          return;
-        }
-      }
-    } catch (err) {
-      // Non-fatal: if we can't check, proceed with capture
-    }
+    // Used to skip the capture here and record "On MinuteFlow — not
+    // captured" instead, on the idea that only work outside the app was
+    // worth seeing. Toni wants the opposite: a screenshot of MinuteFlow
+    // itself is still evidence of what someone was doing, so this no
+    // longer special-cases the app's own tabs — capture proceeds the same
+    // as any other active tab.
   }
 
   const { blob, reason: captureFailure } = await captureActiveTab();
