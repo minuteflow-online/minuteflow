@@ -86,6 +86,12 @@ export async function GET(request: NextRequest) {
           subject: `Gentle Reminder: Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
           html,
         }),
+      }, {
+        log: {
+          type: "invoice reminder",
+          label: invoice.invoice_number,
+          sublabel: invoice.to_name || "Daily reminder",
+        },
       });
 
       if (resendRes.ok) {

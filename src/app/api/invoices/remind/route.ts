@@ -103,6 +103,12 @@ export async function POST(request: Request) {
       open_tracking: true,
       click_tracking: true,
     }),
+  }, {
+    log: {
+      type: "invoice reminder",
+      label: invoice.invoice_number,
+      sublabel: invoice.to_name || "Manual reminder",
+    },
   });
 
   if (!resendRes.ok) {
