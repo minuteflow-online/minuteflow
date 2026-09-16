@@ -83,17 +83,26 @@ async function withAttachments(
       submissions.map((s) => s.id)
     );
 
+  // Resolve every signed URL into a flat array first, then group in one
+  // synchronous pass once they've all settled — grouping directly inside the
+  // Promise.all (read the shared list, push, write back) races when two
+  // files land on the same submission: whichever write lands second
+  // silently drops the first file, since it read the list before the other
+  // write happened.
   const bySubmission = new Map<number, Array<Record<string, unknown>>>();
-  await Promise.all(
+  const signedFiles = await Promise.all(
     (files ?? []).map(async (file) => {
       const { data: signed } = await admin.storage
         .from("task-attachments")
         .createSignedUrl(file.storage_path as string, 3600);
-      const list = bySubmission.get(file.submission_id as number) ?? [];
-      list.push({ ...file, url: signed?.signedUrl ?? null });
-      bySubmission.set(file.submission_id as number, list);
+      return { ...file, url: signed?.signedUrl ?? null };
     })
   );
+  for (const file of signedFiles) {
+    const list = bySubmission.get(file.submission_id as number) ?? [];
+    list.push(file);
+    bySubmission.set(file.submission_id as number, list);
+  }
 
   return submissions.map((s) => ({ ...s, attachments: bySubmission.get(s.id) ?? [] }));
 }
