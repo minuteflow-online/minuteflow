@@ -85,8 +85,9 @@ type SubmittedTaskItem = {
   submissionCount: number;
   revisionCount: number;
   overdue: boolean;
-  /* Time matched from time_logs by task name + account + VA — see
-     submissionsByAccount for why this can come back zero. */
+  /* Time matched from time_logs by assigned_task_id (falling back to task
+     name + account + VA for older logs) — see submissionsByAccount for why
+     this can come back zero. */
   totalMs: number;
   matched: boolean;
 };
@@ -217,6 +218,7 @@ export default function ReportsPage() {
   const [assignedTasks, setAssignedTasks] = useState<AssignedTaskRow[]>([]);
   const [summaryTab, setSummaryTab] = useState<"account" | "project" | "task" | "team">("account");
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
+  const [submissionPage, setSubmissionPage] = useState<Record<string, number>>({});
   const [reportTab, setReportTab] = useUrlTab<"overview" | "progress">("tab", "overview", ["overview", "progress"]);
   const [compLogs, setCompLogs] = useState<TimeLog[]>([]);
 
@@ -805,11 +807,13 @@ export default function ReportsPage() {
 
   /* ── Submissions, itemized under their account ───────────── */
   //
-  // time_logs carries no assigned_task_id, so a submitted task's logged time is
-  // matched by task name + account + the VA who submitted it. That covers the
-  // normal flow (playing an assigned task copies its name onto the log) but not
-  // a renamed or hand-entered task — those show as "no time matched" rather
-  // than as a wrong number.
+  // Logged time is matched to a submitted task by time_logs.assigned_task_id
+  // first (stamped when the task is started/resumed — see the PATCH handler
+  // at src/app/api/assigned-tasks/[id]/route.ts). Older logs from before that
+  // stamping existed fall back to task name + account + VA, which collapses
+  // distinct tasks that happen to share a name (e.g. recurring "MinuteFlow
+  // Work" entries) onto the same total — kept only as a best-effort fallback,
+  // not used once id-matched logs exist for a task.
 
   const filteredSubmissions = useMemo(() => {
     const taskById = new Map(assignedTasks.map((t) => [t.id, t]));
@@ -826,12 +830,17 @@ export default function ReportsPage() {
   const submissionsByAccount = useMemo(() => {
     const taskById = new Map(assignedTasks.map((t) => [t.id, t]));
 
-    // Logged ms keyed by "user|account|task name", built once so each submitted
-    // task is a map lookup rather than a scan of every log.
+    // Logged ms keyed by assigned_task_id — the precise match — and as a
+    // fallback by "user|account|task name" for logs stamped before that
+    // column existed.
+    const msByTaskId = new Map<number, number>();
     const loggedMs = new Map<string, number>();
     const matchKey = (userId: string, account: string | null, taskName: string | null) =>
       `${userId}|${(account ?? "").trim().toLowerCase()}|${(taskName ?? "").trim().toLowerCase()}`;
     filteredLogs.forEach((l) => {
+      if (l.assigned_task_id != null) {
+        msByTaskId.set(l.assigned_task_id, (msByTaskId.get(l.assigned_task_id) ?? 0) + (l.duration_ms || 0));
+      }
       const key = matchKey(l.user_id, l.account, l.task_name);
       loggedMs.set(key, (loggedMs.get(key) ?? 0) + (l.duration_ms || 0));
     });
@@ -854,8 +863,9 @@ export default function ReportsPage() {
       }
 
       const profile = profiles.find((p) => p.id === s.user_id);
+      const idMs = msByTaskId.get(task.id);
       const key = matchKey(s.user_id, task.account, task.task_name);
-      const ms = loggedMs.get(key);
+      const ms = idMs ?? loggedMs.get(key);
       byTask.set(task.id, {
         assignedTaskId: task.id,
         taskName: task.task_name,
@@ -1837,7 +1847,7 @@ export default function ReportsPage() {
                           }
                           className="flex w-full items-center gap-3.5 py-3 text-left group"
                         >
-                          <span className="w-3 shrink-0 text-[10px] text-bark group-hover:text-espresso transition-colors">
+                          <span className="w-5 shrink-0 text-xl leading-none text-bark group-hover:text-espresso transition-colors">
                             {item.submissions.length > 0 ? (isOpen ? "▾" : "▸") : ""}
                           </span>
                           <div className="flex-1 text-[13px] font-semibold text-espresso">
@@ -1864,20 +1874,46 @@ export default function ReportsPage() {
                           </div>
                         </button>
 
-                        {isOpen && item.submissions.length > 0 && (
-                          <div className="pb-3 pl-6">
-                            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1.5">
-                              Submitted Work
-                            </p>
-                            {item.submissions.map((sub) => (
-                              <div
-                                key={sub.assignedTaskId}
-                                className="flex flex-col gap-1.5 py-2.5 px-3 mb-1.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors"
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <span className="text-[13px] font-semibold text-espresso leading-tight">
-                                    {sub.taskName}
-                                  </span>
+                        {isOpen && item.submissions.length > 0 && (() => {
+                          const SUBMISSIONS_PER_PAGE = 10;
+                          const pageCount = Math.ceil(item.submissions.length / SUBMISSIONS_PER_PAGE);
+                          const currentPage = Math.min(submissionPage[item.account] ?? 0, pageCount - 1);
+                          const pageItems = item.submissions.slice(
+                            currentPage * SUBMISSIONS_PER_PAGE,
+                            currentPage * SUBMISSIONS_PER_PAGE + SUBMISSIONS_PER_PAGE
+                          );
+                          const setPage = (updater: (n: number) => number) =>
+                            setSubmissionPage((prev) => ({
+                              ...prev,
+                              [item.account]: Math.max(0, Math.min(pageCount - 1, updater(currentPage))),
+                            }));
+
+                          return (
+                            <div className="pb-3 pl-6">
+                              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1.5">
+                                Submitted Work
+                              </p>
+                              {pageItems.map((sub) => (
+                                <div
+                                  key={sub.assignedTaskId}
+                                  className="flex items-center gap-3 border-b border-parchment py-2 last:border-b-0"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-[13px] font-semibold text-espresso truncate">
+                                      {sub.taskName}
+                                    </div>
+                                    <div className="text-[11px] text-stone/80">
+                                      {sub.vaName}
+                                      {" · "}
+                                      {new Date(sub.lastSubmittedAt).toLocaleDateString("en-US", {
+                                        month: "short",
+                                        day: "numeric",
+                                        timeZone: orgTimezone,
+                                      })}
+                                      {sub.submissionCount > 1 && ` · ${sub.submissionCount} submissions`}
+                                      {!sub.matched && " · no time matched"}
+                                    </div>
+                                  </div>
                                   <div className="flex shrink-0 items-center gap-1.5">
                                     {sub.overdue && (
                                       <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-terracotta-soft text-terracotta border border-terracotta/20">
@@ -1889,26 +1925,39 @@ export default function ReportsPage() {
                                         {sub.revisionCount} revision{sub.revisionCount !== 1 ? "s" : ""}
                                       </span>
                                     )}
-                                    <span className="font-serif text-sm font-bold text-sage">
+                                    <span className="w-[70px] text-right font-serif text-sm font-bold text-sage">
                                       {sub.matched ? formatDuration(sub.totalMs) : "—"}
                                     </span>
                                   </div>
                                 </div>
-                                <div className="text-[11px] text-stone/80">
-                                  {sub.vaName}
-                                  {" · "}
-                                  {new Date(sub.lastSubmittedAt).toLocaleDateString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                    timeZone: orgTimezone,
-                                  })}
-                                  {sub.submissionCount > 1 && ` · ${sub.submissionCount} submissions`}
-                                  {!sub.matched && " · no time matched"}
+                              ))}
+
+                              {pageCount > 1 && (
+                                <div className="mt-2 flex items-center justify-between">
+                                  <span className="text-[11px] text-stone">
+                                    Page {currentPage + 1} of {pageCount} · {item.submissions.length} submissions
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => setPage((n) => n - 1)}
+                                      disabled={currentPage === 0}
+                                      className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+                                    >
+                                      ← Prev
+                                    </button>
+                                    <button
+                                      onClick={() => setPage((n) => n + 1)}
+                                      disabled={currentPage >= pageCount - 1}
+                                      className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+                                    >
+                                      Next →
+                                    </button>
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })
