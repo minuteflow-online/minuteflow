@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -10,18 +10,80 @@ type Notif = {
   read: boolean;
   created_at: string;
   assigned_task_id: number | null;
+  sender_id: string | null;
 };
+
+/**
+ * Which "kind of thing happened" a notification's free-text content is, and
+ * who did it — used only to decide what can be collapsed together, never
+ * shown itself. `content` has no separate machine-readable action field, so
+ * this reads the same phrasings every notifyOne/notifyRecipients call site
+ * actually writes (see src/lib/notifyOne.ts, notifyRecipients.ts,
+ * notifyMentions.ts and their callers). Anything that doesn't match falls
+ * back to "ungroupable" rather than guessing — better to leave a message on
+ * its own than to fold two different things together under one label.
+ */
+const ACTION_PATTERNS: Array<{ bucket: string; re: RegExp; noun: (n: number) => string }> = [
+  { bucket: "bug", re: /^(.+?) submitted a bug/, noun: (n) => `${n} bug report${n === 1 ? "" : "s"}` },
+  { bucket: "idea", re: /^(.+?) submitted a idea/, noun: (n) => `${n} idea${n === 1 ? "" : "s"}` },
+  { bucket: "submission", re: /^(.+?) submitted: /, noun: (n) => `${n} task${n === 1 ? "" : "s"}` },
+  { bucket: "comment", re: /^(.+?) commented on /, noun: (n) => `${n} comment${n === 1 ? "" : "s"}` },
+  { bucket: "mention", re: /^(.+?) mentioned you in /, noun: (n) => `${n} place${n === 1 ? "" : "s"}` },
+  { bucket: "dm", re: /^(.+?) sent you a message/, noun: (n) => `${n} message${n === 1 ? "" : "s"}` },
+  {
+    bucket: "joborder",
+    re: /^(.+?) (?:reopened|declined|accepted|offered you) (?:a |the )?job order/,
+    noun: (n) => `${n} job order update${n === 1 ? "" : "s"}`,
+  },
+];
+
+function classify(content: string): { bucket: string; actor: string; noun: (n: number) => string } | null {
+  for (const p of ACTION_PATTERNS) {
+    const m = content.match(p.re);
+    if (m) return { bucket: p.bucket, actor: m[1], noun: p.noun };
+  }
+  return null;
+}
+
+/** A run of adjacent notifications (already sorted newest-first) that share
+ *  the same sender and the same kind of action — collapsed into one line
+ *  when there's more than one, so ten submissions from the same VA read as
+ *  one summary instead of burying everything else in the list. */
+type Group = { key: string; items: Notif[]; summary: string | null };
+
+function groupNotifications(items: Notif[]): Group[] {
+  const groups: Group[] = [];
+  for (const item of items) {
+    const info = item.sender_id ? classify(item.content) : null;
+    const last = groups[groups.length - 1];
+    const lastInfo = last && last.items[0].sender_id ? classify(last.items[0].content) : null;
+    if (
+      info &&
+      last &&
+      last.items[0].sender_id === item.sender_id &&
+      lastInfo?.bucket === info.bucket
+    ) {
+      last.items.push(item);
+      last.summary = `${info.actor} — ${info.noun(last.items.length)}`;
+      continue;
+    }
+    groups.push({ key: String(item.id), items: [item], summary: null });
+  }
+  return groups;
+}
 
 /** Top-nav bell: shows the current user's in-app notifications (mentions and
  *  DMs from the `messages` table) with an unread count. A notification about
  *  a task/submission is clickable — it marks itself read and takes you
- *  straight there, the way opening an email would. Realtime so a new mention
- *  pops without a refresh. */
+ *  straight there, the way opening an email would. A run of same-person,
+ *  same-kind notifications collapses into one summarized, expandable line.
+ *  Realtime so a new mention pops without a refresh. */
 export default function NotificationBell() {
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [items, setItems] = useState<Notif[]>([]);
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,7 +96,7 @@ export default function NotificationBell() {
       const load = async () => {
         const { data } = await supabase
           .from("messages")
-          .select("id, content, read, created_at, assigned_task_id")
+          .select("id, content, read, created_at, assigned_task_id, sender_id")
           .eq("target_user_id", user.id)
           .order("created_at", { ascending: false })
           .limit(20);
@@ -56,6 +118,7 @@ export default function NotificationBell() {
   }, []);
 
   const unread = items.filter((i) => !i.read).length;
+  const groups = useMemo(() => groupNotifications(items), [items]);
 
   // Marks one notification read without touching the rest — opening the bell
   // no longer clears everything at once, so a task's unread badge elsewhere
@@ -79,6 +142,33 @@ export default function NotificationBell() {
       setOpen(false);
       router.push(`/productivity/submissions?taskId=${item.assigned_task_id}`);
     }
+  };
+
+  const toggleGroup = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const renderRow = (i: Notif, indent = false) => {
+    const clickable = i.assigned_task_id != null;
+    return (
+      <div
+        key={i.id}
+        onClick={() => handleClick(i)}
+        className={`border-b border-sand/60 px-3 py-2 text-[12px] ${indent ? "pl-5 bg-parchment/20" : ""} ${i.read ? "text-stone" : "bg-cream/40 text-espresso"} ${clickable ? "cursor-pointer hover:bg-parchment/50" : ""}`}
+      >
+        <p className="leading-snug">{i.content}</p>
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          <p className="text-[10px] text-bark">{new Date(i.created_at).toLocaleString()}</p>
+          {clickable && (
+            <span className="shrink-0 text-[10px] font-semibold text-terracotta">View →</span>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -117,21 +207,21 @@ export default function NotificationBell() {
             {items.length === 0 ? (
               <p className="px-3 py-6 text-center text-[12px] text-stone">Nothing yet.</p>
             ) : (
-              items.map((i) => {
-                const clickable = i.assigned_task_id != null;
+              groups.map((g) => {
+                if (g.items.length === 1) return renderRow(g.items[0]);
+                const isOpen = expanded.has(g.key);
+                const anyUnread = g.items.some((i) => !i.read);
                 return (
-                  <div
-                    key={i.id}
-                    onClick={() => handleClick(i)}
-                    className={`border-b border-sand/60 px-3 py-2 text-[12px] ${i.read ? "text-stone" : "bg-cream/40 text-espresso"} ${clickable ? "cursor-pointer hover:bg-parchment/50" : ""}`}
-                  >
-                    <p className="leading-snug">{i.content}</p>
-                    <div className="mt-0.5 flex items-center justify-between gap-2">
-                      <p className="text-[10px] text-bark">{new Date(i.created_at).toLocaleString()}</p>
-                      {clickable && (
-                        <span className="shrink-0 text-[10px] font-semibold text-terracotta">View →</span>
-                      )}
-                    </div>
+                  <div key={g.key}>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(g.key)}
+                      className={`flex w-full items-center justify-between gap-2 border-b border-sand/60 px-3 py-2 text-left text-[12px] transition-colors hover:bg-parchment/50 ${anyUnread ? "bg-cream/40 text-espresso" : "text-stone"}`}
+                    >
+                      <span className="leading-snug">{g.summary}</span>
+                      <span className="shrink-0 text-[10px] text-bark">{isOpen ? "▲" : `▼ ${g.items.length}`}</span>
+                    </button>
+                    {isOpen && g.items.map((i) => renderRow(i, true))}
                   </div>
                 );
               })
