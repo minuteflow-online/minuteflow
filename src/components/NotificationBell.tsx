@@ -120,6 +120,16 @@ export default function NotificationBell() {
   const unread = items.filter((i) => !i.read).length;
   const groups = useMemo(() => groupNotifications(items), [items]);
 
+  /** Where clicking a notification should go, or null when it's just text.
+   *  A task-linked one goes straight to its thread; a DM has no id of its
+   *  own to link to, so it's routed by who sent it — the dashboard resolves
+   *  (or starts) that conversation and opens it. */
+  const destinationFor = (item: Notif): string | null => {
+    if (item.assigned_task_id != null) return `/productivity/submissions?taskId=${item.assigned_task_id}`;
+    if (item.sender_id && classify(item.content)?.bucket === "dm") return `/dashboard?dmUserId=${item.sender_id}`;
+    return null;
+  };
+
   // Marks one notification read without touching the rest — opening the bell
   // no longer clears everything at once, so a task's unread badge elsewhere
   // (e.g. the Submissions hub) survives until it's actually looked at.
@@ -138,9 +148,10 @@ export default function NotificationBell() {
 
   const handleClick = (item: Notif) => {
     if (!item.read) void markRead(item.id);
-    if (item.assigned_task_id != null) {
+    const dest = destinationFor(item);
+    if (dest) {
       setOpen(false);
-      router.push(`/productivity/submissions?taskId=${item.assigned_task_id}`);
+      router.push(dest);
     }
   };
 
@@ -153,7 +164,7 @@ export default function NotificationBell() {
     });
 
   const renderRow = (i: Notif, indent = false) => {
-    const clickable = i.assigned_task_id != null;
+    const clickable = destinationFor(i) != null;
     return (
       <div
         key={i.id}
