@@ -1,7 +1,7 @@
 "use client";
 
 import { isBillableCategory } from "@/lib/billable";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { Suspense, useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useSession, type SessionActions } from "@/contexts/SessionContext";
 import { type SessionState } from "@/components/SessionBanner";
@@ -3718,7 +3718,15 @@ export default function DashboardPage() {
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
             {/* Left: Messages, where conversation lives rather than buried under
                 the task widgets on the right. */}
-            {userId && <DashboardMessagePanel currentUserId={userId} canModerate={hasModerationAccess(profile)} />}
+            {/* Suspense boundary: DashboardMessagePanel reads useSearchParams() to
+                jump straight to a conversation from a "sent you a message"
+                notification, which otherwise opts this page out of static
+                rendering with a build error. */}
+            {userId && (
+              <Suspense fallback={null}>
+                <DashboardMessagePanel currentUserId={userId} canModerate={hasModerationAccess(profile)} />
+              </Suspense>
+            )}
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
               <TaskWidgetsTabs
