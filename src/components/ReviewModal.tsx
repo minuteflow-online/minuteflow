@@ -366,8 +366,13 @@ export default function ReviewModal({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setStep("quality")}
-                    disabled={busy}
+                    disabled={busy || (todos?.length ?? 0) > confirmed.size}
                     className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                    title={
+                      (todos?.length ?? 0) > confirmed.size
+                        ? "Check off every item first, or send it back as Incomplete"
+                        : undefined
+                    }
                   >
                     Complete
                   </button>
