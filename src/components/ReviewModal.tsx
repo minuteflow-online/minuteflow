@@ -95,7 +95,12 @@ export default function ReviewModal({
 
   const addRevisionFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    setRevisionFiles((prev) => [...prev, ...Array.from(list)]);
+    // Snapshot to a plain array now, synchronously — the caller clears the
+    // input's value right after this returns (so the same file can be picked
+    // again later), which empties the live FileList out from under a
+    // setState updater that converts it lazily.
+    const picked = Array.from(list);
+    setRevisionFiles((prev) => [...prev, ...picked]);
   };
   const removeRevisionFile = (index: number) => {
     setRevisionFiles((prev) => prev.filter((_, i) => i !== index));
