@@ -39,6 +39,7 @@ import type {
 } from "@/types/database";
 import { normalizePosition } from "@/types/database";
 import { clockInBlockedReason } from "@/lib/clockInAccess";
+import { cappedCloseTime } from "@/lib/cappedCloseTime";
 
 type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
 
@@ -150,28 +151,8 @@ function formatHoursMinutes(ms: number): string {
   return `${minutes}m`;
 }
 
-// A stale open log (Clock In left running overnight, a task nobody switched
-// off) closes at 23:59:59.999 of the day it STARTED, not at `now` — same
-// capping closeOpenLogs already does. Without this, closing an
-// overnight "Clock In" the next time a real task starts bills the entire
-// dead-of-night gap as worked time: this is what turned one placeholder log
-// into a 15.6-hour billable entry in the August Time Review (Charinade,
-// log 5659). Three other call sites closed stale logs with this same
-// uncapped `now - start_time` math, duplicated inline rather than sharing
-// closeOpenLogs — this is the one place all of them now go through.
-function cappedCloseTime(startTime: string | null, now: string): { endTime: string; durationMs: number } {
-  const startMs = startTime ? new Date(startTime).getTime() : new Date(now).getTime();
-  const sameDay = startTime && new Date(startTime).toDateString() === new Date(now).toDateString();
-  let endTime: string;
-  if (!sameDay && startTime) {
-    const endOfDay = new Date(startTime);
-    endOfDay.setHours(23, 59, 59, 999);
-    endTime = endOfDay.toISOString();
-  } else {
-    endTime = now;
-  }
-  return { endTime, durationMs: Math.max(0, new Date(endTime).getTime() - startMs) };
-}
+// cappedCloseTime lives in @/lib/cappedCloseTime — see that file for why
+// "day" has to be an org-timezone concept, not the browser's local clock.
 
 // ─── Page Component ────────────────────────────────────────
 
@@ -992,7 +973,7 @@ export default function DashboardPage() {
           // Logs started on a previous calendar date close at 23:59:59.999 of
           // that day, so overnight/weekend stragglers don't get impossibly
           // long durations.
-          const { endTime, durationMs: duration_ms } = cappedCloseTime(openLog.start_time, now);
+          const { endTime, durationMs: duration_ms } = cappedCloseTime(openLog.start_time, now, orgTimezone);
           closedLogs.push({ id: openLog.id, end_time: endTime, duration_ms });
 
           await supabase
@@ -1016,7 +997,7 @@ export default function DashboardPage() {
         );
       }
     },
-    [supabase, userId]
+    [supabase, userId, orgTimezone]
   );
 
   // ─── Auto-close stale open logs on page load ──────────────
@@ -1327,7 +1308,7 @@ export default function DashboardPage() {
         // three (Break flow, resumeOnHoldTask, startTask) — confirmed on
         // Shem's Aug 12 WebUpdate Processing row, which ran 26+ hours because
         // clocking out the next day billed the whole overnight gap.
-        const closeTimes = new Map(orphanedLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now)]));
+        const closeTimes = new Map(orphanedLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now, orgTimezone)]));
         for (const orphan of orphanedLogs) {
           const { endTime, durationMs } = closeTimes.get(orphan.id)!;
           await supabase
@@ -1761,7 +1742,7 @@ export default function DashboardPage() {
         .lt("start_time", gapCutoff);
 
       if (openLogs && openLogs.length > 0) {
-        const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now)]));
+        const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now, orgTimezone)]));
         for (const openLog of openLogs) {
           const { endTime, durationMs } = closeTimes.get(openLog.id)!;
           const { error: closeError } = await supabase
@@ -2483,7 +2464,7 @@ export default function DashboardPage() {
             // In" nobody switched off) caps at end-of-day instead of billing
             // the whole dead gap up to now — see cappedCloseTime. Same-day
             // logs behave exactly as before (end_time = now).
-            const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now)]));
+            const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now, orgTimezone)]));
             for (const openLog of openLogs) {
               const { endTime, durationMs } = closeTimes.get(openLog.id)!;
               const { error: closeError } = await supabase
