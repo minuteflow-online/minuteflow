@@ -3,9 +3,12 @@ import { serviceClient } from "@/lib/projectAccess";
 
 export const dynamic = "force-dynamic";
 
-async function requireUser() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+// Bearer-token fallback for the desktop app — see project-messages/route.ts's
+// identical comment and PR #167.
+async function requireUser(request: Request) {
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const { data: { user } } = await supabase.auth.getUser(bearerToken);
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   return { user };
 }
@@ -16,8 +19,8 @@ async function requireUser() {
  * members, last message, and unread count (messages after the user's
  * last_read_at that they didn't send).
  */
-export async function GET() {
-  const auth = await requireUser();
+export async function GET(request: Request) {
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const supabase = serviceClient();
@@ -86,7 +89,7 @@ export async function GET() {
  * Start (or, for a 1:1, reuse) a conversation. The caller is always a member.
  */
 export async function POST(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user } = auth;
 

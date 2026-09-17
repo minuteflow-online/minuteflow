@@ -7,9 +7,13 @@ export const dynamic = "force-dynamic";
 
 const authorSelect = "id, full_name, username, avatar_url";
 
-async function requireUser() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+// Bearer-token fallback for the desktop app (no browser cookies to present —
+// see src/lib/supabase/server.ts's createClient() doc and PR #167). A web
+// request never sends this header, so the cookie-based path is unaffected.
+async function requireUser(request: Request) {
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const { data: { user } } = await supabase.auth.getUser(bearerToken);
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   // full_name/username are only for the @mention notification text below
   // (see POST) — canAccessProject/hasBroadAdminAccess elsewhere in this file
@@ -25,7 +29,7 @@ async function requireUser() {
  * every project-scoped surface uses.
  */
 export async function GET(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
 
@@ -98,7 +102,7 @@ export async function GET(request: Request) {
  * project's assigned VAs, its creator, and admins.
  */
 export async function POST(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
 
@@ -153,7 +157,7 @@ export async function POST(request: Request) {
  * specifically is admin-only — a VA can't pin their own post to the top.
  */
 export async function PATCH(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
   const { hasBroadAdminAccess } = await import("@/lib/financialAccess");
@@ -227,7 +231,7 @@ export async function PATCH(request: Request) {
  * null) filter.
  */
 export async function DELETE(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
   const { hasBroadAdminAccess } = await import("@/lib/financialAccess");

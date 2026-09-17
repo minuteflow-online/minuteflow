@@ -38,6 +38,28 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `TopNav.tsx`. The renderer reports clocked-in state to the main process via
   `window.mfDesktop.setClockedIn()` (App.tsx) since main can't read React
   state directly; see `electron/main.js`'s `close` handler.
+- **Message Board** — a "To-Do / Message Board" tab strip above the right
+  panel switches to a Messages panel with its own inner tabs, mirroring
+  `DashboardMessagePanel.tsx`: same amber tab pills, same "+ New Topic"/
+  "+ New message" buttons, same row cards, same avatar circles.
+  - **General** — the team-wide board (`project_id` null). Read topics,
+    start one, reply. Goes through `/api/project-messages` (+ its
+    `/comments` sub-route) rather than direct table writes, so
+    `notifyMentions()` (bell + Telegram for anyone @mentioned) still fires —
+    see `src/lib/messageBoard.ts`.
+  - **Personal** — direct messages and group chats. List conversations
+    (unread counts, last-message preview), open one, reply, start a new 1:1
+    or group by picking teammates. Goes through `/api/conversations` (+ its
+    `/messages` sub-route) and `/api/team-members`, so `notifyOne()` (bell +
+    Telegram) still fires on send — see `src/lib/conversations.ts`.
+  - **Comments** — the notification feed (submission comments, @mentions,
+    job orders, new DMs), read-only. Reads the `messages` table directly
+    (RLS-scoped, same as tasks/sessions) rather than through an API route —
+    the web widget does the same — see `src/lib/notifications.ts`.
+  - Not in this version: Admin oversight, per-project boards, attachments,
+    @mention autocomplete, editing, delete/pin/archive, marking a
+    notification read, realtime (all four tabs poll instead — see each
+    lib file's poll interval).
 
 ## What it deliberately does NOT do yet
 

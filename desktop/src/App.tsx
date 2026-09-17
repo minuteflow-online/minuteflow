@@ -3,6 +3,7 @@ import LoginScreen from "./components/LoginScreen";
 import ClockPanel, { type ClockState } from "./components/ClockPanel";
 import TasksPanel from "./components/TasksPanel";
 import TodoPanel from "./components/TodoPanel";
+import MessageBoardPanel from "./components/MessageBoardPanel";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
 import { fetchAssignedTasks, reorderAssignedTasks, type VAAssignedTask } from "./lib/tasks";
@@ -33,6 +34,7 @@ export default function App() {
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
+  const [rightTab, setRightTab] = useState<"todo" | "messages">("todo");
 
   const userIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -296,8 +298,30 @@ export default function App() {
           />
         </div>
 
-        <div className="flex flex-1 min-h-0">
-          <TodoPanel task={selectedTask} />
+        <div className="flex flex-1 min-h-0 flex-col gap-2">
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => setRightTab("todo")}
+              className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                rightTab === "todo"
+                  ? "bg-terracotta-soft text-terracotta"
+                  : "text-bark hover:bg-parchment hover:text-espresso"
+              }`}
+            >
+              To-Do
+            </button>
+            <button
+              onClick={() => setRightTab("messages")}
+              className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                rightTab === "messages"
+                  ? "bg-terracotta-soft text-terracotta"
+                  : "text-bark hover:bg-parchment hover:text-espresso"
+              }`}
+            >
+              Message Board
+            </button>
+          </div>
+          {rightTab === "todo" ? <TodoPanel task={selectedTask} /> : <MessageBoardPanel userId={userId} />}
         </div>
       </div>
     </div>
