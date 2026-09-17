@@ -470,7 +470,7 @@ const ADMIN_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "activity",
     label: "Activity",
-    tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections", "email_log"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "billing",
@@ -488,7 +488,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "reset_va_password"] as AdminTab[]).includes(t.id)),
   },
 ];
 
@@ -496,7 +496,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
 const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR_GROUPS];
 
 // Tab IDs that belong to the TEAM section
-const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "email_log", "reset_va_password"];
+const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "reset_va_password"];
 
 // Tabs reserved for financial access (Founder/Accounting, see
 // financialAccess.ts) — invoices, paystubs, and the send-history log stay

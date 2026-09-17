@@ -68,12 +68,24 @@ const TYPE_COLORS: Record<EmailType, { bg: string; text: string; label: string }
   alert:            { bg: "#fef2f2", text: "#dc2626", label: "Alert" },
 };
 
+/* A type not in the table above still has to render. Reading .bg off an
+   undefined lookup threw during render, and one unrecognised row was enough to
+   replace the whole admin panel with the framework error page — which is how a
+   logged "invoice reminder" (a space where the key has an underscore) blanked
+   the Email Log. Unknown types now show in neutral grey under their own name. */
+const UNKNOWN_TYPE = { bg: "#f0ece6", text: "#6b5c4e", label: "Email" };
+
+function typeStyle(type: string): { bg: string; text: string; label: string } {
+  return TYPE_COLORS[type as EmailType] ?? UNKNOWN_TYPE;
+}
+
 /* ── Component ───────────────────────────────────────────── */
 
 export default function EmailStatusTab() {
   const [records, setRecords]       = useState<UnifiedEmail[]>([]);
   const [events, setEvents]         = useState<EmailEvent[]>([]);
   const [loading, setLoading]       = useState(true);
+  const [loadError, setLoadError]   = useState<string | null>(null);
   const [deleting, setDeleting]     = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
@@ -117,17 +129,23 @@ export default function EmailStatusTab() {
         .from("email_events")
         .select("resend_message_id, event_type, created_at")
         .order("created_at", { ascending: true }),
-      // email_log_hidden has no anon/authenticated grants — read through the
-      // service-role route instead of the browser client.
-      fetch("/api/email-log-hidden").then((r) => r.json()),
-      // email_log — every send type that isn't already tracked above (payment
-      // receipts, reminders, alerts, etc.). Same no-direct-grant lockdown.
-      fetch("/api/email-log").then((r) => r.json()),
+      // Both of these are read through service-role routes rather than the
+      // browser client, since neither table carries anon/authenticated grants.
+      // They answer with null rather than throwing: a non-JSON reply from
+      // either used to reject the whole Promise.all, and with nothing catching
+      // it the failure escaped the component and replaced the admin panel with
+      // the framework error page. A hiccup here is now just a missing list.
+      fetch("/api/email-log-hidden")
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      fetch("/api/email-log")
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
     ]);
 
     // Build hidden set
     const hidden = new Set<string>();
-    for (const h of (hiddenRes.hidden ?? []) as { type: string; source_id: string }[]) {
+    for (const h of ((hiddenRes?.hidden ?? []) as { type: string; source_id: string }[])) {
       hidden.add(`${h.type}:${h.source_id}`);
     }
 
@@ -279,9 +297,21 @@ export default function EmailStatusTab() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    load();
+  const retry = useCallback(() => {
+    setLoadError(null);
+    /* Whatever goes wrong in here belongs to this tab. Left unhandled it
+       becomes an unhandled rejection, and the admin panel is replaced by the
+       framework error page instead of showing the rest of the panel. */
+    load().catch((err: unknown) => {
+      console.error("Email Log failed to load", err);
+      setLoadError(err instanceof Error ? err.message : "Unknown error");
+      setLoading(false);
+    });
   }, [load]);
+
+  useEffect(() => {
+    retry();
+  }, [retry]);
 
   // Clear selection whenever filters change
   useEffect(() => {
@@ -538,6 +568,27 @@ export default function EmailStatusTab() {
       <div style={{ background: "#fff", border: "1px solid #e8e0d4", borderRadius: 10, overflow: "hidden" }}>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>Loading…</div>
+        ) : loadError ? (
+          <div style={{ padding: 40, textAlign: "center", fontSize: 13 }}>
+            <div style={{ color: "#c0704e", fontWeight: 600 }}>Could not load the email log.</div>
+            <div style={{ color: "#9e9080", marginTop: 6, fontSize: 12 }}>{loadError}</div>
+            <button
+              onClick={retry}
+              style={{
+                marginTop: 14,
+                padding: "7px 16px",
+                border: "none",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                background: "#c0704e",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              Try again
+            </button>
+          </div>
         ) : filteredRecords.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>
             {records.length === 0 ? "No emails sent yet." : "No emails match your filters."}
@@ -577,7 +628,7 @@ export default function EmailStatusTab() {
             <tbody>
               {filteredRecords.map((rec, i) => {
                 const evts   = eventMap[rec.resend_message_id] ?? {};
-                const tc     = TYPE_COLORS[rec.type];
+                const tc     = typeStyle(rec.type);
                 const rowKey = `${rec.type}:${rec.id}`;
                 const isDeleting  = deleting === rowKey;
                 const isSelected  = selected.has(rowKey);

@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
         }),
       }, {
         log: {
-          type: "invoice reminder",
+          type: "invoice_reminder",
           label: invoice.invoice_number,
           sublabel: invoice.to_name || "Daily reminder",
         },

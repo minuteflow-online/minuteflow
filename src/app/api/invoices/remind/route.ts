@@ -105,7 +105,7 @@ export async function POST(request: Request) {
     }),
   }, {
     log: {
-      type: "invoice reminder",
+      type: "invoice_reminder",
       label: invoice.invoice_number,
       sublabel: invoice.to_name || "Manual reminder",
     },
