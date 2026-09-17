@@ -10,9 +10,10 @@
 // PATCH /api/assigned-tasks/[id] already has — see that route's comment and
 // this app's README.
 //
-// Deliberately out of scope for v1: Personal DMs, the Comments/notification
-// feed, Admin oversight, per-project boards, attachments, @mention
-// autocomplete, editing, delete/pin/archive. See the desktop README.
+// Personal DMs live in conversations.ts, the Comments feed in
+// notifications.ts. Deliberately out of scope here: Admin oversight,
+// per-project boards, attachments, @mention autocomplete, editing,
+// delete/pin/archive. See the desktop README.
 import { ensureAuth } from "./db";
 import { API_BASE } from "./config";
 

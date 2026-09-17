@@ -8,9 +8,12 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-async function requireMember(id: string) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+// Bearer-token fallback for the desktop app — see project-messages/route.ts's
+// identical comment and PR #167.
+async function requireMember(request: Request, id: string) {
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const { data: { user } } = await supabase.auth.getUser(bearerToken);
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   const admin = serviceClient();
   const { data: member } = await admin
@@ -27,9 +30,9 @@ async function requireMember(id: string) {
  * GET /api/conversations/[id]/messages
  * Messages oldest→newest for a conversation the caller is in. Marks it read.
  */
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(request: Request, { params }: RouteContext) {
   const { id } = await params;
-  const auth = await requireMember(id);
+  const auth = await requireMember(request, id);
   if ("error" in auth) return auth.error;
   const { user, admin } = auth;
 
@@ -76,7 +79,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
  */
 export async function POST(request: Request, { params }: RouteContext) {
   const { id } = await params;
-  const auth = await requireMember(id);
+  const auth = await requireMember(request, id);
   if ("error" in auth) return auth.error;
   const { user, admin } = auth;
 
@@ -124,7 +127,7 @@ export async function POST(request: Request, { params }: RouteContext) {
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
   const { id } = await params;
-  const auth = await requireMember(id);
+  const auth = await requireMember(request, id);
   if ("error" in auth) return auth.error;
   const { user, admin } = auth;
 

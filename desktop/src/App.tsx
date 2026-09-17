@@ -321,7 +321,7 @@ export default function App() {
               Message Board
             </button>
           </div>
-          {rightTab === "todo" ? <TodoPanel task={selectedTask} /> : <MessageBoardPanel />}
+          {rightTab === "todo" ? <TodoPanel task={selectedTask} /> : <MessageBoardPanel userId={userId} />}
         </div>
       </div>
     </div>

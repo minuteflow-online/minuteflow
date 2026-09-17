@@ -9,10 +9,13 @@ export const dynamic = "force-dynamic";
  * the Team workload view, which shows the whole team, not just staff).
  */
 export async function GET(request: Request) {
-  const supabase = await createClient();
+  // Bearer-token fallback for the desktop app — see project-messages/route.ts's
+  // identical comment and PR #167.
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const includeAll = new URL(request.url).searchParams.get("all") === "true";

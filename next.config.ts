@@ -46,6 +46,9 @@ const nextConfig: NextConfig = {
       { source: "/api/assigned-tasks/:id", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/project-messages", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/project-messages/:id/comments", headers: DESKTOP_CORS_HEADERS },
+      { source: "/api/conversations", headers: DESKTOP_CORS_HEADERS },
+      { source: "/api/conversations/:id/messages", headers: DESKTOP_CORS_HEADERS },
+      { source: "/api/team-members", headers: DESKTOP_CORS_HEADERS },
     ];
   },
 };
