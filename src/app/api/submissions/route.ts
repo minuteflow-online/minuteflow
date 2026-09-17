@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canEmptySubmissionTrash, canReviewSubmissions } from "@/lib/submissions";
 
@@ -7,6 +7,325 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export const dynamic = "force-dynamic";
+
+type AdminClient = SupabaseClient;
+
+/** Every attachment on this batch of submissions, with a signed URL apiece. */
+async function loadAttachments(admin: AdminClient, submissionIds: number[]) {
+  const filesBySubmission = new Map<number, Array<Record<string, unknown>>>();
+  if (submissionIds.length === 0) return filesBySubmission;
+
+  const { data: files } = await admin
+    .from("assigned_task_attachments")
+    .select("id, submission_id, filename, storage_path, file_size, mime_type")
+    .in("submission_id", submissionIds);
+
+  // One batched call instead of one createSignedUrl round-trip per file —
+  // with hundreds of attachments the per-file version was the actual
+  // bottleneck behind "submissions takes a while to load", not the SQL.
+  const paths = (files ?? []).map((f) => f.storage_path as string);
+  const { data: signedUrls } =
+    paths.length > 0
+      ? await admin.storage.from("task-attachments").createSignedUrls(paths, 3600)
+      : { data: [] as Array<{ path?: string | null; signedUrl?: string }> };
+  const urlByPath = new Map((signedUrls ?? []).map((s) => [s.path, s.signedUrl ?? null]));
+
+  for (const file of files ?? []) {
+    const list = filesBySubmission.get(file.submission_id as number) ?? [];
+    list.push({ ...file, url: urlByPath.get(file.storage_path as string) ?? null });
+    filesBySubmission.set(file.submission_id as number, list);
+  }
+  return filesBySubmission;
+}
+
+/**
+ * Time spent per revision round, and where each task currently stands.
+ *
+ * A log belongs to round N when N revisions had been issued before it
+ * started — the same rule the R badge uses, so the timing and the label can
+ * never disagree. Round 0 is the original work, 1 is the first rework, etc.
+ */
+async function loadRoundData(admin: AdminClient, taskIds: number[], completedTasks: Set<number>) {
+  const roundDurations: Record<number, Record<number, number>> = {};
+  /** taskId -> "awaiting" | "revision_requested" | "approved" | "completed" */
+  const reviewState: Record<number, string> = {};
+  if (taskIds.length === 0) return { roundDurations, reviewState };
+
+  const [revisionRes, logRes] = await Promise.all([
+    // Every thread entry, not just revisions: the newest one also tells us
+    // whether the task is still awaiting review (see reviewState below).
+    admin
+      .from("task_submissions")
+      .select("assigned_task_id, message_type, created_at")
+      .in("assigned_task_id", taskIds)
+      // A trashed entry must not decide where the task stands — cancelling
+      // a mistaken reversal works by trashing it, so counting it here would
+      // leave the task stuck in the state the mistake caused.
+      .is("deleted_at", null),
+
+    // Logs now name the task they were worked under, so this asks for
+    // exactly the ones that belong to these tasks. It replaces matching on
+    // person + task name + account, which counted one session against every
+    // recurring instance sharing a name — an eight-hour total for someone
+    // on a four-hour day.
+    admin
+      .from("time_logs")
+      .select("assigned_task_id, start_time, duration_ms")
+      .in("assigned_task_id", taskIds)
+      .limit(20000),
+  ]);
+
+  const allEntries = (revisionRes.data ?? []) as Array<{
+    assigned_task_id: number;
+    message_type: string;
+    created_at: string;
+  }>;
+
+  const revisionTimes = new Map<number, string[]>();
+  for (const r of allEntries) {
+    if (r.message_type !== "revision") continue;
+    revisionTimes.set(r.assigned_task_id, (revisionTimes.get(r.assigned_task_id) ?? []).concat(r.created_at));
+  }
+
+  // The newest submission/revision/approval decides where a task stands.
+  // Derived from the thread rather than assigned_tasks.status, which isn't
+  // synced when an admin issues a revision and so can't be trusted here.
+  const latestByTask = new Map<number, { message_type: string; created_at: string }>();
+  for (const entry of allEntries) {
+    if (!["submission", "revision", "approval", "approval_reversed"].includes(entry.message_type))
+      continue;
+    const current = latestByTask.get(entry.assigned_task_id);
+    if (!current || entry.created_at > current.created_at) {
+      latestByTask.set(entry.assigned_task_id, entry);
+    }
+  }
+
+  for (const [taskId, entry] of latestByTask) {
+    if (completedTasks.has(taskId)) {
+      reviewState[taskId] = "completed";
+      continue;
+    }
+    reviewState[taskId] =
+      entry.message_type === "revision"
+        ? "revision_requested"
+        : entry.message_type === "approval"
+          ? "approved"
+          : // submission, or an approval that was reversed — either way it's
+            // back in front of a reviewer.
+            "awaiting";
+  }
+
+  // Each log names its task outright, so nothing has to be inferred.
+  const logs = (logRes.data ?? []) as Array<{
+    assigned_task_id: number | null;
+    start_time: string | null;
+    duration_ms: number | null;
+  }>;
+
+  for (const taskId of taskIds) {
+    const times = (revisionTimes.get(taskId) ?? []).slice().sort();
+    const buckets: Record<number, number> = {};
+
+    for (const log of logs) {
+      if (log.assigned_task_id !== taskId) continue;
+      if (!log.start_time) continue;
+      const round = times.filter((t) => t < log.start_time!).length;
+      buckets[round] = (buckets[round] ?? 0) + Number(log.duration_ms ?? 0);
+    }
+
+    if (Object.keys(buckets).length > 0) roundDurations[taskId] = buckets;
+  }
+
+  return { roundDurations, reviewState };
+}
+
+/**
+ * Work that is owed, on the day it is owed. The calendar could only ever show
+ * what came in, so a person with a full week of due dates and nothing
+ * submitted yet had an empty calendar. Tasks still outstanding are returned
+ * alongside the submissions and plotted on their due date, which is the
+ * question the calendar is actually asked: what am I waiting for, and what is
+ * already late.
+ *
+ * Independent of the submissions query entirely — it reads assigned_tasks
+ * directly rather than anything derived from `rows` — so it runs in the same
+ * Promise.all wave rather than after it.
+ */
+async function loadExpectedWork(
+  admin: AdminClient,
+  opts: {
+    isAdminEquivalent: boolean;
+    va: string | null;
+    scope: string | null;
+    projectId: string | null;
+    userId: string;
+  }
+): Promise<Array<Record<string, unknown>>> {
+  const { isAdminEquivalent, va, scope, projectId, userId } = opts;
+  const expected: Array<Record<string, unknown>> = [];
+
+  // Statuses that mean the work is still owed. Anything submitted or
+  // finished is already represented by its submission entry.
+  const OPEN_STATUSES = new Set([
+    "unassigned",
+    "pending",
+    "on_queue",
+    "in_progress",
+    "revision_needed",
+  ]);
+
+  const { data: dueTasks } = await admin
+    .from("assigned_tasks")
+    .select(
+      "id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
+        "assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), " +
+        "projects(id, name, kind), assigned_task_assignees(id, va_id, status)"
+    )
+    .not("due_date", "is", null)
+    .is("deleted_at", null)
+    .is("archived_at", null)
+    // Explicit, because PostgREST silently truncates at 1000 rows otherwise.
+    .limit(5000);
+
+  type DueTask = {
+    id: number;
+    task_name: string;
+    task_detail: string | null;
+    account: string | null;
+    project: string | null;
+    project_id: string | null;
+    status: string | null;
+    due_date: string | null;
+    due_time: string | null;
+    end_date: string | null;
+    end_time: string | null;
+    category: string | null;
+    review_required: boolean | null;
+    assigned_by: string | null;
+    fixed_pay_task_id: number | null;
+    assigned_by_profile?: { id: string; full_name: string | null; username: string | null } | null;
+    projects?: { id: string; name: string; kind: string } | null;
+    assigned_task_assignees?: Array<{ id: number; va_id: string | null; status: string | null }>;
+  };
+
+  let dueRows = ((dueTasks ?? []) as unknown as DueTask[]).filter((t) =>
+    (t.assigned_task_assignees ?? []).some((a) => OPEN_STATUSES.has(a.status ?? ""))
+  );
+
+  // Same visibility rule as the submissions above: your own work, plus
+  // anything you assigned and are therefore waiting on.
+  if (!isAdminEquivalent) {
+    dueRows = dueRows.filter(
+      (t) =>
+        t.assigned_by === userId ||
+        (t.assigned_task_assignees ?? []).some((a) => a.va_id === userId)
+    );
+  }
+
+  if (isAdminEquivalent && va && va !== "all") {
+    dueRows = dueRows.filter((t) => (t.assigned_task_assignees ?? []).some((a) => a.va_id === va));
+  }
+
+  if (projectId && projectId !== "all") {
+    dueRows = dueRows.filter((t) => t.project_id === projectId);
+  } else if (scope === "adhoc") {
+    dueRows = dueRows.filter((t) => !t.project_id);
+  } else if (scope === "objective" || scope === "operation") {
+    dueRows = dueRows.filter((t) => t.projects?.kind === scope);
+  }
+
+  // Names for the people the work is owed by. One lookup rather than an
+  // embed, because assigned_tasks already embeds profiles once for
+  // assigned_by and a second path off the same row is ambiguous.
+  const waitingOnIds = [
+    ...new Set(
+      dueRows
+        .flatMap((t) => (t.assigned_task_assignees ?? []).map((a) => a.va_id))
+        .filter((v): v is string => Boolean(v))
+    ),
+  ];
+  let people: Record<string, { id: string; full_name: string | null; username: string | null }> = {};
+  if (waitingOnIds.length > 0) {
+    const { data: peopleRows } = await admin
+      .from("profiles")
+      .select("id, full_name, username")
+      .in("id", waitingOnIds);
+    people = Object.fromEntries((peopleRows ?? []).map((p) => [p.id, p]));
+  }
+
+  for (const task of dueRows) {
+    for (const assignee of task.assigned_task_assignees ?? []) {
+      if (!OPEN_STATUSES.has(assignee.status ?? "")) continue;
+      if (!assignee.va_id) continue;
+      expected.push({
+        // Negative so it can never collide with a submission id — the feed
+        // keys React nodes and the revision map off this.
+        id: -assignee.id,
+        assigned_task_id: task.id,
+        user_id: assignee.va_id,
+        message_type: "expected",
+        content: "",
+        submission_link: null,
+        submission_comment: null,
+        // The due moment, so anything that sorts the feed by time puts this
+        // where the work is owed. The calendar buckets on due_date itself.
+        created_at: `${task.due_date}T${task.due_time || "23:59:59"}`,
+        edited_at: null,
+        due_at: null,
+        attachments: [],
+        assignee_status: assignee.status,
+        profiles: people[assignee.va_id] ?? null,
+        task: {
+          id: task.id,
+          task_name: task.task_name,
+          task_detail: task.task_detail,
+          account: task.account,
+          project: task.project,
+          project_id: task.project_id,
+          project_kind: task.projects?.kind ?? null,
+          project_name: task.projects?.name ?? null,
+          status: task.status,
+          category: task.category,
+          review_required: task.review_required,
+          assigned_by: task.assigned_by,
+          is_output_based: task.fixed_pay_task_id != null,
+          assigned_by_name:
+            task.assigned_by_profile?.full_name ?? task.assigned_by_profile?.username ?? null,
+          due_date: task.due_date,
+          due_time: task.due_time,
+          end_date: task.end_date,
+          end_time: task.end_time,
+        },
+      });
+    }
+  }
+
+  return expected;
+}
+
+/**
+ * Comments/notes on a thread notify the caller via a `messages` row stamped
+ * with the task it's about (see notifyOne in the submissions POST route).
+ * Counting those per task — for this viewer only — is what drives the ✉️
+ * badge and the "Unread" filter, without needing a second concept of
+ * "flagged" beyond the existing comment thread.
+ */
+async function loadUnreadByTask(admin: AdminClient, taskIds: number[], userId: string) {
+  const unreadByTask: Record<number, number> = {};
+  if (taskIds.length === 0) return unreadByTask;
+
+  const { data: unread } = await admin
+    .from("messages")
+    .select("assigned_task_id")
+    .eq("target_user_id", userId)
+    .eq("read", false)
+    .in("assigned_task_id", taskIds);
+  for (const row of (unread ?? []) as Array<{ assigned_task_id: number | null }>) {
+    if (row.assigned_task_id == null) continue;
+    unreadByTask[row.assigned_task_id] = (unreadByTask[row.assigned_task_id] ?? 0) + 1;
+  }
+  return unreadByTask;
+}
 
 /**
  * GET /api/submissions — the harvest feed behind Productivity → Submissions.
@@ -30,17 +349,6 @@ export async function GET(request: Request) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, department, admin_permissions")
-    .eq("id", user.id)
-    .single();
-
-  const isAdminEquivalent =
-    profile?.role === "admin" ||
-    profile?.role === "manager" ||
-    hasAdminPermission(profile, "task_management");
 
   const { searchParams } = new URL(request.url);
   const va = searchParams.get("va");
@@ -72,15 +380,28 @@ export async function GET(request: Request) {
     ? query.not("deleted_at", "is", null)
     : query.is("deleted_at", null);
 
-  if (isAdminEquivalent && va && va !== "all") {
-    query = query.eq("user_id", va);
-  }
-
   if (from) query = query.gte("created_at", `${from}T00:00:00Z`);
   if (to) query = query.lte("created_at", `${to}T23:59:59Z`);
 
-  const { data, error } = await query;
+  // The query above never touches `profile` (the `va` filter that used to
+  // depend on it now happens in JS below), so it doesn't have to wait on the
+  // profile round-trip — the two fire together instead of stacking. Same for
+  // `isAdminEquivalent`-only round trips further down (attachments, round
+  // durations, unread count, expected work): none of those depend on each
+  // other, so they're batched into one Promise.all after `rows` is known
+  // instead of running one after another. On a workspace with a few hundred
+  // submissions this was the actual source of "submissions takes a while to
+  // load" — not any single slow query, but ~8 of them run in series.
+  const [{ data: profile }, { data, error }] = await Promise.all([
+    supabase.from("profiles").select("role, department, admin_permissions").eq("id", user.id).single(),
+    query,
+  ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  const isAdminEquivalent =
+    profile?.role === "admin" ||
+    profile?.role === "manager" ||
+    hasAdminPermission(profile, "task_management");
 
   type Row = Record<string, unknown> & {
     id: number;
@@ -120,6 +441,11 @@ export async function GET(request: Request) {
     rows = rows.filter(
       (r) => r.user_id === user.id || r.assigned_tasks?.assigned_by === user.id
     );
+  } else if (va && va !== "all") {
+    // Previously a query-side .eq(), which needed `profile` before the query
+    // could even be built. Applied here instead so the query and the profile
+    // lookup above can run concurrently — see the Promise.all note.
+    rows = rows.filter((r) => r.user_id === va);
   }
 
   if (projectId && projectId !== "all") {
@@ -131,130 +457,32 @@ export async function GET(request: Request) {
   }
 
   const submissionIds = rows.map((r) => r.id);
-  const filesBySubmission = new Map<number, Array<Record<string, unknown>>>();
-
-  if (submissionIds.length > 0) {
-    const { data: files } = await admin
-      .from("assigned_task_attachments")
-      .select("id, submission_id, filename, storage_path, file_size, mime_type")
-      .in("submission_id", submissionIds);
-
-    await Promise.all(
-      (files ?? []).map(async (file) => {
-        const { data: signed } = await admin.storage
-          .from("task-attachments")
-          .createSignedUrl(file.storage_path as string, 3600);
-        const list = filesBySubmission.get(file.submission_id as number) ?? [];
-        list.push({ ...file, url: signed?.signedUrl ?? null });
-        filesBySubmission.set(file.submission_id as number, list);
-      })
-    );
-  }
-
-  // ── Time spent per revision round ────────────────────────────────────────
   // A log belongs to round N when N revisions had been issued before it
   // started — the same rule the R badge uses, so the timing and the label can
   // never disagree. Round 0 is the original work, 1 is the first rework, etc.
   const taskIds = Array.from(
     new Set(rows.map((r) => r.assigned_tasks?.id).filter((v): v is number => v != null))
   );
-  const roundDurations: Record<number, Record<number, number>> = {};
-  /** taskId -> "awaiting" | "revision_requested" | "approved" */
-  const reviewState: Record<number, string> = {};
+  // A task marked complete is done regardless of where its thread ended —
+  // otherwise it keeps showing Approve/Revise after someone closed it out.
+  const completedTasks = new Set(
+    rows.filter((r) => r.assigned_tasks?.status === "completed").map((r) => r.assigned_tasks!.id)
+  );
 
-  if (taskIds.length > 0) {
-    const [revisionRes, logRes] = await Promise.all([
-      // Every thread entry, not just revisions: the newest one also tells us
-      // whether the task is still awaiting review (see reviewState below).
-      admin
-        .from("task_submissions")
-        .select("assigned_task_id, message_type, created_at")
-        .in("assigned_task_id", taskIds)
-        // A trashed entry must not decide where the task stands — cancelling
-        // a mistaken reversal works by trashing it, so counting it here would
-        // leave the task stuck in the state the mistake caused.
-        .is("deleted_at", null),
-
-      // Logs now name the task they were worked under, so this asks for
-      // exactly the ones that belong to these tasks. It replaces matching on
-      // person + task name + account, which counted one session against every
-      // recurring instance sharing a name — an eight-hour total for someone
-      // on a four-hour day.
-      admin
-        .from("time_logs")
-        .select("assigned_task_id, start_time, duration_ms")
-        .in("assigned_task_id", taskIds)
-        .limit(20000),
-    ]);
-
-    const allEntries = (revisionRes.data ?? []) as Array<{
-      assigned_task_id: number;
-      message_type: string;
-      created_at: string;
-    }>;
-
-    const revisionTimes = new Map<number, string[]>();
-    for (const r of allEntries) {
-      if (r.message_type !== "revision") continue;
-      revisionTimes.set(r.assigned_task_id, (revisionTimes.get(r.assigned_task_id) ?? []).concat(r.created_at));
-    }
-
-    // The newest submission/revision/approval decides where a task stands.
-    // Derived from the thread rather than assigned_tasks.status, which isn't
-    // synced when an admin issues a revision and so can't be trusted here.
-    const latestByTask = new Map<number, { message_type: string; created_at: string }>();
-    for (const entry of allEntries) {
-      if (!["submission", "revision", "approval", "approval_reversed"].includes(entry.message_type))
-        continue;
-      const current = latestByTask.get(entry.assigned_task_id);
-      if (!current || entry.created_at > current.created_at) {
-        latestByTask.set(entry.assigned_task_id, entry);
-      }
-    }
-    // A task marked complete is done regardless of where its thread ended —
-    // otherwise it keeps showing Approve/Revise after someone closed it out.
-    const completedTasks = new Set(
-      rows
-        .filter((r) => r.assigned_tasks?.status === "completed")
-        .map((r) => r.assigned_tasks!.id)
-    );
-
-    for (const [taskId, entry] of latestByTask) {
-      if (completedTasks.has(taskId)) {
-        reviewState[taskId] = "completed";
-        continue;
-      }
-      reviewState[taskId] =
-        entry.message_type === "revision"
-          ? "revision_requested"
-          : entry.message_type === "approval"
-            ? "approved"
-            : // submission, or an approval that was reversed — either way it's
-              // back in front of a reviewer.
-              "awaiting";
-    }
-
-    // Each log names its task outright, so nothing has to be inferred.
-    const logs = (logRes.data ?? []) as Array<{
-      assigned_task_id: number | null;
-      start_time: string | null;
-      duration_ms: number | null;
-    }>;
-
-    for (const taskId of taskIds) {
-      const times = (revisionTimes.get(taskId) ?? []).slice().sort();
-      const buckets: Record<number, number> = {};
-
-      for (const log of logs) {
-        if (log.assigned_task_id !== taskId) continue;
-        if (!log.start_time) continue;
-        const round = times.filter((t) => t < log.start_time!).length;
-        buckets[round] = (buckets[round] ?? 0) + Number(log.duration_ms ?? 0);
-      }
-
-      if (Object.keys(buckets).length > 0) roundDurations[taskId] = buckets;
-    }
-  }
+  // Four lookups that only ever read `rows`/`taskIds`, never each other —
+  // batched into one wave instead of stacked one after another. That
+  // stacking, not any single slow query, was the real source of "submissions
+  // takes a while to load": roughly half a dozen sequential Supabase
+  // round-trips add up fast even when each one individually is fine.
+  const [filesBySubmission, roundData, expected, unreadByTask] = await Promise.all([
+    loadAttachments(admin, submissionIds),
+    loadRoundData(admin, taskIds, completedTasks),
+    showTrash
+      ? Promise.resolve([] as Array<Record<string, unknown>>)
+      : loadExpectedWork(admin, { isAdminEquivalent, va, scope, projectId, userId: user.id }),
+    loadUnreadByTask(admin, taskIds, user.id),
+  ]);
+  const { roundDurations, reviewState } = roundData;
 
   const submissions = rows.map((row) => {
     const task = row.assigned_tasks;
@@ -290,176 +518,6 @@ export async function GET(request: Request) {
         : null,
     };
   });
-
-  // ── Expected work ────────────────────────────────────────────────────────
-  // The calendar could only ever show what came in, so a person with a full
-  // week of due dates and nothing submitted yet had an empty calendar. Tasks
-  // still outstanding are returned alongside the submissions and plotted on
-  // their due date, which is the question the calendar is actually asked:
-  // what am I waiting for, and what is already late.
-  //
-  // Trash is a view of deleted submissions; expected work has no place in it.
-  const expected: Array<Record<string, unknown>> = [];
-
-  if (!showTrash) {
-    // Statuses that mean the work is still owed. Anything submitted or
-    // finished is already represented by its submission entry.
-    const OPEN_STATUSES = new Set([
-      "unassigned",
-      "pending",
-      "on_queue",
-      "in_progress",
-      "revision_needed",
-    ]);
-
-    const { data: dueTasks } = await admin
-      .from("assigned_tasks")
-      .select(
-        "id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
-          "assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), " +
-          "projects(id, name, kind), assigned_task_assignees(id, va_id, status)"
-      )
-      .not("due_date", "is", null)
-      .is("deleted_at", null)
-      .is("archived_at", null)
-      // Explicit, because PostgREST silently truncates at 1000 rows otherwise.
-      .limit(5000);
-
-    type DueTask = {
-      id: number;
-      task_name: string;
-      task_detail: string | null;
-      account: string | null;
-      project: string | null;
-      project_id: string | null;
-      status: string | null;
-      due_date: string | null;
-      due_time: string | null;
-      end_date: string | null;
-      end_time: string | null;
-      category: string | null;
-      review_required: boolean | null;
-      assigned_by: string | null;
-      fixed_pay_task_id: number | null;
-      assigned_by_profile?: { id: string; full_name: string | null; username: string | null } | null;
-      projects?: { id: string; name: string; kind: string } | null;
-      assigned_task_assignees?: Array<{ id: number; va_id: string | null; status: string | null }>;
-    };
-
-    let dueRows = ((dueTasks ?? []) as unknown as DueTask[]).filter((t) =>
-      (t.assigned_task_assignees ?? []).some((a) => OPEN_STATUSES.has(a.status ?? ""))
-    );
-
-    // Same visibility rule as the submissions above: your own work, plus
-    // anything you assigned and are therefore waiting on.
-    if (!isAdminEquivalent) {
-      dueRows = dueRows.filter(
-        (t) =>
-          t.assigned_by === user.id ||
-          (t.assigned_task_assignees ?? []).some((a) => a.va_id === user.id)
-      );
-    }
-
-    if (isAdminEquivalent && va && va !== "all") {
-      dueRows = dueRows.filter((t) =>
-        (t.assigned_task_assignees ?? []).some((a) => a.va_id === va)
-      );
-    }
-
-    if (projectId && projectId !== "all") {
-      dueRows = dueRows.filter((t) => t.project_id === projectId);
-    } else if (scope === "adhoc") {
-      dueRows = dueRows.filter((t) => !t.project_id);
-    } else if (scope === "objective" || scope === "operation") {
-      dueRows = dueRows.filter((t) => t.projects?.kind === scope);
-    }
-
-    // Names for the people the work is owed by. One lookup rather than an
-    // embed, because assigned_tasks already embeds profiles once for
-    // assigned_by and a second path off the same row is ambiguous.
-    const waitingOnIds = [
-      ...new Set(
-        dueRows
-          .flatMap((t) => (t.assigned_task_assignees ?? []).map((a) => a.va_id))
-          .filter((v): v is string => Boolean(v))
-      ),
-    ];
-    let people: Record<string, { id: string; full_name: string | null; username: string | null }> = {};
-    if (waitingOnIds.length > 0) {
-      const { data: peopleRows } = await admin
-        .from("profiles")
-        .select("id, full_name, username")
-        .in("id", waitingOnIds);
-      people = Object.fromEntries((peopleRows ?? []).map((p) => [p.id, p]));
-    }
-
-    for (const task of dueRows) {
-      for (const assignee of task.assigned_task_assignees ?? []) {
-        if (!OPEN_STATUSES.has(assignee.status ?? "")) continue;
-        if (!assignee.va_id) continue;
-        expected.push({
-          // Negative so it can never collide with a submission id — the feed
-          // keys React nodes and the revision map off this.
-          id: -assignee.id,
-          assigned_task_id: task.id,
-          user_id: assignee.va_id,
-          message_type: "expected",
-          content: "",
-          submission_link: null,
-          submission_comment: null,
-          // The due moment, so anything that sorts the feed by time puts this
-          // where the work is owed. The calendar buckets on due_date itself.
-          created_at: `${task.due_date}T${task.due_time || "23:59:59"}`,
-          edited_at: null,
-          due_at: null,
-          attachments: [],
-          assignee_status: assignee.status,
-          profiles: people[assignee.va_id] ?? null,
-          task: {
-            id: task.id,
-            task_name: task.task_name,
-            task_detail: task.task_detail,
-            account: task.account,
-            project: task.project,
-            project_id: task.project_id,
-            project_kind: task.projects?.kind ?? null,
-            project_name: task.projects?.name ?? null,
-            status: task.status,
-            category: task.category,
-            review_required: task.review_required,
-            assigned_by: task.assigned_by,
-            is_output_based: task.fixed_pay_task_id != null,
-            assigned_by_name:
-              task.assigned_by_profile?.full_name ?? task.assigned_by_profile?.username ?? null,
-            due_date: task.due_date,
-            due_time: task.due_time,
-            end_date: task.end_date,
-            end_time: task.end_time,
-          },
-        });
-      }
-    }
-  }
-
-  // ── Unread indicator ─────────────────────────────────────────────────────
-  // Comments/notes on a thread notify the caller via a `messages` row stamped
-  // with the task it's about (see notifyOne in the submissions POST route).
-  // Counting those per task — for this viewer only — is what drives the ✉️
-  // badge and the "Unread" filter, without needing a second concept of
-  // "flagged" beyond the existing comment thread.
-  const unreadByTask: Record<number, number> = {};
-  if (taskIds.length > 0) {
-    const { data: unread } = await admin
-      .from("messages")
-      .select("assigned_task_id")
-      .eq("target_user_id", user.id)
-      .eq("read", false)
-      .in("assigned_task_id", taskIds);
-    for (const row of (unread ?? []) as Array<{ assigned_task_id: number | null }>) {
-      if (row.assigned_task_id == null) continue;
-      unreadByTask[row.assigned_task_id] = (unreadByTask[row.assigned_task_id] ?? 0) + 1;
-    }
-  }
 
   // `seesAll` is the broader admin-equivalent tier (who may view everyone's
   // submissions); `canReview` is the narrower Admin/CEO/Founder tier the POST
