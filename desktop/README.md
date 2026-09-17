@@ -38,6 +38,16 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `TopNav.tsx`. The renderer reports clocked-in state to the main process via
   `window.mfDesktop.setClockedIn()` (App.tsx) since main can't read React
   state directly; see `electron/main.js`'s `close` handler.
+- **Message Board** — a "To-Do / Message Board" tab strip above the right
+  panel switches to the team's General board: read topics, start one, reply.
+  Scoped to general topics only (`project_id` null) — mirrors
+  `DashboardMessagePanel.tsx`'s General tab, same amber "+ New Topic" button,
+  same topic-row card, same avatar circles. Goes through
+  `/api/project-messages` (+ its `/comments` sub-route) rather than direct
+  table writes, so `notifyMentions()` (bell + Telegram for anyone @mentioned)
+  still fires — see `src/lib/messageBoard.ts`. Not in this version: Personal
+  DMs, the Comments/notification feed, Admin oversight, per-project boards,
+  attachments, @mention autocomplete, editing, delete/pin/archive.
 
 ## What it deliberately does NOT do yet
 

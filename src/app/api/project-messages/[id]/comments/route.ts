@@ -9,9 +9,12 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 const authorSelect = "id, full_name, username, avatar_url";
 
-async function requireUser() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+// Bearer-token fallback for the desktop app — see project-messages/route.ts's
+// identical comment and PR #167.
+async function requireUser(request: Request) {
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const { data: { user } } = await supabase.auth.getUser(bearerToken);
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
   return { user, profile };
@@ -24,7 +27,7 @@ async function requireUser() {
  * the post itself — reading and replying share one gate.
  */
 export async function POST(request: Request, { params }: RouteContext) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
   const { id: messageId } = await params;
@@ -71,7 +74,7 @@ export async function POST(request: Request, { params }: RouteContext) {
  * Author-or-admin, same rule as delete.
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
   const isAdmin = hasBroadAdminAccess(profile);
@@ -113,7 +116,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
  * Soft delete, author-or-admin — same rule as deleting a post.
  */
 export async function DELETE(request: Request, { params }: RouteContext) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
   const isAdmin = hasBroadAdminAccess(profile);
