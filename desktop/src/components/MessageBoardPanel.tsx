@@ -8,12 +8,13 @@
 // yet (Admin oversight, per-project boards, attachments, @mention
 // autocomplete, editing, group-chat title beyond the basics, delete/pin).
 import { useCallback, useEffect, useState } from "react";
-import { fetchGeneralTopics, postTopic, postReply, type Topic } from "../lib/messageBoard";
+import { fetchGeneralTopics, postTopic, postReply, editTopic, editComment, type Topic } from "../lib/messageBoard";
 import {
   fetchConversations,
   fetchTeamMembers,
   fetchMessages,
   sendMessage,
+  editMessage,
   startConversation,
   type Conversation,
   type DirectMessage,
@@ -88,6 +89,13 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   const [reply, setReply] = useState("");
   const topicComposer = useAttachmentComposer();
   const replyComposer = useAttachmentComposer();
+  // Editing your own topic/reply in place — only the words change, with an
+  // "edited" mark so nobody is silently rewritten. Mirrors DashboardMessagePanel.tsx.
+  const [editingTopic, setEditingTopic] = useState(false);
+  const [editTopicTitle, setEditTopicTitle] = useState("");
+  const [editTopicBody, setEditTopicBody] = useState("");
+  const [editingComment, setEditingComment] = useState<number | null>(null);
+  const [editCommentText, setEditCommentText] = useState("");
 
   // ── Personal ─────────────────────────────────────────────────────────
   const [convs, setConvs] = useState<Conversation[]>([]);
@@ -100,6 +108,9 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [groupTitle, setGroupTitle] = useState("");
   const dmComposer = useAttachmentComposer();
+  // Editing one of your own DMs in place — same shape as editing a reply.
+  const [editingDm, setEditingDm] = useState<number | null>(null);
+  const [editDmText, setEditDmText] = useState("");
 
   // ── Comments ─────────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<Notification[]>([]);
@@ -198,8 +209,33 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
     }
   }, [activeTopic, reply, replyComposer, posting, loadTopics]);
 
+  const saveTopicEdit = useCallback(async () => {
+    if (!activeTopic) return;
+    const title = editTopicTitle.trim();
+    const body = editTopicBody.trim();
+    if (!title || !body) return;
+    const updated = await editTopic(activeTopic.id, title, body);
+    if (updated) {
+      setEditingTopic(false);
+      setActiveTopic((prev) => (prev ? { ...prev, title: updated.title, body: updated.body, edited_at: updated.edited_at } : prev));
+      await loadTopics();
+    }
+  }, [activeTopic, editTopicTitle, editTopicBody, loadTopics]);
+
+  const saveCommentEdit = useCallback(async (topicId: number, commentId: number) => {
+    const text = editCommentText.trim();
+    if (!text) return;
+    const updated = await editComment(topicId, commentId, text);
+    if (updated) {
+      setEditingComment(null);
+      setEditCommentText("");
+      await loadTopics();
+    }
+  }, [editCommentText, loadTopics]);
+
   const openConv = useCallback(async (c: Conversation) => {
     setActiveConv(c);
+    setEditingDm(null);
     const rows = await fetchMessages(c.id);
     setDms(rows);
     void loadConvs();
@@ -249,6 +285,18 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
     }
   }, [activeConv, dmText, dmComposer, posting, loadConvs]);
 
+  const saveDmEdit = useCallback(async (messageId: number) => {
+    if (!activeConv) return;
+    const text = editDmText.trim();
+    if (!text) return;
+    const updated = await editMessage(activeConv.id, messageId, text);
+    if (updated) {
+      setDms((prev) => prev.map((m) => (m.id === messageId ? { ...m, body: updated.body, edited_at: updated.edited_at } : m)));
+      setEditingDm(null);
+      setEditDmText("");
+    }
+  }, [activeConv, editDmText]);
+
   const handleStartChat = useCallback(async () => {
     if (picked.size === 0 || posting) return;
     setPosting(true);
@@ -286,6 +334,9 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
               setActiveTopic(null);
               setActiveConv(null);
               setComposingChat(false);
+              setEditingTopic(false);
+              setEditingComment(null);
+              setEditingDm(null);
             }}
             className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors cursor-pointer ${
               innerTab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"
@@ -331,21 +382,67 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
           activeTopic ? (
             <div className="flex flex-col h-full">
               <div className="flex items-center gap-2 mb-3">
-                <button onClick={() => setActiveTopic(null)} className="text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer">
+                <button
+                  onClick={() => {
+                    setActiveTopic(null);
+                    setEditingTopic(false);
+                    setEditingComment(null);
+                  }}
+                  className="text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer"
+                >
                   ← Back
                 </button>
-                <span className="text-[13px] font-bold text-espresso truncate">{activeTopic.title || "Untitled"}</span>
+                <span className="text-[13px] font-bold text-espresso truncate flex-1">{activeTopic.title || "Untitled"}</span>
+                {activeTopic.author_id === userId && !editingTopic && (
+                  <button
+                    onClick={() => {
+                      setEditingTopic(true);
+                      setEditTopicTitle(activeTopic.title || "");
+                      setEditTopicBody(activeTopic.body || "");
+                    }}
+                    className="text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer shrink-0"
+                  >
+                    Edit
+                  </button>
+                )}
               </div>
 
               <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-0.5">
                 <div className="flex items-start gap-2">
                   <AvatarCircle name={authorName(activeTopic.author)} size={20} />
                   <div className="min-w-0 flex-1 rounded-lg bg-parchment/40 px-2.5 py-2">
-                    <p className="text-[10px] font-semibold text-walnut">
-                      {authorName(activeTopic.author)} · {ago(activeTopic.created_at)}
-                    </p>
-                    <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(activeTopic.body)}</p>
-                    <AttachmentList attachments={activeTopic.attachments} />
+                    {editingTopic ? (
+                      <div className="space-y-1.5">
+                        <input value={editTopicTitle} onChange={(e) => setEditTopicTitle(e.target.value)} placeholder="Topic title" className={inputClass} autoFocus />
+                        <textarea
+                          value={editTopicBody}
+                          onChange={(e) => setEditTopicBody(e.target.value)}
+                          rows={3}
+                          className={`${inputClass} resize-none`}
+                        />
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => void saveTopicEdit()}
+                            disabled={!editTopicTitle.trim() || !editTopicBody.trim()}
+                            className="px-2.5 py-1 rounded-lg bg-amber-soft text-amber text-[10px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 cursor-pointer"
+                          >
+                            Save
+                          </button>
+                          <button onClick={() => setEditingTopic(false)} className="px-2.5 py-1 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20 cursor-pointer">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-[10px] font-semibold text-walnut">
+                          {authorName(activeTopic.author)} · {ago(activeTopic.created_at)}
+                          {activeTopic.edited_at && <span className="italic text-stone"> · edited</span>}
+                        </p>
+                        <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(activeTopic.body)}</p>
+                        <AttachmentList attachments={activeTopic.attachments} />
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -353,11 +450,51 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                   <div key={c.id} className="flex items-start gap-2 pl-4">
                     <AvatarCircle name={authorName(c.author)} size={18} />
                     <div className="min-w-0 flex-1 rounded-lg bg-cream px-2.5 py-1.5">
-                      <p className="text-[10px] font-semibold text-walnut">
-                        {authorName(c.author)} · {ago(c.created_at)}
-                      </p>
-                      <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(c.body)}</p>
-                      <AttachmentList attachments={c.attachments} />
+                      {editingComment === c.id ? (
+                        <div className="space-y-1.5">
+                          <textarea
+                            value={editCommentText}
+                            onChange={(e) => setEditCommentText(e.target.value)}
+                            rows={2}
+                            autoFocus
+                            className={`${inputClass} resize-none`}
+                          />
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() => void saveCommentEdit(activeTopic.id, c.id)}
+                              disabled={!editCommentText.trim()}
+                              className="px-2.5 py-1 rounded-lg bg-amber-soft text-amber text-[10px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 cursor-pointer"
+                            >
+                              Save
+                            </button>
+                            <button onClick={() => setEditingComment(null)} className="px-2.5 py-1 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20 cursor-pointer">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-[10px] font-semibold text-walnut flex items-center gap-1.5">
+                            <span>
+                              {authorName(c.author)} · {ago(c.created_at)}
+                              {c.edited_at && <span className="italic text-stone"> · edited</span>}
+                            </span>
+                            {c.author_id === userId && (
+                              <button
+                                onClick={() => {
+                                  setEditingComment(c.id);
+                                  setEditCommentText(c.body);
+                                }}
+                                className="font-semibold text-slate-blue hover:underline cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </p>
+                          <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(c.body)}</p>
+                          <AttachmentList attachments={c.attachments} />
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -467,6 +604,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                 <button
                   onClick={() => {
                     setActiveConv(null);
+                    setEditingDm(null);
                     void loadConvs();
                   }}
                   className="text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer"
@@ -489,11 +627,50 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                       {activeConv.is_group && !m.mine && (
                         <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>
                       )}
-                      <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
-                      <AttachmentList attachments={m.attachments} />
-                      <p className="mt-0.5 text-[9px] text-bark">
-                        {ago(m.created_at)} ago{m.edited_at && <span className="italic text-stone"> · edited</span>}
-                      </p>
+                      {editingDm === m.id ? (
+                        <div className="space-y-1.5">
+                          <textarea
+                            value={editDmText}
+                            onChange={(e) => setEditDmText(e.target.value)}
+                            rows={2}
+                            autoFocus
+                            className="w-full resize-none rounded-lg border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none bg-white"
+                          />
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() => void saveDmEdit(m.id)}
+                              disabled={!editDmText.trim()}
+                              className="px-2.5 py-1 rounded-lg bg-amber-soft text-amber text-[10px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 cursor-pointer"
+                            >
+                              Save
+                            </button>
+                            <button onClick={() => setEditingDm(null)} className="px-2.5 py-1 rounded-lg bg-stone/10 text-stone text-[10px] font-semibold hover:bg-stone/20 cursor-pointer">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
+                          <AttachmentList attachments={m.attachments} />
+                          <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-bark">
+                            <span>
+                              {ago(m.created_at)} ago{m.edited_at && <span className="italic text-stone"> · edited</span>}
+                            </span>
+                            {m.mine && (
+                              <button
+                                onClick={() => {
+                                  setEditingDm(m.id);
+                                  setEditDmText(m.body);
+                                }}
+                                className="font-semibold text-slate-blue hover:underline cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </p>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
