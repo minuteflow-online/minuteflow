@@ -698,6 +698,15 @@ export interface AssignedTask {
   created_at: string;
   updated_at: string;
   status: AssignedTaskStatus;
+  /** Whether this was hand-marked paid (true) vs. paid out by payroll (false),
+   *  same distinction fixed_pay_tasks.paid_manually carries. Meaningless
+   *  while paid_at is null. */
+  paid_manually?: boolean | null;
+  /** When this task was actually paid — independent of `status`. A task can
+   *  sit at any workflow status (submitted, reviewing, approved, completed)
+   *  and still be paid; paying it no longer overwrites status to "paid".
+   *  Null means not yet paid. See lib/fixedPayTaskSync.ts. */
+  paid_at?: string | null;
   assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
   fixed_pay_tasks?: { rate: number } | null;
   recurring_task_templates?: RecurringTaskTemplate | null;
@@ -758,6 +767,10 @@ export interface FixedPayTaskWithClaimer {
   // they only ever arrive via the assigned_tasks mirror status sync (see
   // GET /api/fixed-pay-tasks), which uses the fuller AssignedTaskStatus
   // vocabulary once a task has been claimed and mirrored.
+  //
+  // "paid" is legacy-only: it can still appear on old rows, but nothing
+  // writes it anymore — payment is tracked on paid_at below instead, so
+  // marking a task paid no longer destroys whatever review status it was at.
   status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed" | "cancelled" | "paid";
   start_date: string | null;
   due_date: string | null;
@@ -777,6 +790,12 @@ export interface FixedPayTaskWithClaimer {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Whether this was hand-marked paid (true) vs. paid out by payroll (false).
+   *  Meaningless while paid_at is null. */
+  paid_manually?: boolean | null;
+  /** When this task was actually paid — independent of `status`. See the
+   *  matching field on AssignedTask; the two are kept in sync. */
+  paid_at?: string | null;
   /** Joined linked project (Objective/Operation) — same projects(id, name) join used by assigned_tasks */
   projects?: { id: string; name: string } | null;
   /** Joined profile for the assignee — present on admin responses, absent on VA responses */

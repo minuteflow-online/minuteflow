@@ -20,7 +20,7 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 // self-logging a task Toni assigned verbally needs to be able to say so.
 const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date", "planned_minutes", "assigned_by"]);
 const TASK_SELECT =
-  "id, task_name, account, category, project, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, review_required, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
+  "id, task_name, account, category, project, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, review_required, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, paid_at, paid_manually, projects(id, name)";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -290,7 +290,21 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!isValidStatus(status)) {
       return Response.json({ error: "status is invalid" }, { status: 400 });
     }
-    updates.status = status;
+    if (status === "paid") {
+      // Legacy shorthand from a surface that still sends status:"paid" —
+      // translated to a paid mark instead of a status write, so it can
+      // never overwrite whatever review status the task is actually at.
+      // Prefer sending `paid: true` directly; this exists so older callers
+      // don't silently corrupt data.
+      updates.paid_at = now;
+      updates.paid_manually = true;
+    } else {
+      updates.status = status;
+    }
+  }
+  if ("paid" in body) {
+    updates.paid_at = body.paid ? now : null;
+    updates.paid_manually = true;
   }
   if (hasAssignedTo) updates.assigned_to = nextAssignedTo;
   if ("assigned_by" in body) updates.assigned_by = normalizeText(body.assigned_by);
@@ -365,6 +379,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     await admin
       .from("assigned_tasks")
       .update({ status: updates.status, updated_at: now })
+      .eq("fixed_pay_task_id", taskId)
+      .is("deleted_at", null);
+  }
+  // paid_at/paid_manually mirror separately from status — paying a task
+  // never touches the assigned_tasks status either.
+  if (updates.paid_at !== undefined) {
+    await admin
+      .from("assigned_tasks")
+      .update({ paid_at: updates.paid_at, paid_manually: updates.paid_manually, updated_at: now })
       .eq("fixed_pay_task_id", taskId)
       .is("deleted_at", null);
   }

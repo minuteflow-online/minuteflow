@@ -20,6 +20,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  *
  * "unassigned" has no fixed-pay equivalent either and is left out for the
  * same reason: nothing here should ever guess at billing-relevant state.
+ *
+ * "paid" is deliberately absent — payment is a separate dimension from
+ * workflow status now (see syncFixedPayTaskPaid below). A caller that still
+ * passes "paid" here is ignored rather than propagated, so it can never
+ * overwrite whatever real review status a task was actually at.
  */
 const FIXED_PAY_STATUS_MAP: Record<string, string> = {
   pending: "pending",
@@ -28,7 +33,6 @@ const FIXED_PAY_STATUS_MAP: Record<string, string> = {
   submitted: "submitted",
   revision_needed: "revision_needed",
   completed: "completed",
-  paid: "paid",
   cancelled: "cancelled",
 };
 
@@ -72,5 +76,40 @@ export async function syncFixedPayTaskStatus(
       .eq("id", fixedPayTaskId);
   } catch {
     // best-effort — the caller's own status write already succeeded
+  }
+}
+
+/**
+ * Keeps fixed_pay_tasks.paid_at/paid_manually in step with the linked
+ * assigned_tasks row — the payment counterpart to syncFixedPayTaskStatus
+ * above. Deliberately separate: paying a task never touches status, on
+ * either side, so a task paid mid-review keeps showing as "Submitted" (or
+ * whatever it actually was) instead of jumping to a "Paid" status that
+ * erases where it stood in the review workflow.
+ *
+ * Best-effort and silent, same reasoning as syncFixedPayTaskStatus.
+ */
+export async function syncFixedPayTaskPaid(
+  admin: Pick<SupabaseClient, "from">,
+  assignedTaskId: number | string,
+  paidAt: string | null,
+  paidManually: boolean
+): Promise<void> {
+  try {
+    const { data: task } = await admin
+      .from("assigned_tasks")
+      .select("fixed_pay_task_id")
+      .eq("id", assignedTaskId)
+      .maybeSingle();
+
+    const fixedPayTaskId = (task as { fixed_pay_task_id?: number | null } | null)?.fixed_pay_task_id;
+    if (fixedPayTaskId == null) return;
+
+    await admin
+      .from("fixed_pay_tasks")
+      .update({ paid_at: paidAt, paid_manually: paidManually, updated_at: new Date().toISOString() })
+      .eq("id", fixedPayTaskId);
+  } catch {
+    // best-effort — the caller's own paid_at write already succeeded
   }
 }

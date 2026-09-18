@@ -4,7 +4,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { weeklyBudgetRejection, weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
-import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
+import { syncFixedPayTaskStatus, syncFixedPayTaskPaid } from "@/lib/fixedPayTaskSync";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -968,17 +968,30 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       }
     }
 
-    // Any status change through this route is a person changing it by hand, so
-    // "paid" set here is a manual mark (badge → orange). Payroll marks paid on
-    // its own path with paid_manually=false (→ purple). Clearing it on every
-    // other status keeps a task that leaves and re-enters paid honest.
+    // "paid" is no longer a status this column ever stores — it's tracked on
+    // paid_at instead (see fixedPayTaskSync.ts), so a task paid mid-review
+    // keeps whatever real status it was at rather than jumping to "Paid" and
+    // losing it. A surface that still sends status:"paid" here (some don't
+    // yet offer a dedicated Mark Paid control) is translated: the status
+    // column keeps its current value, and paid_at/paid_manually record the
+    // payment instead.
+    const isPaidShorthand = status === "paid";
+    const taskUpdate: Record<string, unknown> = isPaidShorthand
+      ? { paid_at: now, paid_manually: true, updated_at: now }
+      : { status, updated_at: now };
+
     const { error: taskStatusError } = await adminSupabase
       .from("assigned_tasks")
-      .update({ status, paid_manually: status === "paid", updated_at: now })
+      .update(taskUpdate)
       .eq("id", id);
 
     if (taskStatusError) {
       return Response.json({ error: taskStatusError.message }, { status: 500 });
+    }
+
+    if (isPaidShorthand) {
+      await syncFixedPayTaskPaid(adminSupabase, id, now, true);
+      return Response.json({ ok: true });
     }
 
     if (status === "revision_needed") {

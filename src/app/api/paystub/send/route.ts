@@ -285,23 +285,24 @@ export async function POST(request: Request) {
     .from("fixed_pay_tasks")
     .select("id, task_name, account, category, rate, status, updated_at")
     .eq("claimed_by", user_id)
-    .not("status", "in", '("cancelled","paid")')
+    .neq("status", "cancelled")
+    .is("paid_at", null)
     .is("deleted_at", null)
     .lte("updated_at", outputItemDateCutoff);
 
-  // Output work already marked paid, settled inside this period. It is
-  // deliberately kept out of the payable items above — paying it twice is the
-  // thing that filter exists to prevent — but leaving it off the document
-  // entirely meant an output-based VA got a paystub showing no work at all.
-  // Rhealin's covered 19 paid tasks worth $135.38 and listed none of them.
+  // Output work already paid, settled inside this period. It is deliberately
+  // kept out of the payable items above — paying it twice is the thing that
+  // filter exists to prevent — but leaving it off the document entirely meant
+  // an output-based VA got a paystub showing no work at all. Rhealin's
+  // covered 19 paid tasks worth $135.38 and listed none of them.
   const { data: paidOutputRaw } = await adminClient
     .from("fixed_pay_tasks")
     .select("id, task_name, account, category, rate, status, updated_at")
     .eq("claimed_by", user_id)
-    .eq("status", "paid")
+    .not("paid_at", "is", null)
     .is("deleted_at", null)
-    .gte("updated_at", `${start_date}T00:00:00.000`)
-    .lte("updated_at", outputItemDateCutoff);
+    .gte("paid_at", `${start_date}T00:00:00.000`)
+    .lte("paid_at", outputItemDateCutoff);
 
   const paidOutputItems = (paidOutputRaw ?? []).map((t) => ({
     id: t.id as number,
@@ -422,12 +423,24 @@ export async function POST(request: Request) {
     const fixedPayTaskIds = includedFixedPayTaskItems.map((t) => t.id);
     await adminClient
       .from("fixed_pay_tasks")
-      // paid_manually=false: this is payroll, so the badge stays purple even if
-      // the task had been marked paid by hand earlier. paid_period_label
-      // records which paystub covered it, for "Paid on cutoff period X"
-      // wherever this item is looked up later — status alone doesn't say when.
-      .update({ status: "paid", paid_manually: false, paid_period_label: periodLabel })
+      // status is left alone — paying a task (including one included here
+      // early, still "submitted"/"reviewing") must not erase its real review
+      // status. paid_manually=false: this is payroll, so the badge stays
+      // purple even if the task had been marked paid by hand earlier.
+      // paid_period_label records which paystub covered it, for "Paid on
+      // cutoff period X" wherever this item is looked up later.
+      .update({ paid_at: new Date().toISOString(), paid_manually: false, paid_period_label: periodLabel })
       .in("id", fixedPayTaskIds);
+
+    // Mirror to the linked assigned_tasks row(s) — same reasoning as the
+    // status mirror elsewhere: GET /api/fixed-pay-tasks and the admin board
+    // both read the mirror once a task is claimed, so paid_at set here alone
+    // would look unpaid again on the next load.
+    await adminClient
+      .from("assigned_tasks")
+      .update({ paid_at: new Date().toISOString(), paid_manually: false })
+      .in("fixed_pay_task_id", fixedPayTaskIds)
+      .is("deleted_at", null);
   }
 
   // Step 2: Send paystub email

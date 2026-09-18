@@ -23,7 +23,7 @@ const VIEW_FILTER_PILLS: Array<{ value: "all" | "submitted" | "active" | "inacti
   { value: "all", label: "All" },
 ];
 
-const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
+const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"];
 // Statuses the VA themselves may pick from the task panel — mirrors
 // VA_EDITABLE_STATUSES on the server, which is the actual enforcement point.
 const VA_STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted"];
@@ -31,6 +31,11 @@ const VA_STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pe
 // assigned_tasks mirror status sync (see GET /api/fixed-pay-tasks), never
 // from a direct edit, so they're in the label/class maps but deliberately
 // left out of STATUS_OPTIONS/VA_STATUS_OPTIONS above.
+//
+// "paid" is also left out of STATUS_OPTIONS (kept in the label/class maps
+// for any old row that still carries it) — payment is tracked on paid_at
+// now, via the Mark Paid button, so it never overwrites this task's real
+// review status. See handleTogglePaid.
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
   pending: "Pending",
@@ -502,6 +507,39 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     []
   );
 
+  // Marking paid is its own action, not a status value — it never touches
+  // `status`, so a task paid while still under review keeps showing exactly
+  // where it actually stands.
+  const handleTogglePaid = useCallback(async (task: FixedPayTaskWithClaimer) => {
+    const nextPaid = !task.paid_at;
+    setStatusSaving(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/fixed-pay-tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paid: nextPaid }),
+      });
+      if (!res.ok) {
+        let errorText = `HTTP ${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) errorText = data.error;
+        } catch {
+          // ignore parse failures
+        }
+        throw new Error(errorText);
+      }
+      const { task: updated } = (await res.json()) as { task: FixedPayTaskWithClaimer };
+      setTasks((current) => current.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
+      setSelectedTask((current) => (current && current.id === task.id ? { ...current, ...updated } : current));
+    } catch (error) {
+      setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to update payment." });
+    } finally {
+      setStatusSaving(false);
+    }
+  }, []);
+
   const handleDelete = useCallback(
     async (taskId: number) => {
       if (!confirm("Delete this task? This can't be undone.")) return;
@@ -620,6 +658,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   // branch only, so clicking Edit dropped it entirely and there was no way to
   // change status and any other field in one sitting.
   const renderStatusField = (task: FixedPayTaskWithClaimer) => (
+              <>
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
                   {isAdminOrManager ? (
@@ -665,6 +704,39 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     </span>
                   )}
                 </div>
+                {isAdminOrManager && (
+                  <div className="mt-3">
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Payment</label>
+                    {task.paid_at ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center rounded-full bg-plum-soft px-2.5 py-1 text-[11px] font-semibold text-plum">
+                          Paid
+                        </span>
+                        <button
+                          type="button"
+                          disabled={statusSaving}
+                          onClick={() => void handleTogglePaid(task)}
+                          className="rounded-lg border border-stone px-2.5 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/5 disabled:opacity-50"
+                        >
+                          Undo
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={statusSaving}
+                        onClick={() => void handleTogglePaid(task)}
+                        className="rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                      >
+                        Mark Paid
+                      </button>
+                    )}
+                    <p className="mt-1 text-[11px] text-stone/70">
+                      Independent of Status above — paying this task won&apos;t change where it sits in review.
+                    </p>
+                  </div>
+                )}
+              </>
   );
 
   if (profileLoading) {
@@ -986,27 +1058,34 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                              stopPropagation because the row opens the details
                              panel on click. */
                           <td className="px-3 py-3 text-[13px] text-walnut" onClick={(event) => event.stopPropagation()}>
-                            {isAdminOrManager ? (
-                              <select
-                                value={task.status}
-                                disabled={statusSaving}
-                                onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
-                                className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
-                              >
-                                {(STATUS_OPTIONS.includes(task.status)
-                                  ? STATUS_OPTIONS
-                                  : [task.status, ...STATUS_OPTIONS]
-                                ).map((status) => (
-                                  <option key={status} value={status}>
-                                    {STATUS_LABELS[status]}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                                {STATUS_LABELS[task.status]}
-                              </span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1">
+                              {isAdminOrManager ? (
+                                <select
+                                  value={task.status}
+                                  disabled={statusSaving}
+                                  onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                                  className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
+                                >
+                                  {(STATUS_OPTIONS.includes(task.status)
+                                    ? STATUS_OPTIONS
+                                    : [task.status, ...STATUS_OPTIONS]
+                                  ).map((status) => (
+                                    <option key={status} value={status}>
+                                      {STATUS_LABELS[status]}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                  {STATUS_LABELS[task.status]}
+                                </span>
+                              )}
+                              {task.paid_at && (
+                                <span className="inline-flex items-center rounded-full bg-plum-soft px-2 py-0.5 text-[11px] font-semibold text-plum" title={`Paid ${task.paid_at.slice(0, 10)}`}>
+                                  Paid
+                                </span>
+                              )}
+                            </div>
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (

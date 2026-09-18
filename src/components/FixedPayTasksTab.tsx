@@ -20,11 +20,16 @@ const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archive
   { value: "all", label: "All" },
 ];
 
-const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
+const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"];
 // "reviewing"/"approved" are display-only here — they arrive from the
 // assigned_tasks mirror status sync (see GET /api/fixed-pay-tasks), never
 // from a direct edit, so they're in the label/class maps but deliberately
 // left out of STATUS_OPTIONS above.
+//
+// "paid" is also left out of STATUS_OPTIONS (though still in the label/class
+// maps below, for any old row that still carries it) — payment is tracked
+// on paid_at now, via the dedicated Mark Paid control, so it never overwrites
+// whatever this task's real review status is. See handleTogglePaid.
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
   pending: "Pending",
@@ -659,6 +664,19 @@ export default function FixedPayTasksTab() {
     [activeFilter, fetchTasks, selectedTask?.id]
   );
 
+  // Marking paid is deliberately its own action, not a status value — it
+  // never touches `status`, so a task paid while still "Submitted" (the
+  // usual case: approval hasn't happened yet but the VA needs paying now)
+  // keeps showing exactly that, instead of jumping to a "Paid" status that
+  // erases where it actually stood.
+  const handleTogglePaid = useCallback(
+    (task: FixedPayTaskWithClaimer) => {
+      const nextPaid = !task.paid_at;
+      return handleTaskVisibilityChange(task, { paid: nextPaid }, nextPaid ? "Marked paid." : "Payment mark removed.");
+    },
+    [handleTaskVisibilityChange]
+  );
+
   const handleArchiveTask = useCallback(
     (task: FixedPayTaskWithClaimer) => void handleTaskVisibilityChange(task, { archived_at: new Date().toISOString(), deleted_at: null }, "Task archived."),
     [handleTaskVisibilityChange]
@@ -1148,9 +1166,19 @@ export default function FixedPayTasksTab() {
                         )}
                         {!hiddenColumns.has("status") && (
                           <td className="px-3 py-3 text-[13px] text-walnut">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                              {STATUS_LABELS[task.status]}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                {STATUS_LABELS[task.status]}
+                              </span>
+                              {task.paid_at && (
+                                <span
+                                  className="inline-flex items-center rounded-full bg-plum-soft px-2 py-0.5 text-[11px] font-semibold text-plum"
+                                  title={`Paid ${formatTimestamp(task.paid_at)}`}
+                                >
+                                  Paid
+                                </span>
+                              )}
+                            </div>
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (
@@ -1304,6 +1332,25 @@ export default function FixedPayTasksTab() {
                         {STATUS_LABELS[selectedTask.status]}
                       </span>
                     </div>
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Payment</div>
+                      {selectedTask.paid_at ? (
+                        <>
+                          <span className="mt-1 inline-flex items-center rounded-full bg-plum-soft px-2.5 py-1 text-[11px] font-semibold text-plum">
+                            Paid
+                          </span>
+                          <div className="mt-1 text-[11px] text-stone">{formatTimestamp(selectedTask.paid_at)}</div>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleTogglePaid(selectedTask)}
+                          className="mt-1 rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90"
+                        >
+                          Mark Paid
+                        </button>
+                      )}
+                    </div>
                     {selectedTask.claimed_by && (
                       <div>
                         <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Claimed By</div>
@@ -1390,6 +1437,35 @@ export default function FixedPayTasksTab() {
                     />
                     Active
                   </label>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Payment</label>
+                    {selectedTask.paid_at ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center rounded-full bg-plum-soft px-2.5 py-1 text-[11px] font-semibold text-plum">
+                          Paid {formatTimestamp(selectedTask.paid_at)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void handleTogglePaid(selectedTask)}
+                          className="rounded-lg border border-stone px-2.5 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/5"
+                        >
+                          Undo
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleTogglePaid(selectedTask)}
+                        className="rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90"
+                      >
+                        Mark Paid
+                      </button>
+                    )}
+                    <p className="mt-1 text-[11px] text-stone/70">
+                      Independent of Status above — paying this task won&apos;t change where it sits in review.
+                    </p>
+                  </div>
 
                   <div className="flex flex-wrap gap-2">
                     {selectedTask.archived_at || selectedTask.deleted_at ? (
