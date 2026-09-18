@@ -12,6 +12,7 @@ export interface MfDesktopApi {
     clear: () => Promise<void>;
   };
   setClockedIn: (value: boolean) => void;
+  flashFrame: () => void;
 }
 
 declare global {

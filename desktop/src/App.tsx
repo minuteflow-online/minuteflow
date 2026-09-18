@@ -4,6 +4,7 @@ import ClockPanel, { type ClockState } from "./components/ClockPanel";
 import TasksPanel from "./components/TasksPanel";
 import TodoPanel from "./components/TodoPanel";
 import MessageBoardPanel from "./components/MessageBoardPanel";
+import NotificationBell from "./components/NotificationBell";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
 import { fetchAssignedTasks, reorderAssignedTasks, type VAAssignedTask } from "./lib/tasks";
@@ -35,6 +36,7 @@ export default function App() {
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [rightTab, setRightTab] = useState<"todo" | "messages">("todo");
+  const [dmRequest, setDmRequest] = useState<{ senderId: string; nonce: number } | null>(null);
 
   const userIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -207,6 +209,15 @@ export default function App() {
     });
   }, []);
 
+  // Clicking a DM notification (bell dropdown or the native toast) — switch
+  // to Message Board and tell it which conversation to open. `nonce` so
+  // clicking the same sender twice in a row still re-triggers the effect
+  // that reads this in MessageBoardPanel.
+  const handleOpenDm = useCallback((senderId: string) => {
+    setRightTab("messages");
+    setDmRequest({ senderId, nonce: Date.now() });
+  }, []);
+
   const activeLogId = sessionRow?.active_task?.logId ? Number(sessionRow.active_task.logId) : null;
 
   const handleCapture = useCallback(async () => {
@@ -249,6 +260,7 @@ export default function App() {
           <p className="text-[11px] text-stone">{profile?.full_name || "—"}</p>
         </div>
         <div className="flex items-center gap-2">
+          <NotificationBell userId={userId} onOpenDm={handleOpenDm} />
           <button
             onClick={handleCapture}
             disabled={!activeLogId || capturing}
@@ -321,7 +333,11 @@ export default function App() {
               Message Board
             </button>
           </div>
-          {rightTab === "todo" ? <TodoPanel task={selectedTask} /> : <MessageBoardPanel userId={userId} />}
+          {rightTab === "todo" ? (
+            <TodoPanel task={selectedTask} />
+          ) : (
+            <MessageBoardPanel userId={userId} openDmRequest={dmRequest} />
+          )}
         </div>
       </div>
     </div>

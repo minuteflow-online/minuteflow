@@ -13,4 +13,8 @@ contextBridge.exposeInMainWorld("mfDesktop", {
   // One-way — the main process just needs the latest value to decide whether
   // to warn on quit, no response expected.
   setClockedIn: (value) => ipcRenderer.send("mf:set-clocked-in", value),
+  // Flashes the taskbar icon — main process no-ops this if the window is
+  // already focused. Used alongside a native Notification() (called directly
+  // in the renderer, no bridge needed for that part) when a new item arrives.
+  flashFrame: () => ipcRenderer.send("mf:flash-frame"),
 });
