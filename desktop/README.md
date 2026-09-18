@@ -38,6 +38,22 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `TopNav.tsx`. The renderer reports clocked-in state to the main process via
   `window.mfDesktop.setClockedIn()` (App.tsx) since main can't read React
   state directly; see `electron/main.js`'s `close` handler.
+- **Notification bell** — top-bar bell icon with an unread badge, mirroring
+  `NotificationBell.tsx` (the web app's top-nav bell) exactly: every
+  notification including DMs (broader than the Message Board's Comments tab
+  below, which excludes DMs on purpose — that's `DashboardMessagePanel.tsx`'s
+  narrower dashboard-panel feed, this is the full bell), grouped runs of the
+  same sender+kind collapsed into one summary line, mark-read (individual +
+  mark all). A DM notification is clickable — opens Message Board → Personal
+  → that conversation; a task/submission-linked one just marks read (no
+  Submissions page in this app yet to send it to). See
+  `src/lib/notificationBell.ts`. **Native OS toast + taskbar flash** for a
+  genuinely new unread item — the one thing a desktop app can do that a
+  browser tab can't as reliably (fires even while the window isn't focused).
+  Toasts use the standard web `Notification` API directly in the renderer
+  (Electron implements it natively, no IPC needed); the taskbar flash goes
+  through `window.mfDesktop.flashFrame()` since only the main process can
+  reach the window — see `electron/main.js`'s `mf:flash-frame` handler.
 - **Message Board** — a "To-Do / Message Board" tab strip above the right
   panel switches to a Messages panel with its own inner tabs, mirroring
   `DashboardMessagePanel.tsx`: same amber tab pills, same "+ New Topic"/

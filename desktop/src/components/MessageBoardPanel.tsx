@@ -66,9 +66,14 @@ const inputClass = "w-full rounded-lg border border-sand px-2 py-1.5 text-xs tex
 
 interface MessageBoardPanelProps {
   userId: string;
+  /** Set by the notification bell (App.tsx) when a DM notification is
+   *  clicked — opens (or starts) that 1:1 and switches to Personal. `nonce`
+   *  changes on every click so re-clicking the same sender still re-triggers
+   *  the effect below even though `senderId` itself didn't change. */
+  openDmRequest?: { senderId: string; nonce: number } | null;
 }
 
-export default function MessageBoardPanel({ userId }: MessageBoardPanelProps) {
+export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoardPanelProps) {
   const [innerTab, setInnerTab] = useState<InnerTab>("general");
 
   // ── General ──────────────────────────────────────────────────────────
@@ -185,6 +190,25 @@ export default function MessageBoardPanel({ userId }: MessageBoardPanelProps) {
     setDms(rows);
     void loadConvs();
   }, [loadConvs]);
+
+  // Honors a click on a DM notification (bell dropdown or native toast).
+  // startConversation reuses an existing 1:1 rather than making a duplicate
+  // — same find-or-create the "+ New message" picker's Start chat uses.
+  useEffect(() => {
+    if (!openDmRequest) return;
+    (async () => {
+      const id = await startConversation([openDmRequest.senderId]);
+      if (!id) return;
+      setInnerTab("personal");
+      const rows = await fetchConversations();
+      setConvs(rows);
+      const conv = rows.find((c) => c.id === id);
+      if (conv) await openConv(conv);
+    })();
+    // openConv is stable (only depends on the also-stable loadConvs), so
+    // this only needs to re-run when a new request actually arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openDmRequest]);
 
   const handleSendDm = useCallback(async () => {
     if (!activeConv || !dmText.trim() || posting) return;

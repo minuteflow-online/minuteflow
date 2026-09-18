@@ -74,6 +74,10 @@ function buildCsp() {
   ].join("; ");
 }
 
+// Tracks the single window so the flash-frame IPC handler (below) can reach
+// it — this app only ever has the one.
+let mainWindow = null;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 900,
@@ -122,6 +126,16 @@ function createWindow() {
       confirmedQuit = true;
       win.close();
     }
+  });
+
+  // Flashing the taskbar icon on a new notification (see mf:flash-frame
+  // below) means nothing if it never stops — clear it the moment the window
+  // is actually looked at again.
+  win.on("focus", () => win.flashFrame(false));
+
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
   });
 }
 
@@ -172,6 +186,17 @@ ipcMain.handle("mf:get-screen-sources", async () => {
     name: s.name,
     thumbnailDataUrl: s.thumbnail.isEmpty() ? null : s.thumbnail.toDataURL(),
   }));
+});
+
+// ── Notifications ────────────────────────────────────────────────────────
+// The toast itself is just the standard web Notification API, called
+// directly from the renderer (NotificationBell.tsx) — Electron implements it
+// natively, no IPC needed. This is the one extra thing only a real desktop
+// app can do: flash the taskbar icon on a new item when the window isn't
+// focused, the same attention-getter chat apps use. Cleared by the "focus"
+// listener in createWindow() above.
+ipcMain.on("mf:flash-frame", () => {
+  if (mainWindow && !mainWindow.isFocused()) mainWindow.flashFrame(true);
 });
 
 // ── Encrypted session storage ───────────────────────────────────────────
