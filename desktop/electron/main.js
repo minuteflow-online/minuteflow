@@ -65,7 +65,10 @@ function buildCsp() {
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    // Attachment images preview via a Supabase Storage signed URL
+    // (message-attachments' MESSAGE_ATTACHMENT_BUCKET), a different origin
+    // from the app's own API calls.
+    `img-src 'self' data: ${SUPABASE_URL}`,
     `connect-src ${connectSrc}`,
     "object-src 'none'",
     "base-uri 'none'",

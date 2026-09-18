@@ -21,6 +21,8 @@ import {
 } from "../lib/conversations";
 import { fetchNotifications, type Notification } from "../lib/notifications";
 import { getInitials, getAvatarColor } from "../lib/avatar";
+import { linkifyText } from "../lib/linkify";
+import { AttachmentList, AttachmentPicker, useAttachmentComposer } from "./AttachmentComposer";
 
 const TOPICS_POLL_MS = 30000;
 const CONVERSATIONS_POLL_MS = 15000;
@@ -84,6 +86,8 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   const [topicTitle, setTopicTitle] = useState("");
   const [topicBody, setTopicBody] = useState("");
   const [reply, setReply] = useState("");
+  const topicComposer = useAttachmentComposer();
+  const replyComposer = useAttachmentComposer();
 
   // ── Personal ─────────────────────────────────────────────────────────
   const [convs, setConvs] = useState<Conversation[]>([]);
@@ -95,6 +99,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   const [composingChat, setComposingChat] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [groupTitle, setGroupTitle] = useState("");
+  const dmComposer = useAttachmentComposer();
 
   // ── Comments ─────────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<Notification[]>([]);
@@ -155,34 +160,43 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   }, [loadNotifs]);
 
   const handlePostTopic = useCallback(async () => {
-    if (!topicTitle.trim() || !topicBody.trim() || posting) return;
+    const title = topicTitle.trim();
+    const body = topicBody.trim() || topicComposer.fallbackBody;
+    // A title is still required (matches web), but the body itself can be
+    // just an attachment — same "a link/file is content on its own" rule
+    // useAttachmentComposer documents.
+    if (!title || (!body && !topicComposer.hasAttachment) || posting) return;
     setPosting(true);
     try {
-      const created = await postTopic(topicTitle.trim(), topicBody.trim());
+      const created = await postTopic(title, body);
       if (created) {
         setTopicTitle("");
         setTopicBody("");
         setComposingTopic(false);
+        if (created.id != null) await topicComposer.flush("project_message", created.id);
         await loadTopics();
       }
     } finally {
       setPosting(false);
     }
-  }, [topicTitle, topicBody, posting, loadTopics]);
+  }, [topicTitle, topicBody, topicComposer, posting, loadTopics]);
 
   const handleReply = useCallback(async () => {
-    if (!activeTopic || !reply.trim() || posting) return;
+    if (!activeTopic || posting) return;
+    const body = reply.trim() || replyComposer.fallbackBody;
+    if (!body) return;
     setPosting(true);
     try {
-      const created = await postReply(activeTopic.id, reply.trim());
+      const created = await postReply(activeTopic.id, body);
       if (created) {
         setReply("");
+        if (created.id != null) await replyComposer.flush("project_message_comment", created.id);
         await loadTopics();
       }
     } finally {
       setPosting(false);
     }
-  }, [activeTopic, reply, posting, loadTopics]);
+  }, [activeTopic, reply, replyComposer, posting, loadTopics]);
 
   const openConv = useCallback(async (c: Conversation) => {
     setActiveConv(c);
@@ -211,19 +225,29 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   }, [openDmRequest]);
 
   const handleSendDm = useCallback(async () => {
-    if (!activeConv || !dmText.trim() || posting) return;
+    if (!activeConv || posting) return;
+    const body = dmText.trim() || dmComposer.fallbackBody;
+    if (!body) return;
     setPosting(true);
     try {
-      const sent = await sendMessage(activeConv.id, dmText.trim());
+      const sent = await sendMessage(activeConv.id, body);
       if (sent) {
         setDms((prev) => [...prev, sent]);
         setDmText("");
+        if (sent.id != null) {
+          await dmComposer.flush("direct_message", sent.id);
+          // Attachments land after the optimistic append above (which has
+          // none) — refetch this one conversation so they show without
+          // waiting for the poll.
+          const refreshed = await fetchMessages(activeConv.id);
+          setDms(refreshed);
+        }
         void loadConvs();
       }
     } finally {
       setPosting(false);
     }
-  }, [activeConv, dmText, posting, loadConvs]);
+  }, [activeConv, dmText, dmComposer, posting, loadConvs]);
 
   const handleStartChat = useCallback(async () => {
     if (picked.size === 0 || posting) return;
@@ -320,7 +344,8 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                     <p className="text-[10px] font-semibold text-walnut">
                       {authorName(activeTopic.author)} · {ago(activeTopic.created_at)}
                     </p>
-                    <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{activeTopic.body}</p>
+                    <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(activeTopic.body)}</p>
+                    <AttachmentList attachments={activeTopic.attachments} />
                   </div>
                 </div>
 
@@ -331,32 +356,36 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                       <p className="text-[10px] font-semibold text-walnut">
                         {authorName(c.author)} · {ago(c.created_at)}
                       </p>
-                      <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{c.body}</p>
+                      <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(c.body)}</p>
+                      <AttachmentList attachments={c.attachments} />
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="flex gap-1.5 mt-3 pt-3 border-t border-sand">
-                <input
-                  value={reply}
-                  onChange={(e) => setReply(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleReply();
-                    }
-                  }}
-                  placeholder="Write a reply…"
-                  className={inputClass}
-                />
-                <button
-                  onClick={() => void handleReply()}
-                  disabled={posting || !reply.trim()}
-                  className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
-                >
-                  Send
-                </button>
+              <div className="mt-3 pt-3 border-t border-sand space-y-1.5">
+                <AttachmentPicker composer={replyComposer} disabled={posting} />
+                <div className="flex gap-1.5">
+                  <input
+                    value={reply}
+                    onChange={(e) => setReply(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleReply();
+                      }
+                    }}
+                    placeholder="Write a reply…"
+                    className={inputClass}
+                  />
+                  <button
+                    onClick={() => void handleReply()}
+                    disabled={posting || (!reply.trim() && !replyComposer.hasAttachment)}
+                    className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                  >
+                    Send
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -371,10 +400,11 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                     rows={3}
                     className={`${inputClass} resize-none`}
                   />
+                  <AttachmentPicker composer={topicComposer} disabled={posting} />
                   <div className="flex gap-1.5">
                     <button
                       onClick={() => void handlePostTopic()}
-                      disabled={posting || !topicTitle.trim() || !topicBody.trim()}
+                      disabled={posting || !topicTitle.trim() || (!topicBody.trim() && !topicComposer.hasAttachment)}
                       className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 transition-colors disabled:opacity-50 cursor-pointer"
                     >
                       Post
@@ -459,7 +489,8 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                       {activeConv.is_group && !m.mine && (
                         <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>
                       )}
-                      <p className="whitespace-pre-wrap">{m.body}</p>
+                      <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
+                      <AttachmentList attachments={m.attachments} />
                       <p className="mt-0.5 text-[9px] text-bark">
                         {ago(m.created_at)} ago{m.edited_at && <span className="italic text-stone"> · edited</span>}
                       </p>
@@ -468,27 +499,30 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                 ))}
               </div>
 
-              <div className="flex items-end gap-1.5 mt-3 pt-3 border-t border-sand">
-                <textarea
-                  value={dmText}
-                  onChange={(e) => setDmText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleSendDm();
-                    }
-                  }}
-                  rows={1}
-                  placeholder="Message…"
-                  className={`${inputClass} resize-none flex-1`}
-                />
-                <button
-                  onClick={() => void handleSendDm()}
-                  disabled={posting || !dmText.trim()}
-                  className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
-                >
-                  Send
-                </button>
+              <div className="mt-3 pt-3 border-t border-sand space-y-1.5">
+                <AttachmentPicker composer={dmComposer} disabled={posting} />
+                <div className="flex items-end gap-1.5">
+                  <textarea
+                    value={dmText}
+                    onChange={(e) => setDmText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleSendDm();
+                      }
+                    }}
+                    rows={1}
+                    placeholder="Message…"
+                    className={`${inputClass} resize-none flex-1`}
+                  />
+                  <button
+                    onClick={() => void handleSendDm()}
+                    disabled={posting || (!dmText.trim() && !dmComposer.hasAttachment)}
+                    className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+                  >
+                    Send
+                  </button>
+                </div>
               </div>
             </div>
           ) : composingChat ? (

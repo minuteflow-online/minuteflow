@@ -12,10 +12,11 @@
 //
 // Personal DMs live in conversations.ts, the Comments feed in
 // notifications.ts. Deliberately out of scope here: Admin oversight,
-// per-project boards, attachments, @mention autocomplete, editing,
-// delete/pin/archive. See the desktop README.
+// per-project boards, @mention autocomplete, editing, delete/pin/archive.
+// See the desktop README.
 import { ensureAuth } from "./db";
 import { API_BASE } from "./config";
+import type { Attachment } from "../components/AttachmentComposer";
 
 export interface MessageAuthor {
   id: string;
@@ -29,6 +30,7 @@ export interface TopicComment {
   author_id: string | null;
   created_at: string;
   author: MessageAuthor | null;
+  attachments?: Attachment[];
 }
 
 export interface Topic {
@@ -39,6 +41,7 @@ export interface Topic {
   created_at: string;
   author: MessageAuthor | null;
   project_message_comments: TopicComment[];
+  attachments?: Attachment[];
 }
 
 async function authHeaders(): Promise<Record<string, string> | null> {

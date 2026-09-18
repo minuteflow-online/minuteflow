@@ -8,6 +8,7 @@
 // routes share; see that file's comment and PR #167.
 import { ensureAuth } from "./db";
 import { API_BASE } from "./config";
+import type { Attachment } from "../components/AttachmentComposer";
 
 export interface ConversationMember {
   id: string;
@@ -32,6 +33,7 @@ export interface DirectMessage {
   mine: boolean;
   sender_id: string;
   sender_name: string;
+  attachments?: Attachment[];
 }
 
 export interface TeamMember {
