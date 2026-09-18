@@ -5,7 +5,7 @@ import { orgWallClockToUtc } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
 
-type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
+type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months" | "custom_days" | "custom_weeks";
 
 type TemplateRow = {
   id: string;

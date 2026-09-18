@@ -13,6 +13,8 @@ const RECURRENCE_VALUES = [
   "monthly",
   "every_2_months",
   "every_3_months",
+  "custom_days",
+  "custom_weeks",
 ] as const;
 
 function assignedToIds(template: RecurringTaskTemplate): string[] {
@@ -63,6 +65,12 @@ export default function RecurringTemplatePanel({
   const [recurrenceDays, setRecurrenceDays] = useState<number[]>(() =>
     // integer[] in Postgres (0=Sun..6=Sat), same convention WorkDaysPicker uses.
     (template?.recurrence_days ?? []).filter((i) => Number.isInteger(i) && i >= 0 && i <= 6)
+  );
+  // The "N" in "every N days"/"every N weeks" — only meaningful when
+  // recurrenceType is "custom_days"/"custom_weeks". Kept as a string so the
+  // input can be empty rather than forced to 0/NaN while typing.
+  const [recurrenceInterval, setRecurrenceInterval] = useState(() =>
+    template?.recurrence_interval ? String(template.recurrence_interval) : ""
   );
   // Mode picker only for a brand-new template — an existing one's mode is
   // fixed by which table its occurrences already live in (assigned_tasks vs.
@@ -160,6 +168,10 @@ export default function RecurringTemplatePanel({
               templateExtra={{
                 recurrence_type: recurrenceType,
                 recurrence_days: recurrenceType === "weekly" ? recurrenceDays : [],
+                recurrence_interval:
+                  recurrenceType === "custom_days" || recurrenceType === "custom_weeks"
+                    ? Number(recurrenceInterval) || null
+                    : null,
                 is_active: isActive,
                 repeat_until: repeatUntil || null,
               }}
@@ -194,6 +206,26 @@ export default function RecurringTemplatePanel({
                         {recurrenceDays.length > 0
                           ? "Lands on these days every week."
                           : "Leave empty to repeat weekly on the Start Date's own weekday."}
+                      </p>
+                    </div>
+                  )}
+                  {(recurrenceType === "custom_days" || recurrenceType === "custom_weeks") && (
+                    <div>
+                      <label className="mb-1 block text-[10px] font-semibold text-walnut">
+                        Every how many {recurrenceType === "custom_days" ? "days" : "weeks"}?
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={recurrenceInterval}
+                        onChange={(e) => setRecurrenceInterval(e.target.value)}
+                        placeholder={recurrenceType === "custom_days" ? "e.g. 3" : "e.g. 2"}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                      />
+                      <p className="mt-1 text-[11px] text-stone">
+                        {Number(recurrenceInterval) > 0
+                          ? `Repeats every ${recurrenceInterval} ${recurrenceType === "custom_days" ? "day(s)" : "week(s)"} from the start date.`
+                          : "Set a number above 0."}
                       </p>
                     </div>
                   )}

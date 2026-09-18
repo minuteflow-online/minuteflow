@@ -6,7 +6,7 @@ import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
-type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
+type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months" | "custom_days" | "custom_weeks";
 
 type TemplateRow = {
   id: string;
@@ -31,6 +31,9 @@ type TemplateRow = {
   // ("invalid input syntax for type integer"), confirmed live.
   recurrence_days: number[] | null;
   recurrence_day_of_month: number | null;
+  /** The "N" in "every N days"/"every N weeks" — only meaningful for
+   *  recurrence_type "custom_days"/"custom_weeks". */
+  recurrence_interval?: number | null;
   is_active: boolean;
   created_by?: string | null;
   created_at: string;
@@ -167,9 +170,19 @@ function parseBodyDays(body: Record<string, unknown>): number[] | null {
 function parseRecurrenceType(value: unknown): RecurrenceType {
   if (
     value === "weekly" || value === "biweekly" || value === "monthly" ||
-    value === "every_2_months" || value === "every_3_months"
+    value === "every_2_months" || value === "every_3_months" ||
+    value === "custom_days" || value === "custom_weeks"
   ) return value;
   return "daily";
+}
+
+/** The "N" in "every N days"/"every N weeks". Zero/negative/garbage all
+ *  collapse to null — recurringOccurrences.fallsOn treats a falsy interval
+ *  as "never lands", the same safe-fallback discipline as the other
+ *  recurrence fields here. */
+function parseBodyInterval(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 function dayOfMonthFromDate(dateStr: string | null | undefined): number | null {
@@ -356,6 +369,13 @@ export async function POST(request: Request) {
     // prior weekly selection would misdescribe a template that no longer is.
     recurrence_days: recurrence_type === "weekly" ? recurrence_days : null,
     recurrence_day_of_month: resolvedDayOfMonth,
+    // Same discipline as recurrence_days above — only meaningful for the two
+    // custom types, null otherwise so a template that moves off custom_days
+    // doesn't keep a stale N around.
+    recurrence_interval:
+      recurrence_type === "custom_days" || recurrence_type === "custom_weeks"
+        ? parseBodyInterval(body.recurrence_interval)
+        : null,
     is_active: booleanOrDefault(body.is_active, true),
     paused_until: stringOrNull(body.paused_until),
     created_by: user.id,
@@ -493,6 +513,17 @@ ${existingText}` : addition;
       updates.recurrence_day_of_month = null;
     }
   }
+  // Same "only meaningful for its own type" discipline as recurrence_days/
+  // recurrence_day_of_month above.
+  {
+    const patchRecurrenceType = updates.recurrence_type as RecurrenceType | undefined ?? undefined;
+    const isCustom = patchRecurrenceType === "custom_days" || patchRecurrenceType === "custom_weeks";
+    if (patchRecurrenceType && !isCustom) {
+      updates.recurrence_interval = null;
+    } else if (body.recurrence_interval !== undefined) {
+      updates.recurrence_interval = parseBodyInterval(body.recurrence_interval);
+    }
+  }
   if (body.paused_until !== undefined) updates.paused_until = stringOrNull(body.paused_until);
   // Resuming always clears the end date, so a template can never come back
   // active while still carrying the date it was paused until.
@@ -605,7 +636,8 @@ ${existingText}` : addition;
       body.recurrence_type !== undefined ||
       body.repeat_until !== undefined ||
       body.end_date !== undefined ||
-      body.due_time !== undefined;
+      body.due_time !== undefined ||
+      body.recurrence_interval !== undefined;
     if (saved.is_active === false) {
       // A pause has to take the dates back off the calendar too. Stopping
       // future generation alone would change nothing anyone can see, because

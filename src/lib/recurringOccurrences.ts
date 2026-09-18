@@ -23,7 +23,9 @@ export type RecurrenceType =
   | "biweekly"
   | "monthly"
   | "every_2_months"
-  | "every_3_months";
+  | "every_3_months"
+  | "custom_days"
+  | "custom_weeks";
 
 export type OccurrenceTemplate = {
   id: string;
@@ -44,6 +46,9 @@ export type OccurrenceTemplate = {
   end_date?: string | null;
   recurrence_type: RecurrenceType | string;
   recurrence_day_of_month?: number | null;
+  /** The "N" in "every N days"/"every N weeks" — only meaningful for
+   *  recurrence_type "custom_days"/"custom_weeks". */
+  recurrence_interval?: number | null;
   /** Which weekdays a "weekly" template lands on — integer[] in Postgres,
    *  0=Sun..6=Sat (same convention as profiles.work_days). Null/empty means
    *  the legacy behavior: the single weekday start_date itself falls on. */
@@ -112,6 +117,10 @@ export function fallsOn(template: OccurrenceTemplate, date: string): boolean {
       return template.recurrence_day_of_month === dayOfMonth && months >= 0 && months % 2 === 0;
     case "every_3_months":
       return template.recurrence_day_of_month === dayOfMonth && months >= 0 && months % 3 === 0;
+    case "custom_days":
+      return Boolean(template.recurrence_interval) && template.recurrence_interval! > 0 && days % template.recurrence_interval! === 0;
+    case "custom_weeks":
+      return Boolean(template.recurrence_interval) && template.recurrence_interval! > 0 && days % (template.recurrence_interval! * 7) === 0;
     default:
       return false;
   }

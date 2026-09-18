@@ -132,3 +132,61 @@ describe("end_date as a series ceiling", () => {
     expect(row.end_date).toBeNull();
   });
 });
+
+// "Custom interval" lets a template repeat every N days or every N weeks —
+// an arbitrary cadence the fixed daily/weekly/biweekly/monthly presets don't
+// cover (e.g. every 5 days, every 3 weeks).
+describe("fallsOn — custom_days / custom_weeks", () => {
+  it("lands every N days from start_date", () => {
+    const every3: OccurrenceTemplate = { ...base, recurrence_type: "custom_days", recurrence_interval: 3 };
+    expect(fallsOn(every3, "2026-09-07")).toBe(true); // day 0
+    expect(fallsOn(every3, "2026-09-08")).toBe(false); // day 1
+    expect(fallsOn(every3, "2026-09-09")).toBe(false); // day 2
+    expect(fallsOn(every3, "2026-09-10")).toBe(true); // day 3
+    expect(fallsOn(every3, "2026-09-13")).toBe(true); // day 6
+  });
+
+  it("lands every N weeks from start_date", () => {
+    const every3weeks: OccurrenceTemplate = { ...base, recurrence_type: "custom_weeks", recurrence_interval: 3 };
+    expect(fallsOn(every3weeks, "2026-09-07")).toBe(true); // week 0
+    expect(fallsOn(every3weeks, "2026-09-14")).toBe(false); // week 1
+    expect(fallsOn(every3weeks, "2026-09-21")).toBe(false); // week 2
+    expect(fallsOn(every3weeks, "2026-09-28")).toBe(true); // week 3
+  });
+
+  it("still respects start_date/repeat_until/end_date as floor/ceiling", () => {
+    const every5: OccurrenceTemplate = {
+      ...base,
+      recurrence_type: "custom_days",
+      recurrence_interval: 5,
+      repeat_until: "2026-09-15",
+    };
+    expect(fallsOn(every5, "2026-09-02")).toBe(false); // before start_date
+    expect(fallsOn(every5, "2026-09-12")).toBe(true); // day 5, within range
+    expect(fallsOn(every5, "2026-09-17")).toBe(false); // day 10, past repeat_until
+  });
+
+  it("treats a zero, negative, or missing interval as never landing, rather than throwing", () => {
+    const zero: OccurrenceTemplate = { ...base, recurrence_type: "custom_days", recurrence_interval: 0 };
+    const negative: OccurrenceTemplate = { ...base, recurrence_type: "custom_weeks", recurrence_interval: -2 };
+    const missing: OccurrenceTemplate = { ...base, recurrence_type: "custom_days", recurrence_interval: null };
+    expect(() => fallsOn(zero, "2026-09-07")).not.toThrow();
+    expect(fallsOn(zero, "2026-09-07")).toBe(false);
+    expect(fallsOn(negative, "2026-09-07")).toBe(false);
+    expect(fallsOn(missing, "2026-09-07")).toBe(false);
+  });
+});
+
+describe("occurrenceDates — custom_days", () => {
+  it("produces the exact N-spaced dates over a bounded window", () => {
+    const every4: OccurrenceTemplate = {
+      ...base,
+      recurrence_type: "custom_days",
+      recurrence_interval: 4,
+      repeat_until: "2026-09-20",
+    };
+    expect(occurrenceDates(every4, "2026-09-07")).toEqual([
+      "2026-09-07", "2026-09-11", "2026-09-15", "2026-09-19",
+    ]);
+  });
+});
