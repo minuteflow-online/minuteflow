@@ -123,6 +123,7 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "claimed", label: "Claimed", defaultWidth: 130 },
   { key: "created", label: "Created", defaultWidth: 150 },
   { key: "active", label: "Active", defaultWidth: 90 },
+  { key: "paid", label: "Paid", defaultWidth: 90 },
 ];
 
 type FixedPayTasksPanelProps = {
@@ -996,6 +997,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     {!hiddenColumns.has("active") && (
                       <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
                     )}
+                    {!hiddenColumns.has("paid") && (
+                      <ColumnHeader label="Paid" width={columnWidths.paid} onResize={(w) => setColumnWidth("paid", w)} />
+                    )}
                     <th className="px-3 py-2.5 w-32"></th>
                   </tr>
                 </thead>
@@ -1058,34 +1062,27 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                              stopPropagation because the row opens the details
                              panel on click. */
                           <td className="px-3 py-3 text-[13px] text-walnut" onClick={(event) => event.stopPropagation()}>
-                            <div className="flex flex-wrap items-center gap-1">
-                              {isAdminOrManager ? (
-                                <select
-                                  value={task.status}
-                                  disabled={statusSaving}
-                                  onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
-                                  className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
-                                >
-                                  {(STATUS_OPTIONS.includes(task.status)
-                                    ? STATUS_OPTIONS
-                                    : [task.status, ...STATUS_OPTIONS]
-                                  ).map((status) => (
-                                    <option key={status} value={status}>
-                                      {STATUS_LABELS[status]}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                                  {STATUS_LABELS[task.status]}
-                                </span>
-                              )}
-                              {task.paid_at && (
-                                <span className="inline-flex items-center rounded-full bg-plum-soft px-2 py-0.5 text-[11px] font-semibold text-plum" title={`Paid ${task.paid_at.slice(0, 10)}`}>
-                                  Paid
-                                </span>
-                              )}
-                            </div>
+                            {isAdminOrManager ? (
+                              <select
+                                value={task.status}
+                                disabled={statusSaving}
+                                onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                                className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
+                              >
+                                {(STATUS_OPTIONS.includes(task.status)
+                                  ? STATUS_OPTIONS
+                                  : [task.status, ...STATUS_OPTIONS]
+                                ).map((status) => (
+                                  <option key={status} value={status}>
+                                    {STATUS_LABELS[status]}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                {STATUS_LABELS[task.status]}
+                              </span>
+                            )}
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (
@@ -1128,6 +1125,27 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                             <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold ${rowStateClass}`}>
                               {rowStateLabel}
                             </span>
+                          </td>
+                        )}
+                        {!hiddenColumns.has("paid") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut" onClick={(event) => event.stopPropagation()}>
+                            {isAdminOrManager ? (
+                              <button
+                                type="button"
+                                disabled={statusSaving}
+                                onClick={() => void handleTogglePaid(task)}
+                                title={task.paid_at ? `Paid ${task.paid_at.slice(0, 10)} — click to undo` : "Click to mark paid"}
+                                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                                  task.paid_at ? "bg-plum-soft text-plum hover:bg-plum/20" : "bg-parchment text-stone hover:bg-sand"
+                                }`}
+                              >
+                                {task.paid_at ? "Paid" : "Unpaid"}
+                              </button>
+                            ) : (
+                              <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold ${task.paid_at ? "bg-plum-soft text-plum" : "bg-parchment text-stone"}`}>
+                                {task.paid_at ? "Paid" : "Unpaid"}
+                              </span>
+                            )}
                           </td>
                         )}
                         <td className="px-3 py-3 text-right" onClick={(event) => event.stopPropagation()}>

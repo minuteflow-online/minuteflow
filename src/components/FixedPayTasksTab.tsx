@@ -123,6 +123,7 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "claimed_by", label: "Claimed By", defaultWidth: 150 },
   { key: "created", label: "Created", defaultWidth: 150 },
   { key: "active", label: "Active", defaultWidth: 90 },
+  { key: "paid", label: "Paid", defaultWidth: 90 },
 ];
 
 export default function FixedPayTasksTab() {
@@ -1110,6 +1111,9 @@ export default function FixedPayTasksTab() {
                     {!hiddenColumns.has("active") && (
                       <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
                     )}
+                    {!hiddenColumns.has("paid") && (
+                      <ColumnHeader label="Paid" width={columnWidths.paid} onResize={(w) => setColumnWidth("paid", w)} />
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -1166,19 +1170,9 @@ export default function FixedPayTasksTab() {
                         )}
                         {!hiddenColumns.has("status") && (
                           <td className="px-3 py-3 text-[13px] text-walnut">
-                            <div className="flex flex-wrap items-center gap-1">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                                {STATUS_LABELS[task.status]}
-                              </span>
-                              {task.paid_at && (
-                                <span
-                                  className="inline-flex items-center rounded-full bg-plum-soft px-2 py-0.5 text-[11px] font-semibold text-plum"
-                                  title={`Paid ${formatTimestamp(task.paid_at)}`}
-                                >
-                                  Paid
-                                </span>
-                              )}
-                            </div>
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                              {STATUS_LABELS[task.status]}
+                            </span>
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (
@@ -1214,6 +1208,20 @@ export default function FixedPayTasksTab() {
                               className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${rowStateClass}`}
                             >
                               {rowStateLabel}
+                            </button>
+                          </td>
+                        )}
+                        {!hiddenColumns.has("paid") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut" onClick={(event) => event.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => void handleTogglePaid(task)}
+                              title={task.paid_at ? `Paid ${formatTimestamp(task.paid_at)} — click to undo` : "Click to mark paid"}
+                              className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+                                task.paid_at ? "bg-plum-soft text-plum hover:bg-plum/20" : "bg-parchment text-stone hover:bg-sand"
+                              }`}
+                            >
+                              {task.paid_at ? "Paid" : "Unpaid"}
                             </button>
                           </td>
                         )}
