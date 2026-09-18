@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Project } from "@/types/database";
 import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachment } from "@/components/AttachmentComposer";
 import { linkifyText } from "@/lib/linkify";
+import { PROJECT_STATUS_BY_VALUE } from "@/lib/projectStatus";
 
 type Stats = Record<string, { total: number; done: number }>;
 // Sentinel title marking the one project_messages row that holds a page's
@@ -234,6 +235,10 @@ function MentionPicker({ members, onPick }: { members: Member[]; onPick: (name: 
 export default function ObjectiveOverview({ projects, onSelect, scopeId = null, kindLabel = "Objective", refreshSignal = 0, showOnly, addSubtaskSlot, onEditProject, currentUserId, isAdmin = false }: ObjectiveOverviewProps) {
   const [expandedOverview, setExpandedOverview] = useState<string | null>(null);
   const [msgFilter, setMsgFilter] = useState<"general" | "mine">("general");
+  // "parents" shows only the immediate level (roots at the landing, direct
+  // children when scoped) — "nested" flattens every descendant, any depth,
+  // into the same tile list.
+  const [overviewScope, setOverviewScope] = useState<"parents" | "nested">("parents");
   const lc = kindLabel.toLowerCase();
   const tabbed = Boolean(showOnly);
   // In tab mode only the chosen card renders (full-size); others are hidden.
@@ -248,6 +253,10 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [docsView, setDocsView] = useState<"uploaded" | "submitted">("uploaded");
   const [submittedFiles, setSubmittedFiles] = useState<SubmittedFileRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  // Per-project message count for the Overview tiles — from a separate,
+  // unlimited query server-side, not derived from `messages` above (that
+  // list is capped at 30 rows across the whole scope).
+  const [messageCounts, setMessageCounts] = useState<Record<string, number>>({});
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
   // Optimistic status overrides for ticked/unticked subtasks.
   const [statusOverride, setStatusOverride] = useState<Record<number, string>>({});
@@ -369,9 +378,28 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     return acc;
   }, [childrenByParent]);
 
-  // The objectives listed in the Overview card: roots at the landing, or the
-  // scoped objective's direct children when inside one.
-  const overviewItems = scopeId ? (childrenByParent.get(scopeId) ?? []) : (childrenByParent.get("__root__") ?? []);
+  // Every descendant of the root level, any depth, in the same parent-first
+  // order objectiveOptions walks — the "nested" flatten at the landing page.
+  const allNested = useMemo(() => {
+    const out: Project[] = [];
+    const walk = (list: Project[]) => {
+      for (const p of list) { out.push(p); walk(childrenByParent.get(p.id) ?? []); }
+    };
+    walk(childrenByParent.get("__root__") ?? []);
+    return out;
+  }, [childrenByParent]);
+
+  // The objectives listed in the Overview card. "parents" (default): roots at
+  // the landing, or the scoped objective's direct children when inside one.
+  // "nested": every descendant flattened in, any depth.
+  const overviewItems = useMemo(() => {
+    if (overviewScope === "nested") {
+      return scopeId
+        ? descendantsOf(scopeId).map((id) => projectById.get(id)).filter((p): p is Project => Boolean(p))
+        : allNested;
+    }
+    return scopeId ? (childrenByParent.get(scopeId) ?? []) : (childrenByParent.get("__root__") ?? []);
+  }, [overviewScope, scopeId, descendantsOf, projectById, allNested, childrenByParent]);
 
   // Which projects' data (messages/docs/subtasks/stats) this view covers.
   const dataScopeIds = useMemo(() => {
@@ -380,7 +408,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   }, [scopeId, projects, descendantsOf]);
 
   useEffect(() => {
-    if (dataScopeIds.length === 0) { setStats({}); setFiles([]); setSubmittedFiles([]); setMessages([]); setSubtasks([]); return; }
+    if (dataScopeIds.length === 0) { setStats({}); setFiles([]); setSubmittedFiles([]); setMessages([]); setMessageCounts({}); setSubtasks([]); return; }
     const qs = dataScopeIds.join(",");
     let cancelled = false;
     (async () => {
@@ -397,10 +425,11 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
         setFiles((f.files ?? []) as FileRow[]);
         setSubmittedFiles((sf.files ?? []) as SubmittedFileRow[]);
         setMessages((m.messages ?? []) as MessageRow[]);
+        setMessageCounts((m.counts ?? {}) as Record<string, number>);
         setSubtasks((t.subtasks ?? []) as SubtaskRow[]);
         setStatusOverride({});
       } catch {
-        if (!cancelled) { setStats({}); setFiles([]); setSubmittedFiles([]); setMessages([]); setSubtasks([]); }
+        if (!cancelled) { setStats({}); setFiles([]); setSubmittedFiles([]); setMessages([]); setMessageCounts({}); setSubtasks([]); }
       }
     })();
     return () => { cancelled = true; };
@@ -533,22 +562,23 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   }, [files]);
 
   // Per overview item: aggregate its own + descendants' subtasks, sub-objective
-  // count, and document count.
+  // count, document count, and message count.
   const rollup = useMemo(() => {
-    const byItem = new Map<string, { total: number; done: number; subObjectives: number; docs: number }>();
+    const byItem = new Map<string, { total: number; done: number; subObjectives: number; docs: number; messages: number }>();
     for (const item of overviewItems) {
       const desc = descendantsOf(item.id);
       const ids = [item.id, ...desc];
-      let total = 0, done = 0, docs = 0;
+      let total = 0, done = 0, docs = 0, msgs = 0;
       for (const id of ids) {
         total += stats[id]?.total ?? 0;
         done += stats[id]?.done ?? 0;
         docs += (filesByProject.get(id)?.length ?? 0);
+        msgs += (messageCounts[id] ?? 0);
       }
-      byItem.set(item.id, { total, done, subObjectives: desc.length, docs });
+      byItem.set(item.id, { total, done, subObjectives: desc.length, docs, messages: msgs });
     }
     return byItem;
-  }, [overviewItems, descendantsOf, stats, filesByProject]);
+  }, [overviewItems, descendantsOf, stats, filesByProject, messageCounts]);
 
   // One avatar per TASK-assignment on each overview item's bar (the item + its
   // descendants). A task's dot sits at the START until it's approved, then moves
@@ -907,12 +937,22 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
 
       {/* Objective / Sub-objective Overview */}
       <div className={cardClass("overview")}>
-        <h3 className={CARD_TITLE}>{overviewTitle}</h3>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <h3 className={`${CARD_TITLE} mb-0`}>{overviewTitle}</h3>
+          <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
+            {([["parents", "Parents only"], ["nested", "Include nested"]] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setOverviewScope(v)}
+                className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${overviewScope === v ? "bg-white text-espresso shadow-sm" : "text-walnut hover:text-espresso"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <Paginated items={overviewItems} pageSize={5} empty={<p className="text-[12px] text-walnut">No {scopeId ? `sub-${lc}s` : `${lc}s`} yet.</p>}>
           {(slice) => (
             <div className="space-y-2">
               {slice.map((p) => {
-                const r = rollup.get(p.id) ?? { total: 0, done: 0, subObjectives: 0, docs: 0 };
+                const r = rollup.get(p.id) ?? { total: 0, done: 0, subObjectives: 0, docs: 0, messages: 0 };
                 const pct = r.total ? Math.round((r.done / r.total) * 100) : 0;
                 const open = expandedOverview === p.id;
                 return (
@@ -923,7 +963,14 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                           <span className="text-bark text-[9px] w-2 shrink-0">{open ? "▼" : "▶"}</span>
                           <span className="text-[13px] font-semibold text-espresso leading-tight truncate">{p.name}</span>
                         </span>
-                        <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusCls(p.is_active)}`}>{p.is_active ? "Active" : "Inactive"}</span>
+                        <span className="flex items-center gap-1 shrink-0">
+                          {p.status && PROJECT_STATUS_BY_VALUE.has(p.status) && (
+                            <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${PROJECT_STATUS_BY_VALUE.get(p.status)!.cls}`}>
+                              {PROJECT_STATUS_BY_VALUE.get(p.status)!.label}
+                            </span>
+                          )}
+                          <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusCls(p.is_active)}`}>{p.is_active ? "Active" : "Inactive"}</span>
+                        </span>
                       </div>
                       {(() => {
                         const data = taskRiders.get(p.id) ?? { start: [], end: [], fill: 0 };
@@ -984,14 +1031,14 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                         );
                       })()}
                       <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-amber">
-                        <span>{r.subObjectives} sub-{kindLabel === "Operation" ? "op" : "obj"} · {r.total} subtask{r.total === 1 ? "" : "s"} · {r.docs} doc{r.docs === 1 ? "" : "s"} · {pct}%</span>
+                        <span>{r.subObjectives} sub-{kindLabel === "Operation" ? "op" : "obj"} · {r.total} subtask{r.total === 1 ? "" : "s"} · {r.docs} doc{r.docs === 1 ? "" : "s"} · {r.messages} message{r.messages === 1 ? "" : "s"} · {pct}%</span>
                         {p.target_date && <span className="text-terracotta font-semibold shrink-0">Target: {formatDate(p.target_date)}</span>}
                       </div>
                     </button>
                     {open && (
                       <div className="border-t border-sand text-[12px]">
                         {([
-                          ["Status", p.status],
+                          ["Status", PROJECT_STATUS_BY_VALUE.get(p.status)?.label ?? p.status],
                           ["Account", p.account],
                           ["Start Date", p.start_date ? formatDate(p.start_date) : null],
                           ["Target Date", p.target_date ? formatDate(p.target_date) : null],

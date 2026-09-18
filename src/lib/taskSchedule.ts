@@ -5,7 +5,7 @@
 // (the template's own Repeat field) and TaskEditor (the "also save as a
 // recurring template" toggle on a regular task), so both read the exact same
 // list rather than keeping two copies in sync by hand.
-export type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
+export type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months" | "custom_days" | "custom_weeks";
 
 export const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper: string }[] = [
   { value: "daily", label: "Daily", helper: "Repeats every day from the start date" },
@@ -14,6 +14,8 @@ export const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper:
   { value: "monthly", label: "Monthly", helper: "Repeats on the same date each month" },
   { value: "every_2_months", label: "Every 2 months", helper: "Repeats every two months on the same date" },
   { value: "every_3_months", label: "Every 3 months", helper: "Repeats every three months on the same date" },
+  { value: "custom_days", label: "Every N days", helper: "Repeats every N days from the start date — set N below" },
+  { value: "custom_weeks", label: "Every N weeks", helper: "Repeats every N weeks from the start date — set N below" },
 ];
 
 // Once a task reaches one of these, it's out of the VA's hands — a due date

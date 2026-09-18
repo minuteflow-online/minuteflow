@@ -137,6 +137,10 @@ function recurrenceLabel(template: RecurringTaskTemplate): string {
       return "Every 2 months";
     case "every_3_months":
       return "Every 3 months";
+    case "custom_days":
+      return template.recurrence_interval ? `Every ${template.recurrence_interval} day(s)` : "Custom (days)";
+    case "custom_weeks":
+      return template.recurrence_interval ? `Every ${template.recurrence_interval} week(s)` : "Custom (weeks)";
     default:
       return template.recurrence_type;
   }

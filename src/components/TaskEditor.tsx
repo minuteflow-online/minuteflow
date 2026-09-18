@@ -397,6 +397,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // instead of needing a separate template per weekday (which the templates
   // API's duplicate guard would reject as a repeat of the same task).
   const [templateRecurrenceDays, setTemplateRecurrenceDays] = useState<number[]>([]);
+  // The "N" in "every N days"/"every N weeks" — only meaningful when Repeat
+  // is one of the two custom types. String state so the input can sit empty
+  // rather than forced to 0/NaN while typing.
+  const [templateRecurrenceInterval, setTemplateRecurrenceInterval] = useState("");
   const [pendingUnlinkTemplate, setPendingUnlinkTemplate] = useState(false);
   const [edits, setEdits] = useState<Array<{ id: number; editor: string; edited_at: string; fields: string[] }>>([]);
   const [editsOpen, setEditsOpen] = useState(false);
@@ -418,6 +422,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             (d.template.recurrence_days as number[]).filter((i) => Number.isInteger(i) && i >= 0 && i <= 6)
           );
         }
+        if (d.template?.recurrence_interval) setTemplateRecurrenceInterval(String(d.template.recurrence_interval));
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1141,6 +1146,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             rate: mode === "output_based" ? Number(rate) : null,
             recurrence_type: templateRecurrenceType,
             recurrence_days: templateRecurrenceType === "weekly" ? templateRecurrenceDays : [],
+            recurrence_interval:
+              templateRecurrenceType === "custom_days" || templateRecurrenceType === "custom_weeks"
+                ? Number(templateRecurrenceInterval) || null
+                : null,
             repeat_until: templateRepeatUntil || null,
             is_active: true,
           };
@@ -1402,7 +1411,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     // in, so typing a duration and saving immediately wrote the previous value
     // (usually null) — the field looked filled in and still saved empty.
     parsedPlannedMinutes,
-    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, templateRecurrenceDays, templateRepeatUntil, existingTemplateId, showToast,
+    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, templateRecurrenceDays, templateRecurrenceInterval, templateRepeatUntil, existingTemplateId, showToast,
   ]);
 
 
@@ -2609,6 +2618,27 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                       {templateRecurrenceDays.length > 0
                         ? "Lands on these days every week."
                         : "Leave empty to repeat weekly on the Start Date's own weekday."}
+                    </p>
+                  </div>
+                )}
+                {(templateRecurrenceType === "custom_days" || templateRecurrenceType === "custom_weeks") && (
+                  <div className="mt-2">
+                    <label className="mb-1 block text-[10px] font-semibold text-walnut">
+                      Every how many {templateRecurrenceType === "custom_days" ? "days" : "weeks"}?
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={templateRecurrenceInterval}
+                      onChange={(e) => setTemplateRecurrenceInterval(e.target.value)}
+                      placeholder={templateRecurrenceType === "custom_days" ? "e.g. 3" : "e.g. 2"}
+                      disabled={readOnly}
+                      className={inputClass}
+                    />
+                    <p className="mt-1 text-[10px] text-stone">
+                      {Number(templateRecurrenceInterval) > 0
+                        ? `Repeats every ${templateRecurrenceInterval} ${templateRecurrenceType === "custom_days" ? "day(s)" : "week(s)"} from the start date.`
+                        : "Set a number above 0."}
                     </p>
                   </div>
                 )}

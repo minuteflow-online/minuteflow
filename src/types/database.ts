@@ -627,12 +627,15 @@ export interface RecurringTaskTemplate {
   project_id: string | null;
   category: string | null;
   pay_type: string | null;
-  recurrence_type: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'every_2_months' | 'every_3_months';
+  recurrence_type: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'every_2_months' | 'every_3_months' | 'custom_days' | 'custom_weeks';
   /** integer[] in Postgres, 0=Sun..6=Sat — a day name like "Mon" was tried and
    *  rejected at insert with "invalid input syntax for type integer". Only
    *  meaningful when recurrence_type is "weekly". */
   recurrence_days: number[] | null;
   recurrence_day_of_month: number | null;
+  /** The "N" in "every N days"/"every N weeks". Only meaningful when
+   *  recurrence_type is "custom_days" or "custom_weeks". */
+  recurrence_interval?: number | null;
   is_active: boolean;
   is_paused?: boolean;
   /** Set with a pause to say when it ends. Null while paused means indefinite. */
