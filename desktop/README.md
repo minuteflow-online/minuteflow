@@ -72,10 +72,21 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
     job orders, new DMs), read-only. Reads the `messages` table directly
     (RLS-scoped, same as tasks/sessions) rather than through an API route —
     the web widget does the same — see `src/lib/notifications.ts`.
-  - Not in this version: Admin oversight, per-project boards, attachments,
-    @mention autocomplete, editing, delete/pin/archive, marking a
-    notification read, realtime (all four tabs poll instead — see each
-    lib file's poll interval).
+  - **Attachments and clickable links** — a topic, reply, or DM can carry a
+    pasted/dragged/picked file or a link, same "+ Attach" picker as web
+    (`src/components/AttachmentComposer.tsx`, ported to
+    `desktop/src/components/AttachmentComposer.tsx`). An image attachment
+    previews inline; anything else shows a filename chip; a link shows a
+    chip too. A bare `https://` URL typed into plain message text is
+    auto-linked (`src/lib/linkify.tsx`). Goes through
+    `/api/message-attachments`, same bearer-token/CORS treatment as
+    everything else here. Attachment images preview via a Supabase Storage
+    signed URL, a different origin from the app's own API calls — `img-src`
+    in `electron/main.js`'s CSP allows it explicitly. No delete/remove yet.
+  - Not in this version: Admin oversight, per-project boards, @mention
+    autocomplete, editing, delete/pin/archive, marking a notification read,
+    realtime (all four tabs poll instead — see each lib file's poll
+    interval).
 
 ## What it deliberately does NOT do yet
 

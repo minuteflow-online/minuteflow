@@ -20,9 +20,12 @@ const TARGET_TYPES: MessageAttachmentTargetType[] = [
   "direct_message",
 ];
 
-async function requireUser() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+// Bearer-token fallback for the desktop app — see project-messages/route.ts's
+// identical comment and PR #167.
+async function requireUser(request: Request) {
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const { data: { user } } = await supabase.auth.getUser(bearerToken);
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
   return { user, profile };
@@ -37,7 +40,7 @@ function parseTargetType(raw: string | null): MessageAttachmentTargetType | null
  * Every attachment (file or link) on one topic, reply, or DM.
  */
 export async function GET(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
 
@@ -66,7 +69,7 @@ export async function GET(request: Request) {
  * than replying.
  */
 export async function POST(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
   const admin = serviceClient();
@@ -169,7 +172,7 @@ export async function POST(request: Request) {
  * Whoever uploaded it, or an admin — same rule as deleting a comment.
  */
 export async function DELETE(request: Request) {
-  const auth = await requireUser();
+  const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user, profile } = auth;
   const isAdmin = hasBroadAdminAccess(profile);

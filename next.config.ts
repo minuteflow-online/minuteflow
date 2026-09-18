@@ -49,6 +49,7 @@ const nextConfig: NextConfig = {
       { source: "/api/conversations", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/conversations/:id/messages", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/team-members", headers: DESKTOP_CORS_HEADERS },
+      { source: "/api/message-attachments", headers: DESKTOP_CORS_HEADERS },
     ];
   },
 };
