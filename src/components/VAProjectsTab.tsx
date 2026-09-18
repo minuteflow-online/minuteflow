@@ -10,6 +10,7 @@ import ProjectFiles from "@/components/ProjectFiles";
 import ObjectiveOverview from "@/components/ObjectiveOverview";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import { collapseRecurringSeries } from "@/lib/taskSchedule";
+import { PROJECT_STATUS_OPTIONS, PROJECT_STATUS_BY_VALUE } from "@/lib/projectStatus";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
 
 interface VAProjectsTabProps {
@@ -229,14 +230,9 @@ function toHierOptions(list: Project[]): { id: string; label: string }[] {
   return out;
 }
 
-// Project-level status (distinct from the Active/Inactive toggle and from subtask status).
-const PROJECT_STATUS_OPTIONS: { value: string; label: string; cls: string }[] = [
-  { value: "planning", label: "Planning", cls: "bg-slate-blue-soft text-slate-blue border-slate-blue/20" },
-  { value: "active", label: "Active", cls: "bg-sage-soft text-sage border-sage/20" },
-  { value: "on_hold", label: "On hold", cls: "bg-amber-50 text-amber-600 border-amber-200" },
-  { value: "done", label: "Done", cls: "bg-emerald-50 text-emerald-600 border-emerald-200" },
-];
-const PROJECT_STATUS_BY_VALUE = new Map(PROJECT_STATUS_OPTIONS.map((s) => [s.value, s]));
+// Project-level status (distinct from the Active/Inactive toggle and from
+// subtask status) is PROJECT_STATUS_OPTIONS/PROJECT_STATUS_BY_VALUE, imported
+// from @/lib/projectStatus — shared with ObjectiveOverview's tile badges.
 
 // Statuses counted as "done" for the "Where They Are" completed/total figure.
 const DONE_STATUSES = new Set(["completed", "approved", "paid"]);
