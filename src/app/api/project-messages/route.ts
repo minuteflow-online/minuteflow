@@ -53,7 +53,7 @@ export async function GET(request: Request) {
     .select(
       `id, project_id, author_id, title, body, category, pinned, created_at, updated_at, edited_at,
        author:profiles!project_messages_author_id_fkey(${authorSelect}),
-       project_message_comments(id, body, author_id, created_at,
+       project_message_comments(id, body, author_id, created_at, edited_at,
          author:profiles!project_message_comments_author_id_fkey(${authorSelect}))`
     )
     [general ? "is" : "eq"]("project_id", general ? null : projectId)

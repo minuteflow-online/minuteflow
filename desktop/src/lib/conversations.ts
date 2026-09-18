@@ -107,6 +107,24 @@ export async function sendMessage(conversationId: string, body: string): Promise
   }
 }
 
+/** Edits one of your own DMs in place. Sender-only, enforced server-side. */
+export async function editMessage(conversationId: string, messageId: number, body: string): Promise<DirectMessage | null> {
+  const headers = await authHeaders();
+  if (!headers) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages?messageId=${messageId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.message ?? null) as DirectMessage | null;
+  } catch {
+    return null;
+  }
+}
+
 /** Starts (or, for a 1:1, reuses) a conversation with one or more teammates,
  *  returns its id. `title` only applies to a real group (more than one
  *  other member). */

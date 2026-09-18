@@ -83,10 +83,19 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
     everything else here. Attachment images preview via a Supabase Storage
     signed URL, a different origin from the app's own API calls — `img-src`
     in `electron/main.js`'s CSP allows it explicitly. No delete/remove yet.
-  - Not in this version: Admin oversight, per-project boards, @mention
-    autocomplete, editing, delete/pin/archive, marking a notification read,
-    realtime (all four tabs poll instead — see each lib file's poll
-    interval).
+  - **Editing** — the author of a General topic or reply, and the sender of
+    a DM, can edit their own words in place via an "Edit" link next to the
+    timestamp (admins can also edit any topic or reply, same as web). An
+    edited item picks up an italic "· edited" label. Uses the same PATCH
+    routes as web (`/api/project-messages`, its `/comments` sub-route, and
+    `/api/conversations/:id/messages`), which already carried the
+    bearer-token/CORS treatment from earlier PRs — no new backend work
+    needed. See `editTopic`/`editComment` in `src/lib/messageBoard.ts` and
+    `editMessage` in `src/lib/conversations.ts`. Still no delete/pin/archive.
+  - Not in this version: Admin oversight (beyond edit-any-post), per-project
+    boards, @mention autocomplete, delete/pin/archive, marking a
+    notification read, realtime (all four tabs poll instead — see each lib
+    file's poll interval).
 
 ## What it deliberately does NOT do yet
 

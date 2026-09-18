@@ -29,6 +29,7 @@ export interface TopicComment {
   body: string;
   author_id: string | null;
   created_at: string;
+  edited_at?: string | null;
   author: MessageAuthor | null;
   attachments?: Attachment[];
 }
@@ -39,6 +40,7 @@ export interface Topic {
   body: string;
   author_id: string | null;
   created_at: string;
+  edited_at?: string | null;
   author: MessageAuthor | null;
   project_message_comments: TopicComment[];
   attachments?: Attachment[];
@@ -92,6 +94,42 @@ export async function postReply(topicId: number, body: string): Promise<TopicCom
   try {
     const res = await fetch(`${API_BASE}/api/project-messages/${topicId}/comments`, {
       method: "POST",
+      headers,
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.comment ?? null) as TopicComment | null;
+  } catch {
+    return null;
+  }
+}
+
+/** Edits a topic's own title/body in place. Author-or-admin, enforced server-side. */
+export async function editTopic(id: number, title: string, body: string): Promise<Topic | null> {
+  const headers = await authHeaders();
+  if (!headers) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/project-messages?id=${id}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ title, body }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.message ?? null) as Topic | null;
+  } catch {
+    return null;
+  }
+}
+
+/** Edits one of your own replies in place. */
+export async function editComment(topicId: number, commentId: number, body: string): Promise<TopicComment | null> {
+  const headers = await authHeaders();
+  if (!headers) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/project-messages/${topicId}/comments?commentId=${commentId}`, {
+      method: "PATCH",
       headers,
       body: JSON.stringify({ body }),
     });
