@@ -480,7 +480,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       // owed on those, not even a "pending" figure.
       supabase
         .from("fixed_pay_tasks")
-        .select("assigned_to, task_name, account, project, rate, status")
+        .select("assigned_to, task_name, account, project, rate, status, paid_at")
         .not("assigned_to", "is", null)
         .gt("rate", 0)
         .is("deleted_at", null)
@@ -582,7 +582,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       project_name: row.project ?? null,
       rate: Number(row.rate),
       task_library_id: 0,
-      status: row.status === "completed" ? "approved" : "not_started",
+      // A paid task counts as earned regardless of its review status — real
+      // money already went out for it, whether or not it was formally
+      // approved first (an admin can pay a "submitted" task early; see
+      // FixedPayTasksTab). Otherwise, unpaid still means completed-only.
+      status: row.status === "completed" || row.paid_at ? "approved" : "not_started",
     }));
     const parsedFixed: VaFixedAssignment[] = rawFixed.map((row) => {
       const pta = row.project_task_assignments;

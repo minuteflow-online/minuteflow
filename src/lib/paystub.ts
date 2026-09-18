@@ -94,12 +94,16 @@ export async function computePaystubData(
     0
   );
 
-  // Output-based tasks (completed, not yet paid)
+  // Output-based tasks (completed, not yet paid) — "not yet paid" is now its
+  // own paid_at check, not an accident of status no longer equaling
+  // "completed"; a task hand-paid early (still "submitted"/"reviewing")
+  // correctly stays excluded here too, since it's not "completed" yet either way.
   const { data: fptRaw } = await admin
     .from("fixed_pay_tasks")
     .select("rate")
     .eq("claimed_by", userId)
     .eq("status", "completed")
+    .is("paid_at", null)
     .is("deleted_at", null);
   const fptTotal = ((fptRaw ?? []) as { rate: number }[]).reduce((s, t) => s + (Number(t.rate) || 0), 0);
 
