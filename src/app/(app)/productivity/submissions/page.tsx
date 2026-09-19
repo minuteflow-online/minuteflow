@@ -17,6 +17,7 @@ import RevisionBadge from "@/components/RevisionBadge";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
 import TaskDetailModal from "@/components/TaskDetailModal";
+import ReviewModal from "@/components/ReviewModal";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
@@ -2359,6 +2360,7 @@ function ThreadCard({
   const [noteDraft, setNoteDraft] = useState("");
   const [noteMode, setNoteMode] = useState<null | "revision" | "note">(null);
   const [revisionDue, setRevisionDue] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   // Attach-by-paste/drag/upload on a note or revision request, same flow
   // SubmitWorkModal uses: files go straight to storage via a signed slot, and
@@ -2584,34 +2586,28 @@ function ThreadCard({
         {canReview && latest.task && awaitingReview ? (
           <div className="flex shrink-0 items-center gap-1.5">
             {/* A task that never required review can't be 'approved' by a
-                person without implying it was graded. Restoring it puts back
-                the same entry the server writes on submit, so a reversal made
-                by mistake leaves no trace of a review that never happened. */}
-            <button
-              onClick={() =>
-                onReview(
-                  latest,
-                  "approval",
-                  latest.task?.review_required === false
-                    ? "Auto approved — this task does not require review"
-                    : undefined
-                )
-              }
-              disabled={busy}
-              className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
-            >
-              {latest.task?.review_required === false ? "Auto approve" : "Approve"}
-            </button>
-            <button
-              onClick={() => {
-                setNoteMode("revision");
-                setExpanded(true);
-              }}
-              disabled={busy}
-              className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
-            >
-              Revise
-            </button>
+                person without implying it was graded — this stays a single
+                button rather than going through the two-gate modal below,
+                since there's nothing here for a reviewer to judge. */}
+            {latest.task?.review_required === false ? (
+              <button
+                onClick={() =>
+                  onReview(latest, "approval", "Auto approved — this task does not require review")
+                }
+                disabled={busy}
+                className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+              >
+                Auto approve
+              </button>
+            ) : (
+              <button
+                onClick={() => setReviewOpen(true)}
+                disabled={busy}
+                className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+              >
+                Review
+              </button>
+            )}
             <button
               onClick={() => onComplete(latest)}
               disabled={busy}
@@ -2703,7 +2699,7 @@ function ThreadCard({
                 </div>
               )}
               <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                {noteMode === "revision" ? "What needs changing?" : "Add a note"}
+                Add a note
               </label>
               <textarea
                 value={noteDraft}
@@ -2711,11 +2707,7 @@ function ThreadCard({
                 onPaste={handleNotePaste}
                 rows={2}
                 autoFocus
-                placeholder={
-                  noteMode === "revision"
-                    ? "Tell them what to fix..."
-                    : "Anything to add — this is appended, nothing is overwritten"
-                }
+                placeholder="Anything to add — this is appended, nothing is overwritten"
                 className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
               />
 
@@ -2823,6 +2815,18 @@ function ThreadCard({
             </button>
           )}
         </div>
+      )}
+
+      {reviewOpen && latest.task && (
+        <ReviewModal
+          submission={latest}
+          busy={busy}
+          onReview={(outcome, note, dueAt, attachments) => {
+            onReview(latest, outcome, note, dueAt, attachments);
+            setReviewOpen(false);
+          }}
+          onClose={() => setReviewOpen(false)}
+        />
       )}
     </div>
   );

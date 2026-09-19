@@ -83,17 +83,26 @@ async function withAttachments(
       submissions.map((s) => s.id)
     );
 
+  // Resolve every signed URL into a flat array first, then group in one
+  // synchronous pass once they've all settled — grouping directly inside the
+  // Promise.all (read the shared list, push, write back) races when two
+  // files land on the same submission: whichever write lands second
+  // silently drops the first file, since it read the list before the other
+  // write happened.
   const bySubmission = new Map<number, Array<Record<string, unknown>>>();
-  await Promise.all(
+  const signedFiles = await Promise.all(
     (files ?? []).map(async (file) => {
       const { data: signed } = await admin.storage
         .from("task-attachments")
         .createSignedUrl(file.storage_path as string, 3600);
-      const list = bySubmission.get(file.submission_id as number) ?? [];
-      list.push({ ...file, url: signed?.signedUrl ?? null });
-      bySubmission.set(file.submission_id as number, list);
+      return { ...file, url: signed?.signedUrl ?? null };
     })
   );
+  for (const file of signedFiles) {
+    const list = bySubmission.get(file.submission_id as number) ?? [];
+    list.push(file);
+    bySubmission.set(file.submission_id as number, list);
+  }
 
   return submissions.map((s) => ({ ...s, attachments: bySubmission.get(s.id) ?? [] }));
 }
@@ -547,6 +556,34 @@ export async function POST(request: Request, { params }: RouteContext) {
         senderId: user.id,
         content: `${commenter} commented on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
         telegram: `💬 <b>${esc(commenter)}</b> commented on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
+        topic: "submissions",
+        assignedTaskId: Number(id),
+        submissionId: submission.id as number,
+      });
+    }
+  }
+
+  // A revision request notifies whoever's actually doing the work — the
+  // task's assignee(s) — except the reviewer requesting it. Same shape as
+  // the comment notification above; this outcome never had one before,
+  // whether requested from the old inline buttons or the review modal (both
+  // land here through the same POST).
+  if (messageType === "revision") {
+    const { data: rProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
+    const reviewer = rProf?.full_name || rProf?.username || "A reviewer";
+    const { data: assignees } = await admin
+      .from("assigned_task_assignees")
+      .select("va_id")
+      .eq("assigned_task_id", id);
+    const targets = new Set<string>();
+    for (const a of assignees ?? []) if (a.va_id && a.va_id !== user.id) targets.add(a.va_id as string);
+    const snippet = message && message.length > 160 ? `${message.slice(0, 160)}…` : (message || "");
+    for (const target of targets) {
+      await notifyOne(admin, {
+        targetUserId: target,
+        senderId: user.id,
+        content: `${reviewer} requested a revision on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
+        telegram: `🔁 <b>${esc(reviewer)}</b> requested a revision on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
         topic: "submissions",
         assignedTaskId: Number(id),
         submissionId: submission.id as number,

@@ -123,8 +123,6 @@ export default function VAPerformanceMetrics({
     }
     setLoading(true);
 
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
-
     const [logsRes, assigneesRes, plannedRes, tokensRes, ratingsRes] = await Promise.all([
       supabase
         .from("time_logs")
@@ -139,8 +137,18 @@ export default function VAPerformanceMetrics({
         .in("user_id", activeVaIds)
         .gte("plan_date", startDateStr)
         .lte("plan_date", endDateStr),
-      supabase.from("va_tokens").select("user_id").in("user_id", activeVaIds),
-      supabase.from("va_daily_ratings").select("va_id,score,rating_date").in("va_id", activeVaIds).gte("rating_date", sevenDaysAgo),
+      // amount + awarded_at, not just user_id — see tokenCount below, which
+      // now sums the award instead of counting the row.
+      supabase.from("va_tokens").select("user_id,amount,awarded_at").in("user_id", activeVaIds),
+      // Bounded to the selected period instead of a hardcoded last-7-days
+      // window — resolved in org time via the per-VA filter below, rather
+      // than the UTC date this used to compute here.
+      supabase
+        .from("va_daily_ratings")
+        .select("va_id,score,rating_date")
+        .in("va_id", activeVaIds)
+        .gte("rating_date", startDateStr)
+        .lte("rating_date", endDateStr),
     ]);
 
     const logs = logsRes.data ?? [];
@@ -160,22 +168,34 @@ export default function VAPerformanceMetrics({
       const productivityScore = billableMs > 0 ? (taskMs / billableMs) * 100 : null;
 
       const vaAssignees = assignees.filter((a) => a.va_id === vaId);
-      const scoredAssignees = vaAssignees.filter((a) => typeof a.accuracy_score === "number" && a.accuracy_score !== null);
+      // Bounded to the selected period — an unfiltered lifetime average is why
+      // Daily/Weekly/Monthly/Yearly used to all show the same number.
+      // assigned_at is the same anchor Progress already used below, so both
+      // tiles now agree on what "this period's work" means.
+      const vaAssigneesInRange = vaAssignees.filter((a) => {
+        const d = localDateStr(new Date(a.assigned_at), orgTimezone);
+        return d >= startDateStr && d <= endDateStr;
+      });
+      const scoredAssignees = vaAssigneesInRange.filter((a) => typeof a.accuracy_score === "number" && a.accuracy_score !== null);
       const accuracyScore =
         scoredAssignees.length > 0
           ? scoredAssignees.reduce((s, a) => s + (a.accuracy_score as number), 0) / scoredAssignees.length
           : null;
 
-      const tokenCount = tokens.filter((t) => t.user_id === vaId).length;
+      // Sums the award amount instead of counting rows — a 5-token award used
+      // to display as 1 — bounded to the period and resolved in org time.
+      const tokenCount = tokens
+        .filter((t) => {
+          if (t.user_id !== vaId) return false;
+          const d = localDateStr(new Date(t.awarded_at), orgTimezone);
+          return d >= startDateStr && d <= endDateStr;
+        })
+        .reduce((s, t) => s + (t.amount || 0), 0);
 
       const vaRatings = ratings.filter((r) => r.va_id === vaId);
       const stars = vaRatings.length > 0 ? vaRatings.reduce((s, r) => s + r.score, 0) / vaRatings.length : null;
 
       const vaPlanned = planned.filter((p) => p.user_id === vaId);
-      const vaAssigneesInRange = vaAssignees.filter((a) => {
-        const d = localDateStr(new Date(a.assigned_at), orgTimezone);
-        return d >= startDateStr && d <= endDateStr;
-      });
       const completedPlanned = vaPlanned.filter((p) => p.completed).length;
       const completedAssigned = vaAssigneesInRange.filter((a) =>
         a.status === "completed" || a.status === "approved"
