@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canEmptySubmissionTrash, canReviewSubmissions } from "@/lib/submissions";
+import { isUnreadCandidate } from "@/lib/submissionUnread";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -304,25 +305,43 @@ async function loadExpectedWork(
 }
 
 /**
- * Comments/notes on a thread notify the caller via a `messages` row stamped
- * with the task it's about (see notifyOne in the submissions POST route).
- * Counting those per task — for this viewer only — is what drives the ✉️
- * badge and the "Unread" filter, without needing a second concept of
- * "flagged" beyond the existing comment thread.
+ * Entries this viewer hasn't opened yet, counted per task. Drives the mail
+ * icon on each card and the Unread filter.
+ *
+ * Tracked in submission_reads rather than the notification rows in `messages`:
+ * those are marked read by the bell and the dashboard toast, so a new
+ * submission could lose its marker before the reviewer ever scrolled to it.
  */
-async function loadUnreadByTask(admin: AdminClient, taskIds: number[], userId: string) {
+async function loadUnreadByTask(
+  admin: AdminClient,
+  feed: Array<Record<string, unknown> & { id: number }>,
+  userId: string
+) {
   const unreadByTask: Record<number, number> = {};
-  if (taskIds.length === 0) return unreadByTask;
+  const rows = feed as unknown as Array<{
+    id: number;
+    assigned_task_id: number | null;
+    user_id: string | null;
+    message_type: string;
+    created_at: string;
+  }>;
+  const candidates = rows.filter((r) => r.assigned_task_id != null && isUnreadCandidate(r, userId));
+  if (candidates.length === 0) return unreadByTask;
 
-  const { data: unread } = await admin
-    .from("messages")
-    .select("assigned_task_id")
-    .eq("target_user_id", userId)
-    .eq("read", false)
-    .in("assigned_task_id", taskIds);
-  for (const row of (unread ?? []) as Array<{ assigned_task_id: number | null }>) {
-    if (row.assigned_task_id == null) continue;
-    unreadByTask[row.assigned_task_id] = (unreadByTask[row.assigned_task_id] ?? 0) + 1;
+  const { data: seen, error } = await admin
+    .from("submission_reads")
+    .select("submission_id")
+    .eq("user_id", userId)
+    .in("submission_id", candidates.map((r) => r.id));
+  // Without the table there's no way to tell read from unread; showing nothing
+  // beats marking every submission as new.
+  if (error) return unreadByTask;
+
+  const seenIds = new Set((seen ?? []).map((s) => s.submission_id as number));
+  for (const row of candidates) {
+    if (seenIds.has(row.id)) continue;
+    const taskId = row.assigned_task_id as number;
+    unreadByTask[taskId] = (unreadByTask[taskId] ?? 0) + 1;
   }
   return unreadByTask;
 }
@@ -480,7 +499,7 @@ export async function GET(request: Request) {
     showTrash
       ? Promise.resolve([] as Array<Record<string, unknown>>)
       : loadExpectedWork(admin, { isAdminEquivalent, va, scope, projectId, userId: user.id }),
-    loadUnreadByTask(admin, taskIds, user.id),
+    loadUnreadByTask(admin, rows, user.id),
   ]);
   const { roundDurations, reviewState } = roundData;
 
