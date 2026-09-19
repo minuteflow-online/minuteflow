@@ -21,6 +21,7 @@ import ReviewModal from "@/components/ReviewModal";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
+import { isUnreadCandidate } from "@/lib/submissionUnread";
 
 type FeedItem = {
   id: number;
@@ -923,10 +924,10 @@ This cannot be undone.`
     [load]
   );
 
-  // Clears the unread badge for one task's thread — called when the card is
-  // opened, since reading the comment is the whole point of the count. Same
-  // RLS the bell already relies on: a viewer may only touch their own rows,
-  // so this can go straight from the browser without a dedicated route.
+  // Clears the unread icon for one task's thread — called when the card is
+  // opened. Same RLS the bell already relies on: a viewer may only touch
+  // their own rows, so this can go straight from the browser without a
+  // dedicated route.
   const markThreadRead = useCallback(
     (taskId: number) => {
       if (!currentUserId || !(unreadByTask[taskId] > 0)) return;
@@ -935,14 +936,33 @@ This cannot be undone.`
         delete next[taskId];
         return next;
       });
+      const seen = items
+        .filter(
+          (i) =>
+            (i.task?.id ?? i.assigned_task_id) === taskId &&
+            isUnreadCandidate(i, currentUserId)
+        )
+        .map((i) => ({ user_id: currentUserId, submission_id: i.id }));
+      if (seen.length > 0) {
+        void supabase
+          .from("submission_reads")
+          .upsert(seen, { onConflict: "user_id,submission_id", ignoreDuplicates: true })
+          .then(({ error }) => {
+            if (error) console.error("marking submissions read failed:", error.message);
+          });
+      }
+      // The bell's notification for the same thread is read along with it.
       void supabase
         .from("messages")
         .update({ read: true })
         .eq("target_user_id", currentUserId)
         .eq("assigned_task_id", taskId)
-        .eq("read", false);
+        .eq("read", false)
+        .then(({ error }) => {
+          if (error) console.error("marking notifications read failed:", error.message);
+        });
     },
-    [supabase, currentUserId, unreadByTask]
+    [supabase, currentUserId, unreadByTask, items]
   );
 
   // Narrows to the selected scopes when any are chosen, so picking "Objective"
@@ -2546,18 +2566,6 @@ function ThreadCard({
           <span className="shrink-0 rounded-full border border-stone/20 bg-stone/10 px-2 py-[2px] text-[10px] font-semibold text-stone">
             {scopeLabel(head)}
           </span>
-          {unreadCount > 0 && (
-            <span
-              className="flex shrink-0 items-center gap-1 rounded-full border border-terracotta/30 bg-terracotta-soft px-1.5 py-[1px] text-[10px] font-semibold text-terracotta"
-              title={`${unreadCount} unread comment${unreadCount === 1 ? "" : "s"}`}
-            >
-              <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="m2 6 10 7 10-7" />
-              </svg>
-              {unreadCount}
-            </span>
-          )}
         </button>
 
         {/* Straight into the real task editor rather than a second copy of it
@@ -2658,6 +2666,20 @@ function ThreadCard({
               </button>
             )}
           </div>
+        )}
+
+        {unreadCount > 0 && (
+          <span
+            className="flex shrink-0 items-center gap-1 rounded-full border border-terracotta/30 bg-terracotta-soft px-1.5 py-[2px] text-[10px] font-semibold text-terracotta"
+            title={`${unreadCount} unread`}
+            aria-label={`${unreadCount} unread`}
+          >
+            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="m2 6 10 7 10-7" />
+            </svg>
+            {unreadCount}
+          </span>
         )}
       </div>
 
