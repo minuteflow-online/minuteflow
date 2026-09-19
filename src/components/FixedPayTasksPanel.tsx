@@ -113,6 +113,7 @@ function formatDateOnly(value: string | null) {
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 200 },
   { key: "account", label: "Account", defaultWidth: 140 },
+  { key: "detail", label: "Client Detail", defaultWidth: 180 },
   { key: "category", label: "Category", defaultWidth: 140 },
   { key: "status", label: "Status", defaultWidth: 140 },
   { key: "rate", label: "Rate", defaultWidth: 90 },
@@ -900,6 +901,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         onFilterChange={setFilterAccounts}
                       />
                     )}
+                    {!hiddenColumns.has("detail") && (
+                      <ColumnHeader label="Client Detail" width={columnWidths.detail} onResize={(w) => setColumnWidth("detail", w)} />
+                    )}
                     {!hiddenColumns.has("category") && (
                       <ColumnHeader
                         label="Category"
@@ -1051,6 +1055,11 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         )}
                         {!hiddenColumns.has("account") && (
                           <td className="truncate px-3 py-3 text-[13px] text-walnut">{task.account || <span className="text-stone/60">—</span>}</td>
+                        )}
+                        {!hiddenColumns.has("detail") && (
+                          <td className="truncate px-3 py-3 text-[13px] text-stone/70" title={task.task_detail ?? undefined}>
+                            {task.task_detail || <span className="text-stone/30">—</span>}
+                          </td>
                         )}
                         {!hiddenColumns.has("category") && (
                           <td className="truncate px-3 py-3 text-[13px] text-walnut">{task.category || <span className="text-stone/60">—</span>}</td>
