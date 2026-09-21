@@ -970,9 +970,11 @@ export default function DashboardPage() {
         const closedLogs: ClosedLog[] = [];
 
         for (const openLog of openLogs) {
-          // Logs started on a previous calendar date close at 23:59:59.999 of
-          // that day, so overnight/weekend stragglers don't get impossibly
-          // long durations.
+          // A log that crossed org midnight AND has been open 8h+ is one
+          // somebody walked away from, and closes at 23:59:59.999 of the day
+          // it started so overnight/weekend stragglers don't get impossibly
+          // long durations. Crossing midnight alone doesn't count — see
+          // cappedCloseTime.
           const { endTime, durationMs: duration_ms } = cappedCloseTime(openLog.start_time, now, orgTimezone);
           closedLogs.push({ id: openLog.id, end_time: endTime, duration_ms });
 
@@ -1302,8 +1304,9 @@ export default function DashboardPage() {
         .neq("category", "Clock Out");
 
       if (orphanedLogs && orphanedLogs.length > 0) {
-        // A log stale from a previous calendar date caps at end-of-day instead
-        // of billing the whole dead gap up to now — see cappedCloseTime. This
+        // A log abandoned overnight (across org midnight, open 8h+) caps at
+        // end-of-day instead of billing the whole dead gap up to now — see
+        // cappedCloseTime. This
         // orphan-close block missed that fix when it was applied to the other
         // three (Break flow, resumeOnHoldTask, startTask) — confirmed on
         // Shem's Aug 12 WebUpdate Processing row, which ran 26+ hours because
@@ -2460,10 +2463,11 @@ export default function DashboardPage() {
             .lt("start_time", gapCutoff);
 
           if (openLogs && openLogs.length > 0) {
-            // A log stale from a previous calendar date (an overnight "Clock
-            // In" nobody switched off) caps at end-of-day instead of billing
-            // the whole dead gap up to now — see cappedCloseTime. Same-day
-            // logs behave exactly as before (end_time = now).
+            // A log abandoned overnight (a "Clock In" nobody switched off:
+            // across org midnight and open 8h+) caps at end-of-day instead of
+            // billing the whole dead gap up to now — see cappedCloseTime.
+            // Anything else, including a task genuinely worked through
+            // midnight, closes at now.
             const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now, orgTimezone)]));
             for (const openLog of openLogs) {
               const { endTime, durationMs } = closeTimes.get(openLog.id)!;
