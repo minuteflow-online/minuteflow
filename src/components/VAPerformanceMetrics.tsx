@@ -54,7 +54,7 @@ function localDateStr(date: Date, timezone: string): string {
   return date.toLocaleDateString("en-CA", { timeZone: timezone });
 }
 
-/** Fetches and renders Productivity / Accuracy / Ownership / Tokens / Stars / Progress
+/** Fetches and renders Productivity / Quality / Ownership / Tokens / Stars / Progress
  * metrics for one or more VAs. Used on the VA dashboard, admin Overview tab, and
  * (via ProgressBar export) the Progress Report tab. */
 export default function VAPerformanceMetrics({
@@ -308,7 +308,7 @@ export default function VAPerformanceMetrics({
                 <div className="text-[12px] font-semibold text-espresso mb-2">{name}</div>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
                   <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
-                  <MetricTile label="Accuracy" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
+                  <MetricTile label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
                   <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
                   <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
                   <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
@@ -338,7 +338,7 @@ export default function VAPerformanceMetrics({
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
           <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
-          <MetricTile label="Accuracy" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
+          <MetricTile label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
           <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
           <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
           <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
@@ -370,7 +370,7 @@ export default function VAPerformanceMetrics({
               <div className="text-[12px] font-semibold text-espresso mb-2 truncate">{name}</div>
               <div className="grid grid-cols-3 gap-2 mb-2">
                 <MiniStat label="Prod" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
-                <MiniStat label="Acc" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
+                <MiniStat label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
                 <MiniStat label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
               </div>
               <ProgressBar pct={m.progressPct} label={label} color={color} compact />
