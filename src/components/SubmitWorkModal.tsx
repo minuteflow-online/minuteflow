@@ -405,7 +405,9 @@ export default function SubmitWorkModal({
             <p className="mr-auto text-[10px] leading-snug text-stone">
               {!allChecked
                 ? "Tick every box above to enable Submit."
-                : "Add a file, a link, or a longer message to enable Submit."}
+                : needsEvidence
+                  ? "Add a file, a link, or a longer message to enable Submit."
+                  : "Add a file, a link, or a message to enable Submit."}
             </p>
           )}
           <button
