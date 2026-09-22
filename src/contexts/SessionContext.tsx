@@ -45,10 +45,18 @@ type SessionContextValue = {
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
-export function SessionProvider({ children }: { children: React.ReactNode }) {
+export function SessionProvider({
+  children,
+  initialUserId,
+}: {
+  children: React.ReactNode;
+  /** User id already resolved server-side (see (app)/layout.tsx). Skips a
+   * redundant client-side auth.getUser() round trip on every page load. */
+  initialUserId?: string;
+}) {
   const supabase = createClient();
 
-  const [userId, setUserId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(initialUserId ?? null);
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [clockInTime, setClockInTime] = useState<string | null>(null);
   const [breakStartTime, setBreakStartTime] = useState<string | null>(null);
@@ -112,17 +120,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     applySession(data as Session | null);
   }, [supabase, applySession]);
 
-  // Init: get user, session, org timezone
+  // Init: get user (skipped when the server layout already resolved one),
+  // then session + org timezone.
   useEffect(() => {
     const sb = createClient();
     async function init() {
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-      setUserId(user.id);
-      userIdRef.current = user.id;
+      let uid = initialUserId ?? null;
+      if (!uid) {
+        const { data: { user } } = await sb.auth.getUser();
+        uid = user?.id ?? null;
+      }
+      if (!uid) return;
+      setUserId(uid);
+      userIdRef.current = uid;
 
       const [sessionRes, orgRes] = await Promise.all([
-        sb.from("sessions").select("*").eq("user_id", user.id).maybeSingle(),
+        sb.from("sessions").select("*").eq("user_id", uid).maybeSingle(),
         sb.from("organization_settings").select("timezone").limit(1).single(),
       ]);
 
@@ -131,7 +144,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initialUserId]);
 
   // NOTE: sessionElapsed and breakElapsed have been intentionally removed from
   // context. They were causing every useSession() consumer to re-render every

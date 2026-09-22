@@ -39,6 +39,9 @@ import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 type TopNavProps = {
   user: {
+    /** Resolved server-side in (app)/layout.tsx and (admin)/layout.tsx — lets
+     * the isClockedIn effect below skip its own client-side auth.getUser(). */
+    id: string;
     full_name: string;
     role: UserRole;
     department?: string | null;
@@ -130,15 +133,14 @@ export default function TopNav({ user }: TopNavProps) {
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;
     (async () => {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser || cancelled) return;
-      const { data } = await supabase.from("sessions").select("clocked_in").eq("user_id", authUser.id).maybeSingle();
-      if (!cancelled) setIsClockedIn(Boolean(data?.clocked_in));
+      const { data } = await supabase.from("sessions").select("clocked_in").eq("user_id", user.id).maybeSingle();
+      if (cancelled) return;
+      setIsClockedIn(Boolean(data?.clocked_in));
       channel = supabase
-        .channel(`topnav-session-${authUser.id}`)
+        .channel(`topnav-session-${user.id}`)
         .on(
           "postgres_changes",
-          { event: "*", schema: "public", table: "sessions", filter: `user_id=eq.${authUser.id}` },
+          { event: "*", schema: "public", table: "sessions", filter: `user_id=eq.${user.id}` },
           (payload) => {
             const row = payload.new as { clocked_in?: boolean } | null;
             setIsClockedIn(Boolean(row?.clocked_in));
@@ -151,7 +153,7 @@ export default function TopNav({ user }: TopNavProps) {
       if (channel) void supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user.id]);
 
   // Closing the tab/window (or navigating away entirely) while clocked in
   // leaves the timer running with nobody around to notice — same problem as

@@ -278,13 +278,10 @@ export default function VAPerformanceMetrics({
     </select>
   ) : null;
 
-  if (loading) {
-    return (
-      <div className="rounded-xl border border-sand bg-white p-4">
-        <div className="h-16 animate-pulse rounded-lg bg-parchment" />
-      </div>
-    );
-  }
+  // The header (title, period toggle, VA selector) never depends on the fetch —
+  // it renders immediately in every branch below. Only the tiles/progress bar
+  // swap to a same-sized skeleton while `loading`, so the card never changes
+  // height or pops in a beat after paint (was a bare h-16 pulse box before).
 
   if (showAllVas) {
     return (
@@ -298,22 +295,28 @@ export default function VAPerformanceMetrics({
         </div>
         <div className="space-y-4">
           {activeVaIds.map((vaId) => {
-            const m = metrics[vaId];
-            if (!m) return null;
             const name = activeNames?.[vaId] || "Unknown";
-            const label = m.progressLabel;
+            const m = loading ? undefined : metrics[vaId];
+            if (!loading && !m) return null;
+            const label = m?.progressLabel ?? null;
             const color = colorFor(label);
             return (
               <div key={vaId} className="rounded-lg border border-sand bg-cream p-3">
                 <div className="text-[12px] font-semibold text-espresso mb-2">{name}</div>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
-                  <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
-                  <MetricTile label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
-                  <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
-                  <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
-                  <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
+                  {m ? (
+                    <>
+                      <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
+                      <MetricTile label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
+                      <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
+                      <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
+                      <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
+                    </>
+                  ) : (
+                    Array.from({ length: 5 }).map((_, i) => <MetricTileSkeleton key={i} />)
+                  )}
                 </div>
-                <ProgressBar pct={m.progressPct} label={label} color={color} />
+                {m ? <ProgressBar pct={m.progressPct} label={label} color={color} /> : <ProgressBarSkeleton />}
               </div>
             );
           })}
@@ -323,9 +326,9 @@ export default function VAPerformanceMetrics({
   }
 
   if (variant === "detail") {
-    const m = metrics[activeVaIds[0]];
-    if (!m) return null;
-    const label = m.progressLabel;
+    const m = loading ? undefined : metrics[activeVaIds[0]];
+    if (!loading && !m) return null;
+    const label = m?.progressLabel ?? null;
     const color = colorFor(label);
     return (
       <div className="rounded-xl border border-sand bg-white p-4 mb-6">
@@ -337,13 +340,19 @@ export default function VAPerformanceMetrics({
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
-          <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
-          <MetricTile label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
-          <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
-          <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
-          <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
+          {m ? (
+            <>
+              <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
+              <MetricTile label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
+              <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
+              <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
+              <MetricTile label="Points" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
+            </>
+          ) : (
+            Array.from({ length: 5 }).map((_, i) => <MetricTileSkeleton key={i} />)
+          )}
         </div>
-        <ProgressBar pct={m.progressPct} label={label} color={color} />
+        {m ? <ProgressBar pct={m.progressPct} label={label} color={color} /> : <ProgressBarSkeleton />}
       </div>
     );
   }
@@ -360,20 +369,26 @@ export default function VAPerformanceMetrics({
       </div>
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
         {activeVaIds.map((vaId) => {
-          const m = metrics[vaId];
-          if (!m) return null;
           const name = activeNames?.[vaId] || "Unknown";
-          const label = m.progressLabel;
+          const m = loading ? undefined : metrics[vaId];
+          if (!loading && !m) return null;
+          const label = m?.progressLabel ?? null;
           const color = colorFor(label);
           return (
             <div key={vaId} className="rounded-lg border border-sand bg-white p-3">
               <div className="text-[12px] font-semibold text-espresso mb-2 truncate">{name}</div>
               <div className="grid grid-cols-3 gap-2 mb-2">
-                <MiniStat label="Prod" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
-                <MiniStat label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
-                <MiniStat label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
+                {m ? (
+                  <>
+                    <MiniStat label="Prod" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
+                    <MiniStat label="Quality" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
+                    <MiniStat label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
+                  </>
+                ) : (
+                  Array.from({ length: 3 }).map((_, i) => <MiniStatSkeleton key={i} />)
+                )}
               </div>
-              <ProgressBar pct={m.progressPct} label={label} color={color} compact />
+              {m ? <ProgressBar pct={m.progressPct} label={label} color={color} compact /> : <ProgressBarSkeleton compact />}
             </div>
           );
         })}
@@ -398,6 +413,40 @@ function MetricTile({
       <div className={`font-serif text-lg font-bold ${colorClass}`}>{value}</div>
       <div className="text-[10px] font-semibold text-bark">{label}</div>
       {sub && <div className="text-[9px] text-stone">{sub}</div>}
+    </div>
+  );
+}
+
+/** Same footprint as MetricTile, shown in its place while metrics are loading
+ * so the card never resizes when real values arrive. */
+function MetricTileSkeleton() {
+  return (
+    <div className="rounded-lg border border-sand bg-cream px-3 py-2 text-center">
+      <div className="mx-auto mb-1 h-[21px] w-8 animate-pulse rounded bg-sand/60" />
+      <div className="mx-auto h-[10px] w-12 animate-pulse rounded bg-sand/60" />
+    </div>
+  );
+}
+
+/** Same footprint as MiniStat, for the compact (admin) variant's loading state. */
+function MiniStatSkeleton() {
+  return (
+    <div className="text-center">
+      <div className="mx-auto mb-1 h-[15px] w-8 animate-pulse rounded bg-sand/60" />
+      <div className="mx-auto h-[9px] w-8 animate-pulse rounded bg-sand/60" />
+    </div>
+  );
+}
+
+/** Same footprint as ProgressBar, for the loading state. */
+function ProgressBarSkeleton({ compact = false }: { compact?: boolean }) {
+  return (
+    <div>
+      <div className={`flex items-center justify-between ${compact ? "mb-1" : "mb-1.5"}`}>
+        <div className={`${compact ? "h-[9px]" : "h-[10px]"} w-14 animate-pulse rounded bg-sand/60`} />
+        <div className={`${compact ? "h-[9px]" : "h-[10px]"} w-20 animate-pulse rounded bg-sand/60`} />
+      </div>
+      <div className={`w-full ${compact ? "h-1.5" : "h-2"} rounded-full bg-sand overflow-hidden`} />
     </div>
   );
 }
