@@ -307,6 +307,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     "revision",
     "approval",
     "approval_reversed",
+    "revision_reversed",
   ];
   if (reviewTypes.includes(messageType) && !canReviewSubmissions(profile)) {
     return Response.json(

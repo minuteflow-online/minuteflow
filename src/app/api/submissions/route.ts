@@ -93,7 +93,11 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
   // synced when an admin issues a revision and so can't be trusted here.
   const latestByTask = new Map<number, { message_type: string; created_at: string }>();
   for (const entry of allEntries) {
-    if (!["submission", "revision", "approval", "approval_reversed"].includes(entry.message_type))
+    if (
+      !["submission", "revision", "approval", "approval_reversed", "revision_reversed"].includes(
+        entry.message_type
+      )
+    )
       continue;
     const current = latestByTask.get(entry.assigned_task_id);
     if (!current || entry.created_at > current.created_at) {
@@ -111,8 +115,8 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
         ? "revision_requested"
         : entry.message_type === "approval"
           ? "approved"
-          : // submission, or an approval that was reversed — either way it's
-            // back in front of a reviewer.
+          : // submission, or a reversed approval/revision — either way it's
+            // back in front of a reviewer, nothing about the work changed.
             "awaiting";
   }
 

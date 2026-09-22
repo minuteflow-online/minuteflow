@@ -92,23 +92,25 @@ const OWNER_MODES: Array<{ value: OwnerMode; label: string }> = [
 ];
 
 /** The three review outcomes a reviewer can append to a thread. */
-type ReviewOutcome = "approval" | "revision" | "approval_reversed";
+type ReviewOutcome = "approval" | "revision" | "approval_reversed" | "revision_reversed";
 
 const REVIEW_DEFAULT_NOTE: Record<ReviewOutcome, string> = {
   approval: "Approved",
   revision: "Revision requested",
   approval_reversed: "Approval reversed",
+  revision_reversed: "Revision request reversed",
 };
 
 /**
- * Where the task lands after each outcome. Reversing an approval puts it back
- * in front of the reviewer rather than back on the VA — nothing about the work
- * changed, only the decision did.
+ * Where the task lands after each outcome. Reversing an approval or a
+ * revision request puts it back in front of the reviewer rather than back on
+ * the VA — nothing about the work changed, only the decision did.
  */
 const REVIEW_STATUS: Record<ReviewOutcome, AssignedTaskStatus> = {
   approval: "approved",
   revision: "revision_needed",
   approval_reversed: "submitted",
+  revision_reversed: "submitted",
 };
 
 /**
@@ -806,9 +808,11 @@ They can be restored from the Trash view.`
           alert(data.error ?? "Unable to cancel the reversal.");
           return;
         }
+        // Restore whichever decision this reversal undid — the reversal
+        // entry itself names it.
         await setAssignedTaskStatus({
           assignedTaskId: item.task.id,
-          status: "approved",
+          status: item.message_type === "revision_reversed" ? "revision_needed" : "approved",
           vaId: item.user_id,
         });
         await load();
@@ -1965,11 +1969,15 @@ function SubmissionEntry({
           {/* A reversal clicked by mistake shouldn't mark the record forever.
               Cancelling trashes the entry, so the row survives with deleted_at
               while the thread reads as though it never happened. */}
-          {canCancel && type === "approval_reversed" && (
+          {canCancel && (type === "approval_reversed" || type === "revision_reversed") && (
             <button
               onClick={() => onCancelReversal(item)}
               className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
-              title="Cancel this reversal and restore the approval"
+              title={
+                type === "approval_reversed"
+                  ? "Cancel this reversal and restore the approval"
+                  : "Cancel this reversal and restore the revision request"
+              }
             >
               Cancel
             </button>
@@ -2663,6 +2671,20 @@ function ThreadCard({
                 onClick={() => onReview(latest, "approval_reversed")}
                 disabled={busy}
                 className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+              >
+                Undo
+              </button>
+            )}
+            {/* Same escape hatch for a revision request sent to the wrong
+                submission or by mistake — the request is reversed, not the
+                work it was asking for, so the task goes back to awaiting
+                review rather than back on the VA. */}
+            {canReview && latest.task && state === "revision_requested" && (
+              <button
+                onClick={() => onReview(latest, "revision_reversed")}
+                disabled={busy}
+                className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                title="Undo this revision request"
               >
                 Undo
               </button>
