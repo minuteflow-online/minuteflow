@@ -159,8 +159,13 @@ function formatHoursMinutes(ms: number): string {
 export default function DashboardPage() {
   const supabase = createClient();
 
-  // Session context — provides timer, state, and action registration
+  // Session context — provides timer, state, action registration, and the
+  // userId/orgTimezone already resolved server-side in (app)/layout.tsx (see
+  // SessionContext's initialUserId) — reading them here instead of doing our
+  // own auth.getUser()/organization_settings round trips.
   const {
+    userId,
+    orgTimezone,
     sessionState,
     setSessionState,
     breakStartTime,
@@ -172,8 +177,7 @@ export default function DashboardPage() {
     registerActions,
   } = useSession();
 
-  // Auth & profile
-  const [userId, setUserId] = useState<string | null>(null);
+  // Profile
   const [profile, setProfile] = useState<Profile | null>(null);
   const { accountClientMap } = useAccountsAndClients();
 
@@ -271,9 +275,6 @@ export default function DashboardPage() {
   const [showClockOutInternalMemo, setShowClockOutInternalMemo] = useState(false);
   const [clockingOut, setClockingOut] = useState(false);
   const [clockOutMood, setClockOutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
-
-  // Org timezone
-  const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
 
   // In-app messages
   const [messages, setMessages] = useState<(Message & { senderName?: string })[]>([]);
@@ -492,29 +493,9 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // ─── Auth ──────────────────────────────────────────────────
-
-  useEffect(() => {
-    async function getUser() {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user) {
-          setUserId(user.id);
-        } else {
-          setLoading(false); // no user found — stop the skeleton
-        }
-      } catch (err) {
-        console.error("[Dashboard] getUser error:", err);
-        setLoading(false); // auth threw — stop the skeleton so page doesn't hang
-      }
-    }
-    getUser();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // ─── Initial Data Load ────────────────────────────────────
+  // userId comes from SessionContext, which gets it from the server layout
+  // (see (app)/layout.tsx) — no separate client-side auth.getUser() needed here.
 
   useEffect(() => {
     if (!userId) return;
@@ -523,7 +504,7 @@ export default function DashboardPage() {
       setLoading(true);
       try {
 
-      const [profileRes, sessionRes, allProfilesRes, allSessionsRes, logsRes, orgSettingsRes] =
+      const [profileRes, sessionRes, allProfilesRes, allSessionsRes, logsRes] =
         await Promise.all([
           supabase.from("profiles").select("*").eq("id", userId!).single(),
           supabase.from("sessions").select("*").eq("user_id", userId!).maybeSingle(),
@@ -534,13 +515,7 @@ export default function DashboardPage() {
             .select("*")
             .gte("start_time", activityLogFloorIso())
             .order("start_time", { ascending: false }),
-          supabase.from("organization_settings").select("timezone").limit(1).single(),
         ]);
-
-      // Set org timezone
-      if (orgSettingsRes.data?.timezone) {
-        setOrgTimezone(orgSettingsRes.data.timezone);
-      }
 
       if (profileRes.data) {
         setProfile(profileRes.data);

@@ -34,10 +34,10 @@ export default async function AppLayout({
 
   return (
     <ToastProvider>
-      <TopNav user={{ full_name: fullName, role, department: profile?.department, admin_permissions: profile?.admin_permissions, avatar_url: profile?.avatar_url }} />
+      <TopNav user={{ id: user.id, full_name: fullName, role, department: profile?.department, admin_permissions: profile?.admin_permissions, avatar_url: profile?.avatar_url }} />
       <ScreenCaptureProvider>
         <SceAlertBanner />
-        <SessionProvider>
+        <SessionProvider initialUserId={user.id}>
           <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
             {children}
           </main>
