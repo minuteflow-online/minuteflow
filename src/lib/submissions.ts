@@ -19,6 +19,10 @@ export type SubmissionMessageType =
   /** Undoes a mistaken approval. Appended, never a delete — the approval stays
    *  in the record and the reversal sits after it. */
   | "approval_reversed"
+  /** Undoes a mistaken revision request — same shape as approval_reversed,
+   *  for the case where the request itself was the mistake (e.g. added to
+   *  the wrong submission), not the work it was requesting a fix on. */
+  | "revision_reversed"
   | "comment";
 
 export interface TaskSubmissionAttachment {
@@ -134,6 +138,7 @@ export const SUBMISSION_TYPE_LABELS: Record<SubmissionMessageType, string> = {
   revision: "Revision requested",
   approval: "Approved",
   approval_reversed: "Approval reversed",
+  revision_reversed: "Revision reversed",
   comment: "Note",
 };
 
@@ -144,6 +149,7 @@ export const SUBMISSION_TYPE_BADGE: Record<SubmissionMessageType, string> = {
   revision: "bg-amber-50 text-amber-600 border-amber-200",
   approval: "bg-emerald-50 text-emerald-600 border-emerald-200",
   approval_reversed: "bg-terracotta-soft text-terracotta border-terracotta/20",
+  revision_reversed: "bg-terracotta-soft text-terracotta border-terracotta/20",
   comment: "bg-stone/10 text-stone border-stone/20",
 };
 
