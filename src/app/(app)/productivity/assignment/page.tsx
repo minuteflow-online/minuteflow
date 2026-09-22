@@ -2309,6 +2309,41 @@ export default function TaskListPage() {
                       </button>
                     ))}
                   </div>
+
+                  {/* A one-click shortcut into the Status column's own filter,
+                      not a second filtering path — clicking it just sets
+                      filterStatuses the same way picking "Revision Needed"
+                      from that column's dropdown would. Only where it's
+                      relevant: your own active tasks. */}
+                  {taskView === "active" && activeView === "my_tasks" && (() => {
+                    const revisionCount = tasks.filter((t) => t.status === "revision_needed").length;
+                    const isRevisionFilterActive =
+                      filterStatuses.length === 1 && filterStatuses[0] === "revision_needed";
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setFilterStatuses(isRevisionFilterActive ? [] : ["revision_needed"])}
+                        className={`relative flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                          isRevisionFilterActive
+                            ? "border-terracotta bg-terracotta text-white"
+                            : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                        }`}
+                        title="Show only tasks that need revision"
+                      >
+                        {!isRevisionFilterActive && revisionCount > 0 && (
+                          <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-terracotta" />
+                        )}
+                        Needs Revision
+                        <span
+                          className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                            isRevisionFilterActive ? "bg-white/20" : "bg-amber-200"
+                          }`}
+                        >
+                          {revisionCount}
+                        </span>
+                      </button>
+                    );
+                  })()}
                 </div>
 
                 <div className="flex items-center gap-2">
