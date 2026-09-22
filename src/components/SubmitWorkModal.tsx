@@ -396,7 +396,20 @@ export default function SubmitWorkModal({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-sand px-4 py-3">
+        {/* Pinned to the bottom of the scrolling modal. This sat at the end of
+            the content, so on a short screen with the checklist, instructions
+            and attached files showing, Submit fell below the fold with nothing
+            to say it was there. */}
+        <div className="sticky bottom-0 flex items-center justify-end gap-2 rounded-b-xl border-t border-sand bg-white px-4 py-3">
+          {!canSubmit && !saving && (
+            <p className="mr-auto text-[10px] leading-snug text-stone">
+              {!allChecked
+                ? "Tick every box above to enable Submit."
+                : needsEvidence
+                  ? "Add a file, a link, or a longer message to enable Submit."
+                  : "Add a file, a link, or a message to enable Submit."}
+            </p>
+          )}
           <button
             onClick={onClose}
             disabled={saving}
