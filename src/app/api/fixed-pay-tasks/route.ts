@@ -180,14 +180,33 @@ export async function GET(request: Request) {
   // at whatever it was when the row was created (almost always "open"). The
   // mirror is the real status once one exists; fall back to the native
   // column for tasks that were never claimed (no mirror row to read).
+  //
+  // Reads the *assignee*-level status (assigned_task_assignees), not
+  // assigned_tasks.status itself — that task-level column is left stale
+  // when a reviewer issues a revision from the admin side (same gap
+  // api/submissions/route.ts's reviewState comment calls out), so a task an
+  // admin sent back for revision was showing as "Submitted" here, with no
+  // way for the VA to find it via Needs Revision. The assignee row is what
+  // every review action, admin-issued or not, reliably writes to.
   const claimedIds = rows.filter((t) => t.claimed_by).map((t) => t.id);
   if (claimedIds.length > 0) {
     const { data: mirrorRows } = await readClient
       .from("assigned_tasks")
-      .select("id, fixed_pay_task_id, status")
+      .select("id, fixed_pay_task_id, status, assigned_task_assignees(va_id, status)")
       .in("fixed_pay_task_id", claimedIds);
+    const claimedById = Object.fromEntries(rows.map((t) => [t.id, t.claimed_by]));
     const statusByTaskId = Object.fromEntries(
-      ((mirrorRows ?? []) as { fixed_pay_task_id: string | number; status: string }[]).map((r) => [r.fixed_pay_task_id, r.status])
+      (
+        (mirrorRows ?? []) as unknown as Array<{
+          fixed_pay_task_id: string | number;
+          status: string;
+          assigned_task_assignees: Array<{ va_id: string; status: string }>;
+        }>
+      ).map((r) => {
+        const claimerId = claimedById[r.fixed_pay_task_id];
+        const assigneeStatus = r.assigned_task_assignees.find((a) => a.va_id === claimerId)?.status;
+        return [r.fixed_pay_task_id, assigneeStatus ?? r.status];
+      })
     );
     rows = rows.map((t) => (statusByTaskId[t.id] ? { ...t, status: statusByTaskId[t.id] as FixedPayTaskWithClaimer["status"] } : t));
   }
