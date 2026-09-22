@@ -2536,11 +2536,13 @@ function ThreadCard({
         <button
           type="button"
           onClick={() => {
-            setExpanded((v) => {
-              const next = !v;
-              if (next) onMarkRead?.(thread.taskId);
-              return next;
-            });
+            // Read from the state variable, not from inside setExpanded's
+            // updater — calling onMarkRead (another component's setState)
+            // from within an updater fires React's "Cannot update a
+            // component while rendering a different component" warning, and
+            // can drop the update it triggers.
+            if (!expanded) onMarkRead?.(thread.taskId);
+            setExpanded((v) => !v);
           }}
           className="group flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
