@@ -778,19 +778,54 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
             </button>
           </div>
 
-          <div className="mt-4 inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-            {VIEW_FILTER_PILLS.map((pill) => (
-              <button
-                key={pill.value}
-                type="button"
-                onClick={() => setActiveFilter(pill.value)}
-                className={`rounded-md px-3 py-1.5 transition-colors ${
-                  activeFilter === pill.value ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
-                }`}
-              >
-                {pill.label}
-              </button>
-            ))}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+              {VIEW_FILTER_PILLS.map((pill) => (
+                <button
+                  key={pill.value}
+                  type="button"
+                  onClick={() => setActiveFilter(pill.value)}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${
+                    activeFilter === pill.value ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                  }`}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Same shortcut as the Time-based table's own Needs Revision
+                button — sets filterStatuses the Status column's dropdown
+                already drives, just surfaced where a VA will actually see it. */}
+            {(() => {
+              const revisionCount = tasks.filter((t) => t.status === "revision_needed").length;
+              const isRevisionFilterActive =
+                filterStatuses.length === 1 && filterStatuses[0] === "revision_needed";
+              return (
+                <button
+                  type="button"
+                  onClick={() => setFilterStatuses(isRevisionFilterActive ? [] : ["revision_needed"])}
+                  className={`relative flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                    isRevisionFilterActive
+                      ? "border-terracotta bg-terracotta text-white"
+                      : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                  }`}
+                  title="Show only tasks that need revision"
+                >
+                  {!isRevisionFilterActive && revisionCount > 0 && (
+                    <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-terracotta" />
+                  )}
+                  Needs Revision
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                      isRevisionFilterActive ? "bg-white/20" : "bg-amber-200"
+                    }`}
+                  >
+                    {revisionCount}
+                  </span>
+                </button>
+              );
+            })()}
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
