@@ -2,6 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  computeRevisionByLogId,
+  type RevisionLogInput,
+  type AssigneeRow,
+} from "@/lib/revisionByLogId";
+
+export type { RevisionLogInput };
 
 /**
  * Maps a `time_logs.id` to the revision round that log's work belongs to, for
@@ -23,20 +30,20 @@ import { createClient } from "@/lib/supabase/client";
  * entries. The tradeoff: one person holding two same-named tasks under the same
  * account would have both treated as one. A dedicated `assigned_task_id` column
  * on `time_logs` is the exact fix if that ever bites.
+ *
+ * It bit: Neil logs essentially everything as "MinuteFlow Work" /
+ * "Virtual Concierge" — 100+ separate tasks sharing that one name+account — so
+ * a single revision on any one of them was leaking the badge onto every other
+ * one, including brand new submissions that had never been touched. Fixed
+ * with a second pass: wherever `assigned_task_assignees.log_id` names the
+ * exact log currently doing a task's work, that exact match overrides the
+ * name+account guess for that one log — including clearing a false positive
+ * the guess left behind. It's still only the CURRENT log per task, per the
+ * limitation above; older logs of a same-named task still rely on the guess.
+ *
+ * The matching itself lives in @/lib/revisionByLogId, as a plain function —
+ * this hook is just the data fetching around it.
  */
-export interface RevisionLogInput {
-  id: number;
-  user_id: string;
-  task_name: string | null;
-  account: string | null;
-  start_time: string | null;
-}
-
-/** person + task + account, the best identity a time log carries today. */
-function matchKey(userId: string, taskName: string | null, account: string | null) {
-  return `${userId}|${(taskName ?? "").trim().toLowerCase()}|${(account ?? "").trim().toLowerCase()}`;
-}
-
 export function useRevisionByLogId(logs: RevisionLogInput[]): Map<number, number> {
   const [revisionByLogId, setRevisionByLogId] = useState<Map<number, number>>(new Map());
 
@@ -68,55 +75,27 @@ export function useRevisionByLogId(logs: RevisionLogInput[]): Map<number, number
         new Set(revisions.map((r) => r.assigned_task_id as number))
       );
 
-      const [{ data: tasks }, { data: assignees }] = await Promise.all([
-        supabase.from("assigned_tasks").select("id, task_name, account, created_at").in("id", taskIds),
-        supabase.from("assigned_task_assignees").select("assigned_task_id, va_id").in("assigned_task_id", taskIds),
-      ]);
+      const [{ data: tasks }, { data: revisedTaskAssignees }, { data: exactAssignees }] =
+        await Promise.all([
+          supabase.from("assigned_tasks").select("id, task_name, account, created_at").in("id", taskIds),
+          supabase.from("assigned_task_assignees").select("assigned_task_id, va_id").in("assigned_task_id", taskIds),
+          supabase
+            .from("assigned_task_assignees")
+            .select("assigned_task_id, va_id, log_id")
+            .in("log_id", logs.map((l) => l.id)),
+        ]);
 
-      if (cancelled || !tasks || !assignees) return;
+      if (cancelled || !tasks || !revisedTaskAssignees) return;
 
-      const revisionTimesByTask = new Map<number, string[]>();
-      for (const row of revisions) {
-        const id = row.assigned_task_id as number;
-        const list = revisionTimesByTask.get(id) ?? [];
-        list.push(row.created_at as string);
-        revisionTimesByTask.set(id, list);
-      }
+      const map = computeRevisionByLogId(
+        logs,
+        revisions as { assigned_task_id: number; created_at: string }[],
+        tasks as { id: number; task_name: string | null; account: string | null; created_at: string | null }[],
+        revisedTaskAssignees as AssigneeRow[],
+        (exactAssignees ?? []) as AssigneeRow[]
+      );
 
-      // A task can have several assignees; each one's logs match on their own id.
-      // createdAt rides along so logs predating the task can be excluded — older
-      // work often reuses a task name under the same account.
-      const byKey = new Map<string, { times: string[]; createdAt: string | null }>();
-      for (const task of tasks) {
-        const times = revisionTimesByTask.get(task.id as number);
-        if (!times) continue;
-        for (const a of assignees) {
-          if ((a.assigned_task_id as number) !== (task.id as number)) continue;
-          const key = matchKey(
-            a.va_id as string,
-            task.task_name as string | null,
-            task.account as string | null
-          );
-          const existing = byKey.get(key);
-          byKey.set(key, {
-            times: (existing?.times ?? []).concat(times),
-            createdAt: existing?.createdAt ?? (task.created_at as string | null),
-          });
-        }
-      }
-
-      const map = new Map<number, number>();
-      for (const log of logs) {
-        if (!log.start_time) continue;
-        const entry = byKey.get(matchKey(log.user_id, log.task_name, log.account));
-        if (!entry) continue;
-        if (entry.createdAt && log.start_time < entry.createdAt) continue;
-        // How many revisions had already been issued when this log started.
-        const round = entry.times.filter((t) => t < log.start_time!).length;
-        if (round > 0) map.set(log.id, round);
-      }
-
-      setRevisionByLogId(map);
+      if (!cancelled) setRevisionByLogId(map);
     })();
 
     return () => {
