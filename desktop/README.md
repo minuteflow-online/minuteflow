@@ -32,12 +32,26 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   only** — same endpoint, same rule as everywhere else in this app (see
   CLAUDE.md's screenshot rule). There is no Supabase Storage path here, and
   none should ever be added.
-- **Warns before quitting while clocked in** — closing the window (X, Alt+F4)
-  shows a native "You're still clocked in" dialog with Quit Anyway / Cancel,
-  the desktop equivalent of the web app's `beforeunload` warning in
-  `TopNav.tsx`. The renderer reports clocked-in state to the main process via
-  `window.mfDesktop.setClockedIn()` (App.tsx) since main can't read React
-  state directly; see `electron/main.js`'s `close` handler.
+- **Minimizes to the system tray instead of quitting** — closing the window
+  (X, Alt+F4) hides it rather than exiting the app, same as any other
+  background tracker; a shift timer isn't useful if closing the window stops
+  it. The tray icon's context menu has "Open MinuteFlow" and "Quit" (clicking
+  the tray icon itself also reopens the window). The first time a session
+  hides to tray it shows a one-time balloon explaining where the window went.
+  Real quitting — from the tray's Quit item — **still warns if you're clocked
+  in**, the same native "You're still clocked in" dialog with Quit Anyway /
+  Cancel as before, the desktop equivalent of the web app's `beforeunload`
+  warning in `TopNav.tsx`. The renderer reports clocked-in state to the main
+  process via `window.mfDesktop.setClockedIn()` (App.tsx) since main can't
+  read React state directly; see `electron/main.js`'s `close` handler and its
+  `isQuitting` flag (set by `before-quit`, which only fires on a real quit —
+  not on the window's own `close` event — so the X button reliably hides
+  rather than exits).
+- **Launch at startup** — an opt-in checkbox in the top bar
+  ("Launch at startup") reads and writes the OS's own login-item
+  registration (`app.getLoginItemSettings()`/`setLoginItemSettings()`), not
+  anything this app tracks itself — so it stays correct even if changed
+  outside the app (Windows' own Startup tab). Off by default.
 - **Notification bell** — top-bar bell icon with an unread badge, mirroring
   `NotificationBell.tsx` (the web app's top-nav bell) exactly: every
   notification including DMs (broader than the Message Board's Comments tab
@@ -134,6 +148,18 @@ npm run build   # type-check + Vite production build (dist/)
 npm start        # run the built app with plain `electron .`
 npm run dist      # electron-builder — produces a Windows installer in release/
 ```
+
+`npm run dist` uses `build/icon.ico` (copied from the web app's own
+`src/app/favicon.ico` — see AGENTS.md, no new visual assets) for the window,
+taskbar, tray, and installer icon, and an NSIS installer configured to let
+the installer choose its install directory and add Desktop/Start Menu
+shortcuts (see `package.json`'s `build.nsis`). On at least one Windows dev
+machine this has failed locally with `EPERM: operation not permitted, rename
+...win-unpacked.tmp -> ...win-unpacked` right after Electron's binary is
+unpacked — a known electron-builder-on-Windows issue, usually antivirus
+real-time scanning racing the rename. Retrying (after deleting `release/`)
+sometimes clears it; otherwise it needs an AV exclusion or an elevated
+terminal, neither of which this app should set on its own.
 
 ## Architecture notes
 

@@ -37,6 +37,7 @@ export default function App() {
   const [capturing, setCapturing] = useState(false);
   const [rightTab, setRightTab] = useState<"todo" | "messages">("todo");
   const [dmRequest, setDmRequest] = useState<{ senderId: string; nonce: number } | null>(null);
+  const [launchAtStartup, setLaunchAtStartupState] = useState(false);
 
   const userIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -99,6 +100,18 @@ export default function App() {
   useEffect(() => {
     window.mfDesktop.setClockedIn(Boolean(userId && sessionRow?.clocked_in));
   }, [userId, sessionRow?.clocked_in]);
+
+  // Reads the OS's actual "run at login" registration on mount, rather than
+  // assuming — it can be flipped from outside the app (Startup tab, System
+  // Settings), and this is a login-independent OS setting, not per-account.
+  useEffect(() => {
+    window.mfDesktop.getLaunchAtStartup().then(setLaunchAtStartupState).catch(() => {});
+  }, []);
+
+  const handleToggleLaunchAtStartup = useCallback(async (enabled: boolean) => {
+    const actual = await window.mfDesktop.setLaunchAtStartup(enabled);
+    setLaunchAtStartupState(actual);
+  }, []);
 
   const handleLogin = useCallback(
     async (email: string, password: string) => {
@@ -260,6 +273,18 @@ export default function App() {
           <p className="text-[11px] text-stone">{profile?.full_name || "—"}</p>
         </div>
         <div className="flex items-center gap-2">
+          <label
+            className="flex items-center gap-1 text-[10px] text-stone cursor-pointer select-none"
+            title="Automatically open MinuteFlow when you log in to this computer"
+          >
+            <input
+              type="checkbox"
+              className="accent-sage"
+              checked={launchAtStartup}
+              onChange={(e) => void handleToggleLaunchAtStartup(e.target.checked)}
+            />
+            Launch at startup
+          </label>
           <NotificationBell userId={userId} onOpenDm={handleOpenDm} />
           <button
             onClick={handleCapture}

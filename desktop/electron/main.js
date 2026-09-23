@@ -7,13 +7,14 @@
 //   2. Encrypted-at-rest storage of the Supabase refresh token, via
 //      safeStorage (OS keychain / DPAPI), so a login survives an app
 //      restart without the token sitting around as plain text.
-const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog, Tray, Menu, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { SUPABASE_URL, API_BASE } = require("./config");
 
 const isDev = !app.isPackaged;
 const AUTH_FILE = path.join(app.getPath("userData"), "auth.dat");
+const ICON_PATH = path.join(__dirname, "..", "build", "icon.ico");
 
 // Mirrors the web app's TopNav beforeunload warning (src/components/TopNav.tsx)
 // for the same underlying complaint — quitting while still clocked in leaves
@@ -81,6 +82,15 @@ function buildCsp() {
 // it — this app only ever has the one.
 let mainWindow = null;
 
+// The X button hides to tray rather than quitting — a shift tracker is only
+// useful if it's still running. `app.quit()` (the tray menu's Quit, or the OS
+// actually terminating the app) sets this first via 'before-quit', which is
+// what tells the close handler below "this one's for real, don't just hide."
+let isQuitting = false;
+app.on("before-quit", () => {
+  isQuitting = true;
+});
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 900,
@@ -89,6 +99,7 @@ function createWindow() {
     minHeight: 520,
     backgroundColor: "#faf7f2", // --color-cream, avoids a white flash on load
     autoHideMenuBar: true,
+    icon: ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -104,14 +115,21 @@ function createWindow() {
     win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
 
-  // Intercept the close (X button, Alt+F4, etc.) rather than the app quitting
-  // silently mid-shift. `confirmedQuit` short-circuits the dialog on the
-  // second pass once the user has actually said yes — win.destroy() would
-  // also skip re-firing 'close', but destroy() bypasses the renderer's own
-  // cleanup (e.g. saving in-flight state), so this asks the window to close
-  // normally instead.
+  // Intercept the close (X button, Alt+F4, etc.). `confirmedQuit` short-
+  // circuits the dialog on the second pass once the user has actually said
+  // yes — win.destroy() would also skip re-firing 'close', but destroy()
+  // bypasses the renderer's own cleanup (e.g. saving in-flight state), so
+  // this asks the window to close normally instead.
   let confirmedQuit = false;
   win.on("close", (e) => {
+    if (!isQuitting) {
+      // Not a real quit (X button / Alt+F4) — keep tracking in the background,
+      // same as any other tray app. Reachable again via the tray icon.
+      e.preventDefault();
+      win.hide();
+      maybeShowTrayHint();
+      return;
+    }
     if (confirmedQuit || !isClockedIn) return;
     e.preventDefault();
 
@@ -128,6 +146,10 @@ function createWindow() {
     if (choice === 0) {
       confirmedQuit = true;
       win.close();
+    } else {
+      // Backed out of quitting — a later X click should hide to tray again,
+      // not re-open this same dialog with nothing left to confirm.
+      isQuitting = false;
     }
   });
 
@@ -139,6 +161,44 @@ function createWindow() {
   mainWindow = win;
   win.on("closed", () => {
     if (mainWindow === win) mainWindow = null;
+  });
+}
+
+function showMainWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+// ── Tray ─────────────────────────────────────────────────────────────────
+let tray = null;
+let hasShownTrayHint = false;
+
+function createTray() {
+  const icon = nativeImage.createFromPath(ICON_PATH);
+  tray = new Tray(icon.isEmpty() ? icon : icon.resize({ width: 16, height: 16 }));
+  tray.setToolTip("MinuteFlow");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Open MinuteFlow", click: showMainWindow },
+      { type: "separator" },
+      { label: "Quit", click: () => app.quit() },
+    ])
+  );
+  tray.on("click", showMainWindow);
+}
+
+// One-time balloon the first time the window is hidden to tray in a session
+// — otherwise closing the window looks like it quit the app with nothing
+// explaining where it went.
+function maybeShowTrayHint() {
+  if (hasShownTrayHint || !tray || process.platform !== "win32") return;
+  hasShownTrayHint = true;
+  tray.displayBalloon({
+    title: "MinuteFlow is still running",
+    content: "Still tracking in the background. Click the tray icon to reopen, or Quit from there to fully exit.",
+    icon: nativeImage.createFromPath(ICON_PATH),
   });
 }
 
@@ -163,6 +223,7 @@ if (gotSingleInstanceLock) {
     });
 
     createWindow();
+    createTray();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -170,6 +231,9 @@ if (gotSingleInstanceLock) {
   });
 }
 
+// Closing to tray means the window is hidden, not destroyed, so this only
+// fires on a real quit (all windows actually closed) — nothing extra needed
+// here beyond the existing default.
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
@@ -200,6 +264,20 @@ ipcMain.handle("mf:get-screen-sources", async () => {
 // listener in createWindow() above.
 ipcMain.on("mf:flash-frame", () => {
   if (mainWindow && !mainWindow.isFocused()) mainWindow.flashFrame(true);
+});
+
+// ── Launch at startup ────────────────────────────────────────────────────
+// Opt-in, toggled from the UI (App.tsx) — reads/writes the OS's own login-
+// item registration rather than anything this app tracks itself, so it stays
+// correct even if the user changes it outside the app (Task Manager's
+// Startup tab, System Settings).
+ipcMain.handle("mf:get-launch-at-startup", () => {
+  return app.getLoginItemSettings().openAtLogin;
+});
+
+ipcMain.handle("mf:set-launch-at-startup", (_event, enabled) => {
+  app.setLoginItemSettings({ openAtLogin: Boolean(enabled) });
+  return app.getLoginItemSettings().openAtLogin;
 });
 
 // ── Encrypted session storage ───────────────────────────────────────────

@@ -17,4 +17,8 @@ contextBridge.exposeInMainWorld("mfDesktop", {
   // already focused. Used alongside a native Notification() (called directly
   // in the renderer, no bridge needed for that part) when a new item arrives.
   flashFrame: () => ipcRenderer.send("mf:flash-frame"),
+  // Reads/writes the OS's own "run at login" registration — see main.js's
+  // mf:get/set-launch-at-startup handlers.
+  getLaunchAtStartup: () => ipcRenderer.invoke("mf:get-launch-at-startup"),
+  setLaunchAtStartup: (enabled) => ipcRenderer.invoke("mf:set-launch-at-startup", enabled),
 });
