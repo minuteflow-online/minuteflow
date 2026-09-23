@@ -293,6 +293,13 @@ async function uploadQueueItem(item) {
   inFlightUploads.add(item.id);
 
   try {
+    // Our own logged-in session, sent along so the server can verify who's
+    // actually asking instead of trusting the userId field alone. Optional
+    // for now (older/expired sessions just fall back to the old behavior) —
+    // see the matching comment on the server routes.
+    const session = await DB.ensureAuth();
+    const authHeader = session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {};
+
     // Markers carry no image — they record *why* a slot has no screenshot
     // (idle, locked, on MinuteFlow). They ride the same queue as real uploads
     // so a marker recorded while offline still lands once the connection
@@ -303,7 +310,7 @@ async function uploadQueueItem(item) {
     if (item.kind === 'marker') {
       const res = await fetch(`${CONFIG.API_BASE}/api/screenshot-marker`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader },
         body: JSON.stringify({
           userId: item.userId,
           logId: item.logId,
@@ -341,6 +348,7 @@ async function uploadQueueItem(item) {
 
     const uploadRes = await fetch(`${CONFIG.API_BASE}/api/upload-screenshot`, {
       method: 'POST',
+      headers: authHeader,
       body: formData,
     });
 
@@ -632,7 +640,7 @@ async function reportUploadStatus(userId, queued, uploadedToday, consecutiveFail
  * Used for remote capture requests (admin waiting) and manual captures (popup waiting).
  */
 async function captureAndUpload(screenshotType = 'manual', logId = null, captureRequestId = null) {
-  const session = await DB.getSession();
+  const session = await DB.ensureAuth();
   if (!session) {
     console.warn('[MinuteFlow] Not authenticated, skipping capture');
     return null;
@@ -662,6 +670,7 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
 
     const res = await fetch(`${CONFIG.API_BASE}/api/upload-screenshot`, {
       method: 'POST',
+      headers: session.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : undefined,
       body: formData,
     });
 

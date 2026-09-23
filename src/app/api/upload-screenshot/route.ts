@@ -3,6 +3,7 @@ import { google } from "googleapis";
 import { Readable } from "stream";
 import { NextRequest } from "next/server";
 import { buildGoogleAuthClient, refreshGoogleToken } from "@/lib/google-token";
+import { verifyExtensionToken } from "@/lib/extensionAuth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -160,7 +161,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: "Invalid form data" }, { status: 400 });
     }
     const blob = formData.get("file") as Blob | null;
-    const userId = formData.get("userId") as string | null;
+    const bodyUserId = formData.get("userId") as string | null;
     const logId = formData.get("logId") as string | null;
     const screenshotType = formData.get("screenshotType") as string | null;
     const captureRequestId = formData.get("captureRequestId") as string | null;
@@ -170,12 +171,25 @@ export async function POST(request: NextRequest) {
     const capturedAtRaw = formData.get("capturedAt") as string | null;
     const fingerprint = formData.get("fingerprint") as string | null;
 
-    if (!blob || !userId || !logId || !screenshotType) {
+    if (!blob || !bodyUserId || !logId || !screenshotType) {
       return Response.json(
         { error: "Missing required fields: file, userId, logId, screenshotType" },
         { status: 400 }
       );
     }
+
+    // Prefer the identity behind the extension's own logged-in session over
+    // the bare userId field, which anyone who found this URL could set to
+    // whatever they wanted. Falls back to the body's userId when there's no
+    // token yet (extension not updated) — see verifyExtensionToken's own
+    // comment for when that fallback should go away.
+    const verifiedUserId = await verifyExtensionToken(request);
+    if (!verifiedUserId) {
+      console.warn(`[upload-screenshot] no verified session token — trusting the request body's userId (${bodyUserId}) for now.`);
+    } else if (verifiedUserId !== bodyUserId) {
+      console.warn(`[upload-screenshot] body userId (${bodyUserId}) didn't match the verified session (${verifiedUserId}) — using the verified one.`);
+    }
+    const userId = verifiedUserId ?? bodyUserId;
 
     // Nothing captured during a break or personal time is kept. The extension
     // stops capturing on its own from 1.2.2, but older builds keep going and
