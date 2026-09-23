@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { ORG_TIMEZONE } from "./taskSchedule";
+import { ORG_TIMEZONE, DUE_DATE_FINISHED_STATUSES } from "./taskSchedule";
 import { esc, mention } from "./telegram";
 
 /**
@@ -102,7 +102,7 @@ async function dueOn(date: string) {
     .is("archived_at", null);
 
   // Finished work is not a reminder. Anything still open is.
-  return (data ?? []).filter((t) => !["approved", "completed"].includes(String(t.status ?? "")));
+  return (data ?? []).filter((t) => !DUE_DATE_FINISHED_STATUSES.has(String(t.status ?? "")));
 }
 
 /** Who has approved time off covering this day. */
@@ -573,9 +573,7 @@ export async function buildOverdue(): Promise<string | null> {
     .is("archived_at", null)
     .order("due_date", { ascending: true });
 
-  const open = (data ?? []).filter(
-    (t) => !["approved", "completed", "cancelled"].includes(String(t.status ?? ""))
-  );
+  const open = (data ?? []).filter((t) => !DUE_DATE_FINISHED_STATUSES.has(String(t.status ?? "")));
   if (open.length === 0) return null;
 
   // Who each one belongs to, so the line reaches the person holding it.
