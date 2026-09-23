@@ -1046,6 +1046,18 @@ export default function DashboardPage() {
       if (cancelled || !lastLogs || lastLogs.length === 0) return;
 
       const lastLog = lastLogs[0] as TimeLog;
+
+      // A task the VA already marked Completed has nothing to resume —
+      // silently reopening it as a fresh, ongoing log would duplicate
+      // already-finished work with no way for the VA to know it happened.
+      // Ask what's next instead, the same as the normal (non-gap) post-break
+      // path already does for a completed task.
+      if (lastLog.progress === "completed") {
+        setNextActivityReason("break");
+        setShowNextActivityModal(true);
+        return;
+      }
+
       const now = new Date().toISOString();
       const isBillable = isBillableCategory(lastLog.category);
 
