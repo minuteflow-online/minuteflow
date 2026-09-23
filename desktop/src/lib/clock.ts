@@ -9,6 +9,7 @@
 // of them reproduces bugs the web app already fixed (see the "one active log"
 // unique index and time-log-duplicate-bug-fix history).
 import { query, PostgrestError } from "./db";
+import { cappedCloseTime } from "./cappedCloseTime";
 
 export interface Profile {
   id: string;
@@ -111,22 +112,6 @@ export function getCorrectSessionDate(
   return todayStr;
 }
 
-/** Mirrors dashboard's cappedCloseTime: overnight/stale logs close at end-of-day
- *  of their start date rather than billing the whole dead gap up to now. */
-function cappedCloseTime(startTime: string | null, now: string): { endTime: string; durationMs: number } {
-  const startMs = startTime ? new Date(startTime).getTime() : new Date(now).getTime();
-  const sameDay = startTime && new Date(startTime).toDateString() === new Date(now).toDateString();
-  let endTime: string;
-  if (!sameDay && startTime) {
-    const endOfDay = new Date(startTime);
-    endOfDay.setHours(23, 59, 59, 999);
-    endTime = endOfDay.toISOString();
-  } else {
-    endTime = now;
-  }
-  return { endTime, durationMs: Math.max(0, new Date(endTime).getTime() - startMs) };
-}
-
 export async function fetchProfile(userId: string): Promise<Profile | null> {
   const rows = await query<Profile[]>("profiles", {
     filters: `id=eq.${userId}&select=id,username,full_name,department,position,clock_in_disabled`,
@@ -153,16 +138,16 @@ export async function fetchSession(userId: string): Promise<SessionRow | null> {
 }
 
 /** Closes any of this user's still-open time_logs (end_time null), capped at
- *  end-of-day for stale/overnight ones. Runs before every clock-in and
+ *  end-of-org-day for stale/overnight ones. Runs before every clock-in and
  *  clock-out, same as the web app — a stale open row otherwise blocks the
  *  next clock-in via the one-active-log unique index. */
-export async function closeOpenLogs(userId: string, now: string, excludeLogId?: number): Promise<void> {
+export async function closeOpenLogs(userId: string, now: string, orgTimezone: string, excludeLogId?: number): Promise<void> {
   let filters = `user_id=eq.${userId}&end_time=is.null&category=neq.${encodeURIComponent("Clock Out")}&select=id,start_time`;
   if (excludeLogId !== undefined) filters += `&id=neq.${excludeLogId}`;
 
   const openLogs = await query<{ id: number; start_time: string }[]>("time_logs", { filters });
   for (const log of openLogs) {
-    const { endTime, durationMs } = cappedCloseTime(log.start_time, now);
+    const { endTime, durationMs } = cappedCloseTime(log.start_time, now, orgTimezone);
     await query("time_logs", {
       method: "PATCH",
       filters: `id=eq.${log.id}`,
@@ -185,7 +170,7 @@ export async function clockIn(userId: string, profile: Profile, orgTimezone: str
   if (blocked) return { ok: false, error: blocked };
 
   const now = new Date().toISOString();
-  await closeOpenLogs(userId, now);
+  await closeOpenLogs(userId, now, orgTimezone);
 
   const sessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
 
@@ -254,9 +239,9 @@ export async function clockIn(userId: string, profile: Profile, orgTimezone: str
 
 /** Mirrors performClockOut(): closes any orphaned open logs (including a
  *  still-open break), then marks the session clocked out. */
-export async function clockOut(userId: string): Promise<ClockInResult> {
+export async function clockOut(userId: string, orgTimezone: string): Promise<ClockInResult> {
   const now = new Date().toISOString();
-  await closeOpenLogs(userId, now);
+  await closeOpenLogs(userId, now, orgTimezone);
 
   const rows = await query<SessionRow[]>("sessions", {
     method: "POST",

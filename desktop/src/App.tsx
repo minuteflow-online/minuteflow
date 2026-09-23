@@ -137,12 +137,12 @@ export default function App() {
     if (!userId || actionPending) return;
     setActionPending(true);
     try {
-      const result = await clock.clockOut(userId);
+      const result = await clock.clockOut(userId, orgTimezone);
       if (result.session) setSessionRow(result.session);
     } finally {
       setActionPending(false);
     }
-  }, [userId, actionPending]);
+  }, [userId, orgTimezone, actionPending]);
 
   const handleStartBreak = useCallback(async () => {
     if (!userId || actionPending) return;

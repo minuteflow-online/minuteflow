@@ -45,7 +45,7 @@ export async function startAssignedTask(
 
   // Same "close everything open" safety net clock-in/out use — whatever was
   // running (including a break) ends here, no exceptions. See clock.ts.
-  await closeOpenLogs(userId, now);
+  await closeOpenLogs(userId, now, orgTimezone);
 
   const accountClientMap = await fetchAccountClientMap().catch(() => ({}) as Record<string, string>);
   const clientName = (detail.account && accountClientMap[detail.account]) || null;
