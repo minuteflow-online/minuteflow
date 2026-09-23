@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
+import { verifyExtensionToken } from "@/lib/extensionAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -34,17 +35,28 @@ function isMissingColumnError(err: { code?: string; message?: string }): boolean
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => null);
-    const userId = body?.userId as string | undefined;
+    const bodyUserId = body?.userId as string | undefined;
     const logId = body?.logId as string | number | undefined;
     const failureReason = body?.failureReason as string | undefined;
     const capturedAtRaw = body?.capturedAt as string | undefined;
 
-    if (!userId || !logId || !failureReason) {
+    if (!bodyUserId || !logId || !failureReason) {
       return Response.json(
         { error: "Missing required fields: userId, logId, failureReason" },
         { status: 400 }
       );
     }
+
+    // Prefer the identity behind the extension's own logged-in session over
+    // the bare userId field — see upload-screenshot's identical check and
+    // verifyExtensionToken's own comment for why the fallback exists.
+    const verifiedUserId = await verifyExtensionToken(request);
+    if (!verifiedUserId) {
+      console.warn(`[screenshot-marker] no verified session token — trusting the request body's userId (${bodyUserId}) for now.`);
+    } else if (verifiedUserId !== bodyUserId) {
+      console.warn(`[screenshot-marker] body userId (${bodyUserId}) didn't match the verified session (${verifiedUserId}) — using the verified one.`);
+    }
+    const userId = verifiedUserId ?? bodyUserId;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
