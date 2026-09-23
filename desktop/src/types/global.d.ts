@@ -13,6 +13,8 @@ export interface MfDesktopApi {
   };
   setClockedIn: (value: boolean) => void;
   flashFrame: () => void;
+  getLaunchAtStartup: () => Promise<boolean>;
+  setLaunchAtStartup: (enabled: boolean) => Promise<boolean>;
 }
 
 declare global {
