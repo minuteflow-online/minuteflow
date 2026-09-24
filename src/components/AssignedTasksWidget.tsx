@@ -497,9 +497,12 @@ export default function AssignedTasksWidget({
                         handleDrop(task);
                       }}
                     >
-                      {/* Top row: drag handle + expand toggle + status badge */}
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-1 flex-1 min-w-0">
+                      {/* Top row: drag handle + expand toggle + status badge.
+                          Wraps so the badges drop under the title when the
+                          column is too narrow for both — otherwise a long
+                          name gets squeezed to a letter per line. */}
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="flex items-start gap-1 flex-[1_1_9rem] min-w-0">
                           {/* Always reserve the handle's width, even when it's not
                               draggable (a collaborator's tile) — otherwise the
                               header text would sit at a different x-offset than
@@ -558,12 +561,12 @@ export default function AssignedTasksWidget({
                                 strokeLinejoin="round"
                               />
                             </svg>
-                            <span className="text-[13px] font-semibold text-espresso leading-tight group-hover:text-terracotta transition-colors">
+                            <span className="min-w-0 break-words text-[13px] font-semibold text-espresso leading-tight group-hover:text-terracotta transition-colors">
                               {primaryText}
                             </span>
                           </button>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                           <RevisionBadge count={detail.revision_count ?? 0} />
                           <RecurringBadge
                             fromTemplateId={detail.recurring_template_id}
