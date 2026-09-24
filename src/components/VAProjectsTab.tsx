@@ -9,6 +9,7 @@ import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import ProjectFiles from "@/components/ProjectFiles";
 import ObjectiveOverview from "@/components/ObjectiveOverview";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
+import { boardStatus } from "@/lib/subtaskStatusColumns";
 import { collapseRecurringSeries } from "@/lib/taskSchedule";
 import { PROJECT_STATUS_OPTIONS, PROJECT_STATUS_BY_VALUE } from "@/lib/projectStatus";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
@@ -239,6 +240,10 @@ function toHierOptions(list: Project[]): { id: string; label: string }[] {
 // Statuses counted as "done" for the "Where They Are" completed/total figure.
 const DONE_STATUSES = new Set(["completed", "approved", "paid"]);
 const NOT_STARTED_STATUSES = new Set(["pending", "unassigned", "on_queue"]);
+// The status to DISPLAY and COUNT for a subtask: the assignee's real status where it's
+// unambiguous, since reviewer actions don't always update the task's own. The status
+// dropdown and edit panel deliberately keep reading sub.status.
+const shownStatus = (t: SubtaskRow) => boardStatus(t.status, t.assigned_task_assignees);
 const easternToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
 // Colour a subtask title by status/date — same scheme as the checklist:
@@ -1107,7 +1112,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         const tasks = visibleSubtasks.filter(
           (t) => t.status !== "cancelled" && (t.assigned_task_assignees ?? []).some((a) => a.va_id === vaId)
         );
-        const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
+        const completed = tasks.filter((t) => DONE_STATUSES.has(shownStatus(t))).length;
         return { vaId, name: profile ? profileLabel(profile) : vaId, total: tasks.length, completed };
       })
       .filter((p) => p.total > 0);
@@ -1119,7 +1124,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // per VA and inflate the total past the project's actual subtask count.
   const projectProgress = useMemo(() => {
     const tasks = visibleSubtasks.filter((t) => t.status !== "cancelled");
-    const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
+    const completed = tasks.filter((t) => DONE_STATUSES.has(shownStatus(t))).length;
     return { total: tasks.length, completed };
   }, [visibleSubtasks]);
 
@@ -1133,7 +1138,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       const rows = visibleSubtasks.filter(
         (t) => t.status !== "cancelled" && t.project_id != null && ids.has(t.project_id)
       );
-      const completed = rows.filter((t) => DONE_STATUSES.has(t.status)).length;
+      const completed = rows.filter((t) => DONE_STATUSES.has(shownStatus(t))).length;
       m.set(p.id, { total: rows.length, completed, people: involvedProfiles(rows, activeProfiles) });
     }
     return m;
@@ -1579,15 +1584,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         aria-label="Select subtask"
                       />
                     )}
-                    <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
+                    <StatusBadge status={shownStatus(sub)} paidManually={sub.paid_manually ?? false} />
                     <button
                       type="button"
                       onClick={() => setViewingSubId(isViewing ? null : sub.id)}
                       className="flex-1 min-w-0 text-left leading-tight"
                     >
                       {/* Title = client memo detail, coloured by status (✓ when completed). */}
-                      <span className={`flex items-center gap-1 text-[13px] font-semibold truncate ${listTitleColor(sub.status, sub.due_date, sub.start_date, easternToday())}`}>
-                        {DONE_STATUSES.has(sub.status) && (sub.status === "completed" || sub.status === "paid") && (
+                      <span className={`flex items-center gap-1 text-[13px] font-semibold truncate ${listTitleColor(shownStatus(sub), sub.due_date, sub.start_date, easternToday())}`}>
+                        {DONE_STATUSES.has(shownStatus(sub)) && (shownStatus(sub) === "completed" || shownStatus(sub) === "paid") && (
                           <span className="shrink-0 text-sage" aria-label="Completed">✓</span>
                         )}
                         <span className="truncate">{sub.task_detail || sub.task_name}</span>
@@ -2884,7 +2889,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {visibleViewOperationSubtasks.map((st) => (
                     <div key={st.id} className="flex items-start justify-between gap-2 rounded-lg border border-sand bg-cream px-3 py-2">
                       <span className="text-[12px] text-espresso leading-tight">{st.task_name}</span>
-                      <StatusBadge status={st.status} paidManually={st.paid_manually ?? false} />
+                      <StatusBadge status={shownStatus(st)} paidManually={st.paid_manually ?? false} />
                     </div>
                   ))}
                 </div>

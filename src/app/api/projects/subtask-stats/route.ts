@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { boardStatus } from "@/lib/subtaskStatusColumns";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,7 @@ export async function GET(request: Request) {
   const supabase = serviceClient();
   const { data, error } = await supabase
     .from("assigned_tasks")
-    .select("id, project_id, status, recurring_template_id, due_date")
+    .select("id, project_id, status, recurring_template_id, due_date, assigned_task_assignees(status)")
     .in("project_id", ids)
     .is("deleted_at", null)
     .is("archived_at", null);
@@ -42,7 +43,10 @@ export async function GET(request: Request) {
   // Collapse each recurring series to its one live occurrence before counting,
   // so a template's pre-generated window counts as one task (matches the
   // Subtasks card). Non-recurring tasks pass through.
-  type Row = { project_id: string | null; status: string; recurring_template_id: string | null; due_date: string | null };
+  type Row = {
+    project_id: string | null; status: string; recurring_template_id: string | null; due_date: string | null;
+    assigned_task_assignees?: Array<{ status: string | null }> | null;
+  };
   const SERIES_DONE = new Set(["completed", "paid", "cancelled"]);
   const groups = new Map<string, Row[]>();
   const counted: Row[] = [];
@@ -66,7 +70,9 @@ export async function GET(request: Request) {
     if (!pid || !stats[pid]) continue;
     if (row.status === "cancelled") continue;
     stats[pid].total += 1;
-    if (DONE.has(row.status)) stats[pid].done += 1;
+    // Reviewer actions write the assignee's status, not always the task's, so
+    // "done" is judged on the assignee's real status (see boardStatus).
+    if (DONE.has(boardStatus(row.status, row.assigned_task_assignees))) stats[pid].done += 1;
   }
 
   return Response.json({ stats });
