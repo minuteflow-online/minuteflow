@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
+import { esc } from "@/lib/approvalPages";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,9 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     return new Response(
-      html(`<h1>❌ Authorization Error</h1><p>${error}</p>`),
+      // `error` comes straight from the URL, so it must be escaped — anyone
+      // can craft a link to this public page with markup in it.
+      html(`<h1>❌ Authorization Error</h1><p>${esc(error)}</p>`),
       { headers: { "Content-Type": "text/html" } }
     );
   }
@@ -41,7 +44,7 @@ export async function GET(request: NextRequest) {
 
   if (tokenData.error || !tokenData.refresh_token) {
     return new Response(
-      html(`<h1>❌ Token Exchange Failed</h1><pre>${JSON.stringify(tokenData, null, 2)}</pre>`),
+      html(`<h1>❌ Token Exchange Failed</h1><pre>${esc(JSON.stringify(tokenData, null, 2))}</pre>`),
       { headers: { "Content-Type": "text/html" } }
     );
   }
