@@ -708,25 +708,14 @@ export default function TaskAssignmentsAdminTab({
       const screenshots = (screenshotRows ?? []) as TaskScreenshot[];
       setPanelScreenshots(screenshots);
 
+      // Screenshots live in Google Drive only. Markers (screenshot_type
+      // "failed") have no image at all, so they simply get no URL.
       const signedUrls: Record<number, string> = {};
-      // Markers (screenshot_type "failed") never have an image — drive_file_id
-      // is always null for one, by design — so they must not be sent to the
-      // Supabase Storage fallback below, which targets a "screenshots" bucket
-      // that doesn't exist and can only ever fail for them.
-      const missing = screenshots.filter((ss) => !ss.drive_file_id && ss.screenshot_type !== "failed");
-
       screenshots.forEach((ss) => {
         if (ss.drive_file_id) {
           signedUrls[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
         }
       });
-
-      await Promise.all(
-        missing.map(async (ss) => {
-          const { data } = await supabase.storage.from("screenshots").createSignedUrl(ss.storage_path, 3600);
-          if (data?.signedUrl) signedUrls[ss.id] = data.signedUrl;
-        })
-      );
 
       setPanelSignedUrls(signedUrls);
     } catch {
