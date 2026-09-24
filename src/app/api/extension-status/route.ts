@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { verifyExtensionToken } from "@/lib/extensionAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -36,16 +37,28 @@ function createServiceClient() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { userId, queued, uploadedToday, consecutiveFailures, version } = body;
+    const { userId: bodyUserId, queued, uploadedToday, consecutiveFailures, version } = body;
 
     if (
-      !userId ||
+      !bodyUserId ||
       typeof queued !== "number" ||
       typeof uploadedToday !== "number" ||
       typeof consecutiveFailures !== "number"
     ) {
       return Response.json({ error: "Missing or invalid fields" }, { status: 400 });
     }
+
+    // Prefer the identity behind the extension's own logged-in session over
+    // the bare userId field, which anyone could set to trigger Telegram and
+    // admin-email alerts for someone else. Same check, and same temporary
+    // fallback for installs that don't send a token yet, as upload-screenshot.
+    const verifiedUserId = await verifyExtensionToken(request);
+    if (!verifiedUserId) {
+      console.warn(`[extension-status] no verified session token — trusting the request body's userId (${bodyUserId}) for now.`);
+    } else if (verifiedUserId !== bodyUserId) {
+      console.warn(`[extension-status] body userId (${bodyUserId}) didn't match the verified session (${verifiedUserId}) — using the verified one.`);
+    }
+    const userId = verifiedUserId ?? bodyUserId;
 
     const supabase = createServiceClient();
 
