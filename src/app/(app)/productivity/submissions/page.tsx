@@ -1231,6 +1231,19 @@ This cannot be undone.`
   // leave you staring at an empty page with no obvious way back.
   const safePage = Math.min(page, pageCount - 1);
 
+  // A notification link (?taskId=) has to land on the card it's about, but
+  // the list is paged — a thread past the first 25 never mounts, so there's
+  // nothing to expand or scroll to and the link just drops you on page 1.
+  // Jumps once per link; later paging and reloads are left alone.
+  const jumpedToHighlightRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (highlightTaskId == null || jumpedToHighlightRef.current === highlightTaskId) return;
+    const index = allThreads.findIndex((t) => t.taskId === highlightTaskId);
+    if (index === -1) return;
+    jumpedToHighlightRef.current = highlightTaskId;
+    setPage(Math.floor(index / THREADS_PER_PAGE));
+  }, [allThreads, highlightTaskId]);
+
   const threadsByDay = useMemo(() => {
     const start = safePage * THREADS_PER_PAGE;
     const map = new Map<string, Thread[]>();
