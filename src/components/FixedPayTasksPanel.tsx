@@ -63,6 +63,10 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   paid: "bg-plum-soft text-plum",
 };
 
+// A VA can't change a Revision Needed status from this table — the way back in
+// is the Rework button on the dashboard's Assigned Tasks, so say so here.
+const REWORK_HINT = "Sent back for revision. Use Rework on your dashboard's Assigned Tasks to resubmit it.";
+
 type PanelMode = "create" | "edit" | "view" | null;
 type ActiveFilter = "all" | "submitted" | "active" | "inactive" | "archived" | "trash";
 type CreateMode = "hourly" | "fixed_pay";
@@ -701,9 +705,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                       ))}
                     </select>
                   ) : (
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                      {STATUS_LABELS[task.status]}
-                    </span>
+                    <>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                        {STATUS_LABELS[task.status]}
+                      </span>
+                      {task.status === "revision_needed" && (task.claimed_by_me || task.claimed_by === currentUserId) && (
+                        <p className="mt-1.5 text-[11px] leading-snug text-stone">{REWORK_HINT}</p>
+                      )}
+                    </>
                   )}
                 </div>
                 {isAdminOrManager && (
@@ -1123,7 +1132,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                                 ))}
                               </select>
                             ) : (
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                              <span
+                                title={
+                                  task.status === "revision_needed" && (task.claimed_by_me || task.claimed_by === currentUserId)
+                                    ? REWORK_HINT
+                                    : undefined
+                                }
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}
+                              >
                                 {STATUS_LABELS[task.status]}
                               </span>
                             )}
