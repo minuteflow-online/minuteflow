@@ -61,6 +61,8 @@ export interface SubtaskRow {
   recurring_template_id?: string | null;
   assigned_task_assignees: Array<{
     va_id: string;
+    /** This assignee's own status. Returned by /api/assigned-tasks; the board uses it (see boardStatus). */
+    status?: string | null;
     profiles?: { id: string; full_name: string; username: string } | null;
   }>;
 }

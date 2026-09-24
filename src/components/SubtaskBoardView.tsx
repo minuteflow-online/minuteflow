@@ -9,11 +9,15 @@
 // cancelled placement.
 
 import { useMemo, useState } from "react";
-import { BOARD_COLUMNS, columnForStatus, COLUMN_ACCENT_TEXT } from "@/lib/subtaskStatusColumns";
+import { BOARD_COLUMNS, boardStatus, columnForStatus, COLUMN_ACCENT_TEXT } from "@/lib/subtaskStatusColumns";
 import { assigneeNames } from "@/lib/subtaskDisplay";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 import type { Profile } from "@/types/database";
 import type { SubtaskRow } from "@/components/VAProjectsTab";
+
+// The status a card is shown under. Drag-and-drop below deliberately keeps
+// reading the raw sub.status, so what can be dragged is unchanged.
+const shownStatus = (sub: SubtaskRow) => boardStatus(sub.status, sub.assigned_task_assignees);
 
 // A card counts as overdue once its due date has passed and it hasn't
 // actually been accepted yet — matches ObjectiveOverview's own
@@ -21,7 +25,7 @@ import type { SubtaskRow } from "@/components/VAProjectsTab";
 // in the past isn't a problem anymore, so it stops being flagged.
 const RESOLVED_STATUSES = new Set(["completed", "paid", "approved"]);
 function isOverdue(sub: SubtaskRow, today: string): boolean {
-  if (!sub.due_date || RESOLVED_STATUSES.has(sub.status)) return false;
+  if (!sub.due_date || RESOLVED_STATUSES.has(shownStatus(sub))) return false;
   return sub.due_date < today;
 }
 
@@ -86,7 +90,7 @@ export default function SubtaskBoardView({
     const inBoard: SubtaskRow[] = [];
     let hidden = 0;
     for (const sub of subtasks) {
-      const col = columnForStatus(sub.status);
+      const col = columnForStatus(shownStatus(sub));
       if (col) {
         byColumn.get(col.key)!.push(sub);
         inBoard.push(sub);
@@ -132,7 +136,7 @@ export default function SubtaskBoardView({
                 <span className="text-[12px] font-semibold text-espresso leading-tight truncate">
                   {sub.task_name}
                 </span>
-                <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
+                <StatusBadge status={shownStatus(sub)} paidManually={sub.paid_manually ?? false} />
               </button>
             ))}
           </div>
@@ -200,7 +204,7 @@ export default function SubtaskBoardView({
                         <span className="text-[13px] font-semibold text-espresso leading-tight">
                           {sub.task_name}
                         </span>
-                        <StatusBadge status={sub.status} paidManually={sub.paid_manually ?? false} />
+                        <StatusBadge status={shownStatus(sub)} paidManually={sub.paid_manually ?? false} />
                       </div>
                       {(() => {
                         const names = assigneeNames(sub.assigned_task_assignees, activeProfiles);

@@ -77,6 +77,34 @@ export const BOARD_COLUMNS: BoardColumn[] = [
   // add a column here — don't add ad-hoc filtering elsewhere.
 ];
 
+/**
+ * The status a card should be shown under on the board.
+ *
+ * assigned_tasks.status (the task-level column) is left behind when a reviewer
+ * approves or sends work back — those actions reliably write the assignee row
+ * (assigned_task_assignees.status), not always the task row. Measured on live
+ * data, 62 of 454 project tasks disagreed: revisions sitting under Submitted,
+ * approved tasks under Submitted, submitted work under Pending. So the
+ * assignee's status wins where it's unambiguous:
+ *   - paid / cancelled stay as the task says (the board excludes them);
+ *   - any assignee at revision_needed means the card needs revision;
+ *   - a single assignee's status is used as-is;
+ *   - several assignees agreeing use that shared status;
+ *   - anything else (no assignees, or assignees who disagree) falls back to
+ *     the task's own status, i.e. today's behaviour.
+ */
+export function boardStatus(
+  taskStatus: string,
+  assignees: ReadonlyArray<{ status?: string | null }> | null | undefined
+): string {
+  if (taskStatus === "paid" || taskStatus === "cancelled") return taskStatus;
+  const statuses = (assignees ?? []).map((a) => a.status).filter((s): s is string => Boolean(s));
+  if (statuses.length === 0) return taskStatus;
+  if (statuses.includes("revision_needed")) return "revision_needed";
+  const first = statuses[0];
+  return statuses.every((s) => s === first) ? first : taskStatus;
+}
+
 /** Column a given status belongs to, or undefined if excluded from the board (see `paid`/`cancelled` note above). */
 export function columnForStatus(status: string): BoardColumn | undefined {
   return BOARD_COLUMNS.find((col) => (col.statuses as string[]).includes(status));
