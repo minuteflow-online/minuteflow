@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { boardStatus } from "@/lib/subtaskStatusColumns";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
   const supabase = serviceClient();
   const { data, error } = await supabase
     .from("assigned_tasks")
-    .select("id, project_id, task_name, task_detail, status, recurring_template_id, due_date, start_date, account, review_required, assigned_task_assignees(va_id), task_todos(id, text, sort_order, completed)")
+    .select("id, project_id, task_name, task_detail, status, recurring_template_id, due_date, start_date, account, review_required, assigned_task_assignees(va_id, status), task_todos(id, text, sort_order, completed)")
     .in("project_id", ids)
     .neq("status", "cancelled")
     .is("deleted_at", null)
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
 
   type Row = {
     id: number; project_id: string; task_name: string; task_detail: string | null; status: string; recurring_template_id: string | null; due_date: string | null; start_date: string | null; account: string | null; review_required: boolean | null;
-    assigned_task_assignees?: Array<{ va_id: string }> | null;
+    assigned_task_assignees?: Array<{ va_id: string; status?: string | null }> | null;
     // Carried through so the To-Do List tab can be built from the same fetch
     // rather than a second pass over the same tasks.
     task_todos?: Array<{ id: number; text: string; sort_order: number; completed: boolean }> | null;
@@ -107,6 +108,9 @@ export async function GET(request: Request) {
     task_name: t.task_name,
     task_detail: t.task_detail ?? null,
     status: t.status,
+    // What to DISPLAY (chips, colours, avatars). `status` above stays the task's
+    // own so tick-to-complete and to-do locking behave exactly as before.
+    shown_status: boardStatus(t.status, t.assigned_task_assignees),
     recurring: Boolean(t.recurring_template_id),
     due_date: t.due_date ?? null,
     start_date: t.start_date ?? null,

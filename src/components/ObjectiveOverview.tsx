@@ -18,7 +18,7 @@ type MessageRow = { id: number; project_id: string; title: string; body: string;
 type Assignee = { id: string; name: string; avatar_url: string | null };
 type Todo = { id: number; text: string; sort_order: number; completed: boolean };
 type TaskRider = { key: string; name: string; avatar_url: string | null; glow: "yellow" | "green" | ""; count: number };
-type SubtaskRow = { id: number; project_id: string; task_name: string; task_detail: string | null; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
+type SubtaskRow = { id: number; project_id: string; task_name: string; task_detail: string | null; status: string; /** What to display (assignee-aware); `status` is the task's own and still gates ticking/locking. */ shown_status?: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
 
 // Mirrors LOCKED_TODO_STATUSES on the server (assigned-tasks/[id]/todos/[todoId]/route.ts)
 // — once a subtask has been handed in, its to-dos freeze in the UI too, not
@@ -68,7 +68,7 @@ function subtaskIsDone(s: string): boolean {
   return s === "completed" || s === "paid";
 }
 function subtaskTitleColor(st: SubtaskRow, today: string): string {
-  const s = st.status;
+  const s = st.shown_status ?? st.status;
   if (s === "completed" || s === "paid" || s === "approved") return "text-sage";
   if (st.due_date && st.due_date < today && !DONE.has(s)) return "text-terracotta";
   if (st.start_date && st.start_date < today && NOT_STARTED.has(s)) return "text-clay-rose";
@@ -93,15 +93,16 @@ const APPROVED_STATUSES = new Set(["approved", "completed", "paid"]);
 const TICKED = new Set(["completed", "paid"]);
 const easternToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 function matchesSubFilter(st: SubtaskRow, f: SubFilter, today: string): boolean {
+  const s = st.shown_status ?? st.status;
   switch (f) {
-    case "pending": return st.status === "pending";
-    case "in_progress": return st.status === "in_progress";
-    case "submitted": return st.status === "submitted";
-    case "revision": return st.status === "revision_needed" || st.status === "reviewing";
-    case "approved": return st.status === "approved";
-    case "completed": return st.status === "completed";
-    case "past_due": return Boolean(st.due_date) && st.due_date! < today && !DONE.has(st.status);
-    case "delayed_start": return Boolean(st.start_date) && st.start_date! < today && NOT_STARTED.has(st.status);
+    case "pending": return s === "pending";
+    case "in_progress": return s === "in_progress";
+    case "submitted": return s === "submitted";
+    case "revision": return s === "revision_needed" || s === "reviewing";
+    case "approved": return s === "approved";
+    case "completed": return s === "completed";
+    case "past_due": return Boolean(st.due_date) && st.due_date! < today && !DONE.has(s);
+    case "delayed_start": return Boolean(st.start_date) && st.start_date! < today && NOT_STARTED.has(s);
     case "unclaimed": return st.assignees.length === 0;
   }
 }
@@ -616,9 +617,10 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
       const endRaw: Raw[] = [];
       for (const id of ids) {
         for (const st of byProject.get(id) ?? []) {
-          if (STATUS_WEIGHT[st.status] === undefined) continue; // cancelled / unknown → excluded
-          const done = APPROVED_STATUSES.has(st.status);
-          const glow: "yellow" | "green" | "" = PENDING_STATUSES.has(st.status)
+          const shown = st.shown_status ?? st.status;
+          if (STATUS_WEIGHT[shown] === undefined) continue; // cancelled / unknown → excluded
+          const done = APPROVED_STATUSES.has(shown);
+          const glow: "yellow" | "green" | "" = PENDING_STATUSES.has(shown)
             ? "yellow"
             : (done && st.review_required ? "green" : "");
           for (const a of st.assignees) {
@@ -1225,7 +1227,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                             <span className="min-w-0 flex-1">
                               {/* Title = the client memo detail (distinguishes same-named
                                   tasks); coloured by status. Completed gets a ✓. */}
-                              <span className={`flex items-center gap-1 text-[12px] font-semibold ${done ? "line-through decoration-stone/60" : ""} ${subtaskTitleColor({ ...st, status: effectiveStatus(st) }, todayEastern)}`}>
+                              <span className={`flex items-center gap-1 text-[12px] font-semibold ${done ? "line-through decoration-stone/60" : ""} ${subtaskTitleColor({ ...st, status: effectiveStatus(st), shown_status: statusOverride[st.id] ?? st.shown_status }, todayEastern)}`}>
                                 {st.recurring && (
                                   <span title="Recurring" className="shrink-0 text-slate-blue" aria-label="Recurring">
                                     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
