@@ -621,9 +621,14 @@ async function drainUploadQueue() {
  */
 async function reportUploadStatus(userId, queued, uploadedToday, consecutiveFailures) {
   try {
+    // Our own logged-in session, so the server can verify who's reporting.
+    const session = await DB.ensureAuth();
     await fetch(`${CONFIG.API_BASE}/api/extension-status`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+      },
       body: JSON.stringify({ userId, queued, uploadedToday, consecutiveFailures, version: CONFIG.VERSION }),
     });
   } catch (err) {
