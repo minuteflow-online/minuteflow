@@ -63,8 +63,13 @@ describe("subtaskStatusColumns", () => {
   // gap") so that if boss's eventual answer changes the mapping, these
   // specific assertions are what break — telling us exactly what to update.
   describe("current TBD guesses", () => {
-    it("revision_needed groups into Submitted", () => {
-      expect(columnForStatus("revision_needed")?.key).toBe("submitted");
+    // Toni moved revisions out of Submitted into their own column, labelled
+    // "Revision". The internal key stayed "reviewed", so the label is the
+    // thing to assert on.
+    it("revision_needed and reviewing group into the Revision column", () => {
+      expect(columnForStatus("revision_needed")?.key).toBe("reviewed");
+      expect(columnForStatus("revision_needed")?.label).toBe("Revision");
+      expect(columnForStatus("reviewing")?.key).toBe("reviewed");
     });
 
     it("unassigned groups into Pending", () => {
