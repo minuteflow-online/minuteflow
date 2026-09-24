@@ -159,8 +159,12 @@ export default function AssignedTasksWidget({
           ...row,
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
+        // revision_needed has to stay in this list: this widget is the only
+        // place a VA can Rework -> Start -> Submit again. Dropping it (as the
+        // Jul 14 "on_queue and in_progress only" change did) leaves a sent-back
+        // task with no way to resubmit it.
         const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = [
-            'on_queue', 'in_progress',
+            'on_queue', 'in_progress', 'revision_needed',
           ];
         const visible = collapseRecurringSeriesBy(
           data.filter((t) => VA_VISIBLE_STATUSES.includes(t.status)),
