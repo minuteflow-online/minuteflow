@@ -5,6 +5,7 @@ import { cheerApproval } from "@/lib/reviewLinks";
 import type { ReviewAction } from "@/lib/reviewLinks";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
+import { notifyAssigneesOfApproval } from "@/lib/notifyApproval";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -104,7 +105,17 @@ export async function GET(request: NextRequest) {
     submission_comment: cfg.body,
   });
 
-  if (action === "approve") await cheerApproval(id);
+  if (action === "approve") {
+    await cheerApproval(id);
+    // No signed-in reviewer on this link, so the person doing the work gets
+    // the private Telegram message only (a bell entry needs a sender).
+    await notifyAssigneesOfApproval(admin, {
+      taskId: id,
+      taskName,
+      reviewerId: null,
+      reviewerName: null,
+    });
+  }
 
   if (telegramEnabled("submissions")) {
     const emoji = action === "approve" ? "✅" : "🔁";

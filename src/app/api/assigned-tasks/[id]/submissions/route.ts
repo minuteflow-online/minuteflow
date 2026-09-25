@@ -13,6 +13,7 @@ import { reviewLinks, cheerApproval } from "@/lib/reviewLinks";
 import { submissionCheer } from "@/lib/submissionCheer";
 import { notifyRecipients } from "@/lib/notifyRecipients";
 import { notifyOne } from "@/lib/notifyOne";
+import { notifyAssigneesOfApproval } from "@/lib/notifyApproval";
 import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -513,6 +514,19 @@ export async function POST(request: Request, { params }: RouteContext) {
   // to itself.
   if (messageType === "approval") {
     await cheerApproval(Number(id));
+
+    // And tell the person who did the work, the same way a revision request
+    // does: bell entry plus a private Telegram message. Runs after the
+    // approval is recorded and never throws, so it can't undo or fail it.
+    const { data: aProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
+    await notifyAssigneesOfApproval(admin, {
+      taskId: Number(id),
+      taskName: task.task_name,
+      reviewerId: user.id,
+      reviewerName: aProf?.full_name || aProf?.username || "A reviewer",
+      note: message,
+      submissionId: submission.id as number,
+    });
   }
 
   // Telegram alert on every submission, including the ones that close on
