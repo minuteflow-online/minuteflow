@@ -581,6 +581,11 @@ function SubmissionsPageInner() {
   const [unreadByTask, setUnreadByTask] = useState<Record<number, number>>({});
   const [unreadOnly, setUnreadOnly] = useState(false);
 
+  // assigned_task_id -> true while a reviewer's flag is holding that task.
+  // Reviewer-only: the API sends an empty map to everyone else.
+  const [flaggedTasks, setFlaggedTasks] = useState<Record<number, boolean>>({});
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+
   // A notification click arrives as ?taskId=123 — jump straight to that
   // thread instead of leaving the reader to find it among everyone else's
   // filters. Read once: it's a one-time "you arrived here for a reason", not
@@ -680,6 +685,7 @@ function SubmissionsPageInner() {
       setCanEmptyTrash(Boolean(data.canEmptyTrash));
       setSeesAll(Boolean(data.seesAll));
       setUnreadByTask(data.unreadByTask ?? {});
+      setFlaggedTasks(data.flaggedTasks ?? {});
     } catch {
       setItems([]);
     } finally {
@@ -904,16 +910,25 @@ This cannot be undone.`
     [load]
   );
 
-  /** Appends a note to a task's thread. Never edits — that's the whole point. */
+  /**
+   * Appends a note to a task's thread. Never edits — that's the whole point.
+   * Also carries a reviewer's flag / flag-cleared entry: same append, but it
+   * deliberately moves no status — a flag is a pause, not a decision.
+   */
   const addNote = useCallback(
-    async (item: FeedItem, note: string, attachments?: PendingAttachment[]) => {
+    async (
+      item: FeedItem,
+      note: string,
+      attachments?: PendingAttachment[],
+      type: "comment" | "flag" | "flag_cleared" = "comment"
+    ) => {
       if (!item.task) return;
       setBusyId(item.id);
       try {
         const res = await fetch(`/api/assigned-tasks/${item.task.id}/submissions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message_type: "comment", message: note, attachments }),
+          body: JSON.stringify({ message_type: type, message: note, attachments }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -1105,8 +1120,15 @@ This cannot be undone.`
       });
     }
 
+    if (flaggedOnly) {
+      rows = rows.filter((r) => {
+        const taskId = r.task?.id ?? r.assigned_task_id;
+        return taskId != null && flaggedTasks[taskId] === true;
+      });
+    }
+
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone, unreadOnly, unreadByTask]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone, unreadOnly, unreadByTask, flaggedOnly, flaggedTasks]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -1424,6 +1446,31 @@ This cannot be undone.`
           )}
         </button>
 
+        {/* Reviewer-only: tasks paused for a clarification before any
+            revision request goes out. */}
+        {canReview && (
+          <button
+            type="button"
+            onClick={() => setFlaggedOnly((v) => !v)}
+            className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+              flaggedOnly
+                ? "border-terracotta/30 bg-terracotta-soft text-terracotta"
+                : "border-sand bg-white text-stone hover:border-walnut"
+            }`}
+            title="Show only tasks you've flagged to clarify"
+          >
+            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M5 21V4m0 0h11l-2 4 2 4H5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Flagged
+            {Object.keys(flaggedTasks).length > 0 && (
+              <span className="rounded-full bg-terracotta px-1.5 py-[1px] text-[10px] font-bold text-white">
+                {Object.keys(flaggedTasks).length}
+              </span>
+            )}
+          </button>
+        )}
+
         <CardFieldsPicker
           titleField={titleField}
           onTitleChange={(next) => {
@@ -1648,6 +1695,7 @@ This cannot be undone.`
           onCancelReversal={cancelReversal}
           onOpenTask={setDetailTaskId}
           unreadByTask={unreadByTask}
+          flaggedTasks={flaggedTasks}
           onMarkRead={markThreadRead}
           highlightTaskId={highlightTaskId}
         />
@@ -2281,6 +2329,7 @@ function ThreadCard({
   onCancelReversal,
   onOpenTask,
   unreadCount = 0,
+  flagged = false,
   onMarkRead,
   autoExpand = false,
 }: {
@@ -2294,7 +2343,14 @@ function ThreadCard({
     dueAt?: string,
     attachments?: PendingAttachment[]
   ) => void;
-  onAddNote: (item: FeedItem, note: string, attachments?: PendingAttachment[]) => void;
+  onAddNote: (
+    item: FeedItem,
+    note: string,
+    attachments?: PendingAttachment[],
+    type?: "comment" | "flag" | "flag_cleared"
+  ) => void;
+  /** Reviewer's flag is holding this task — see loadRoundData. */
+  flagged?: boolean;
   /** round index -> ms logged during that round. */
   rounds: Record<string, number>;
   /** "awaiting" | "revision_requested" | "approved" */
@@ -2399,7 +2455,7 @@ function ThreadCard({
     .filter(Boolean)
     .join(" · ");
   const [noteDraft, setNoteDraft] = useState("");
-  const [noteMode, setNoteMode] = useState<null | "revision" | "note">(null);
+  const [noteMode, setNoteMode] = useState<null | "revision" | "note" | "flag">(null);
   const [revisionDue, setRevisionDue] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
 
@@ -2466,7 +2522,7 @@ function ThreadCard({
     const note = noteDraft.trim();
     const taskId = latest.task?.id;
     if (!taskId) return;
-    if (noteMode === "revision" ? !note : !note && noteFiles.length === 0) return;
+    if (noteMode === "revision" || noteMode === "flag" ? !note : !note && noteFiles.length === 0) return;
 
     setNoteUploadError("");
     setNoteUploading(true);
@@ -2510,7 +2566,12 @@ function ThreadCard({
           attachments.length > 0 ? attachments : undefined
         );
       } else {
-        onAddNote(latest, note, attachments.length > 0 ? attachments : undefined);
+        onAddNote(
+          latest,
+          note,
+          attachments.length > 0 ? attachments : undefined,
+          noteMode === "flag" ? "flag" : "comment"
+        );
       }
       setNoteDraft("");
       setRevisionDue("");
@@ -2647,6 +2708,32 @@ function ThreadCard({
             >
               Complete
             </button>
+            {/* Pause before deciding: a revision request will cost the VA
+                points, so a reviewer who needs to clarify something first can
+                mark the task instead. Changes no status and the VA never sees
+                it. Clearing it is one click; a review decision also ends it. */}
+            {flagged ? (
+              <button
+                onClick={() => onAddNote(latest, "Flag cleared", undefined, "flag_cleared")}
+                disabled={busy}
+                className="rounded-lg border border-terracotta/30 bg-terracotta-soft px-2.5 py-1 text-[10px] font-semibold text-terracotta transition-colors hover:bg-terracotta-soft/70 disabled:opacity-50"
+                title="Take the flag off — the question is settled"
+              >
+                Clear flag
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setNoteMode("flag");
+                  setExpanded(true);
+                }}
+                disabled={busy}
+                className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                title="Hold this for now to clarify something — no revision request, no points lost"
+              >
+                Flag
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex shrink-0 items-center gap-1.5">
@@ -2674,7 +2761,7 @@ function ThreadCard({
                 className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
                 title="Undo the auto-approval and request changes"
               >
-                Flag
+                Request changes
               </button>
             )}
             {/* Approving by mistake shouldn't be a dead end. The reversal is
@@ -2703,6 +2790,18 @@ function ThreadCard({
               </button>
             )}
           </div>
+        )}
+
+        {canReview && flagged && (
+          <span
+            className="flex shrink-0 items-center gap-1 rounded-full border border-terracotta/30 bg-terracotta-soft px-2 py-[2px] text-[10px] font-semibold text-terracotta"
+            title="You flagged this to clarify before deciding"
+          >
+            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M5 21V4m0 0h11l-2 4 2 4H5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Flagged
+          </span>
         )}
 
         {unreadCount > 0 && (
@@ -2758,7 +2857,7 @@ function ThreadCard({
                 </div>
               )}
               <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                Add a note
+                {noteMode === "flag" ? "What needs clarifying?" : "Add a note"}
               </label>
               <textarea
                 value={noteDraft}
@@ -2766,7 +2865,11 @@ function ThreadCard({
                 onPaste={handleNotePaste}
                 rows={2}
                 autoFocus
-                placeholder="Anything to add — this is appended, nothing is overwritten"
+                placeholder={
+                  noteMode === "flag"
+                    ? "Only reviewers see this. No revision request is sent and no points are affected."
+                    : "Anything to add — this is appended, nothing is overwritten"
+                }
                 className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
               />
 
@@ -2839,7 +2942,7 @@ function ThreadCard({
                   disabled={
                     busy ||
                     noteUploading ||
-                    (noteMode === "revision"
+                    (noteMode === "revision" || noteMode === "flag"
                       ? !noteDraft.trim()
                       : !noteDraft.trim() && noteFiles.length === 0)
                   }
@@ -2849,7 +2952,9 @@ function ThreadCard({
                     ? "Saving..."
                     : noteMode === "revision"
                       ? "Request Revision"
-                      : "Add Note"}
+                      : noteMode === "flag"
+                        ? "Flag"
+                        : "Add Note"}
                 </button>
                 <button
                   onClick={() => {
@@ -2911,6 +3016,7 @@ function TimelineView({
   onCancelReversal,
   onOpenTask,
   unreadByTask,
+  flaggedTasks,
   onMarkRead,
   highlightTaskId,
 }: {
@@ -2925,7 +3031,12 @@ function TimelineView({
     dueAt?: string,
     attachments?: PendingAttachment[]
   ) => void;
-  onAddNote: (item: FeedItem, note: string, attachments?: PendingAttachment[]) => void;
+  onAddNote: (
+    item: FeedItem,
+    note: string,
+    attachments?: PendingAttachment[],
+    type?: "comment" | "flag" | "flag_cleared"
+  ) => void;
   loading: boolean;
   roundDurations: Record<string, Record<string, number>>;
   reviewState: Record<string, string>;
@@ -2940,6 +3051,7 @@ function TimelineView({
   onOpenTask: (taskId: number) => void;
   /** taskId -> unread comment count for the current viewer. */
   unreadByTask: Record<number, number>;
+  flaggedTasks: Record<number, boolean>;
   onMarkRead: (taskId: number) => void;
   /** The task a notification click pointed at — auto-expanded and scrolled
    *  into view, once. */
@@ -2987,6 +3099,7 @@ function TimelineView({
                 onCancelReversal={onCancelReversal}
                 onOpenTask={onOpenTask}
                 unreadCount={unreadByTask[thread.taskId] ?? 0}
+                flagged={flaggedTasks[thread.taskId] === true}
                 onMarkRead={onMarkRead}
                 autoExpand={highlightTaskId === thread.taskId}
               />

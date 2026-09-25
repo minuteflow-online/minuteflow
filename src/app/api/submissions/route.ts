@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
-import { canEmptySubmissionTrash, canReviewSubmissions } from "@/lib/submissions";
+import { canEmptySubmissionTrash, canReviewSubmissions, REVIEWER_ONLY_TYPES } from "@/lib/submissions";
 import { isUnreadCandidate } from "@/lib/submissionUnread";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -50,7 +50,9 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
   const roundDurations: Record<number, Record<number, number>> = {};
   /** taskId -> "awaiting" | "revision_requested" | "approved" | "completed" */
   const reviewState: Record<number, string> = {};
-  if (taskIds.length === 0) return { roundDurations, reviewState };
+  /** taskId -> true while a reviewer's flag is the newest thing on the thread. */
+  const flaggedTasks: Record<number, boolean> = {};
+  if (taskIds.length === 0) return { roundDurations, reviewState, flaggedTasks };
 
   const [revisionRes, logRes] = await Promise.all([
     // Every thread entry, not just revisions: the newest one also tells us
@@ -105,6 +107,33 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
     }
   }
 
+  // A flag holds only until something else happens on the thread: clearing it,
+  // a new submission, or a review decision all supersede it. Kept out of
+  // latestByTask on purpose — a flag is not a decision, so it must never move
+  // reviewState.
+  const latestFlagMark = new Map<number, { message_type: string; created_at: string }>();
+  for (const entry of allEntries) {
+    if (
+      ![
+        "flag",
+        "flag_cleared",
+        "submission",
+        "revision",
+        "approval",
+        "approval_reversed",
+        "revision_reversed",
+      ].includes(entry.message_type)
+    )
+      continue;
+    const current = latestFlagMark.get(entry.assigned_task_id);
+    if (!current || entry.created_at > current.created_at) {
+      latestFlagMark.set(entry.assigned_task_id, entry);
+    }
+  }
+  for (const [taskId, entry] of latestFlagMark) {
+    if (entry.message_type === "flag" && !completedTasks.has(taskId)) flaggedTasks[taskId] = true;
+  }
+
   for (const [taskId, entry] of latestByTask) {
     if (completedTasks.has(taskId)) {
       reviewState[taskId] = "completed";
@@ -141,7 +170,7 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
     if (Object.keys(buckets).length > 0) roundDurations[taskId] = buckets;
   }
 
-  return { roundDurations, reviewState };
+  return { roundDurations, reviewState, flaggedTasks };
 }
 
 /**
@@ -479,6 +508,13 @@ export async function GET(request: Request) {
     rows = rows.filter((r) => r.assigned_tasks?.projects?.kind === scope);
   }
 
+  // Flags are a reviewer's private marker; everyone else's view of the thread
+  // never contains them.
+  const viewerCanReview = canReviewSubmissions(profile);
+  if (!viewerCanReview) {
+    rows = rows.filter((r) => !REVIEWER_ONLY_TYPES.includes(r.message_type as string));
+  }
+
   const submissionIds = rows.map((r) => r.id);
   // A log belongs to round N when N revisions had been issued before it
   // started — the same rule the R badge uses, so the timing and the label can
@@ -506,6 +542,7 @@ export async function GET(request: Request) {
     loadUnreadByTask(admin, rows, user.id),
   ]);
   const { roundDurations, reviewState } = roundData;
+  const flaggedTasks = viewerCanReview ? roundData.flaggedTasks : {};
 
   const submissions = rows.map((row) => {
     const task = row.assigned_tasks;
@@ -551,6 +588,7 @@ export async function GET(request: Request) {
     expected,
     roundDurations,
     reviewState,
+    flaggedTasks,
     unreadByTask,
     seesAll: isAdminEquivalent,
     canReview: canReviewSubmissions(profile),
