@@ -23,6 +23,12 @@ export type SubmissionMessageType =
    *  for the case where the request itself was the mistake (e.g. added to
    *  the wrong submission), not the work it was requesting a fix on. */
   | "revision_reversed"
+  /** A reviewer's "hold on, I need to clarify this first" marker. Not a
+   *  decision: it changes no status and costs the VA nothing. Reviewer-only —
+   *  see REVIEWER_ONLY_TYPES. */
+  | "flag"
+  /** Takes the flag back off, once the question is settled. */
+  | "flag_cleared"
   | "comment";
 
 export interface TaskSubmissionAttachment {
@@ -139,8 +145,17 @@ export const SUBMISSION_TYPE_LABELS: Record<SubmissionMessageType, string> = {
   approval: "Approved",
   approval_reversed: "Approval reversed",
   revision_reversed: "Revision reversed",
+  flag: "Flagged",
+  flag_cleared: "Flag cleared",
   comment: "Note",
 };
+
+/**
+ * Thread entries only a reviewer sees. A flag is the reviewer's own working
+ * marker while they clarify something — showing it to the VA would read as a
+ * mark against them, which is exactly what flagging exists to avoid.
+ */
+export const REVIEWER_ONLY_TYPES: readonly string[] = ["flag", "flag_cleared"];
 
 /** Badge classes per thread entry type, matching the app's status-badge shape. */
 export const SUBMISSION_TYPE_BADGE: Record<SubmissionMessageType, string> = {
@@ -150,6 +165,8 @@ export const SUBMISSION_TYPE_BADGE: Record<SubmissionMessageType, string> = {
   approval: "bg-emerald-50 text-emerald-600 border-emerald-200",
   approval_reversed: "bg-terracotta-soft text-terracotta border-terracotta/20",
   revision_reversed: "bg-terracotta-soft text-terracotta border-terracotta/20",
+  flag: "bg-terracotta-soft text-terracotta border-terracotta/20",
+  flag_cleared: "bg-stone/10 text-stone border-stone/20",
   comment: "bg-stone/10 text-stone border-stone/20",
 };
 

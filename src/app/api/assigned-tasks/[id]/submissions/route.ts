@@ -6,6 +6,7 @@ import {
   submissionSummary,
   submissionMeetsBar,
   MIN_SUBMISSION_WORDS,
+  REVIEWER_ONLY_TYPES,
   type SubmissionMessageType,
 } from "@/lib/submissions";
 import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
@@ -199,8 +200,15 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
+  // Flags are a reviewer's private working marker — the VA never sees them.
+  const visible = canReviewSubmissions(profile)
+    ? (data ?? [])
+    : (data ?? []).filter(
+        (row) => !REVIEWER_ONLY_TYPES.includes((row as { message_type: string }).message_type)
+      );
+
   return Response.json({
-    submissions: await withAttachments(admin, (data ?? []) as never),
+    submissions: await withAttachments(admin, visible as never),
   });
 }
 
@@ -309,6 +317,8 @@ export async function POST(request: Request, { params }: RouteContext) {
     "approval",
     "approval_reversed",
     "revision_reversed",
+    "flag",
+    "flag_cleared",
   ];
   if (reviewTypes.includes(messageType) && !canReviewSubmissions(profile)) {
     return Response.json(
