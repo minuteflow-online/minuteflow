@@ -66,6 +66,10 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
 // A VA can't change a Revision Needed status from this table — the way back in
 // is the Rework button on the dashboard's Assigned Tasks, so say so here.
 const REWORK_HINT = "Sent back for revision. Use Rework on your dashboard's Assigned Tasks to resubmit it.";
+// Shown above the edit form when the server would refuse the save — the form
+// used to open fully editable and only fail after Save Changes was clicked.
+const REWORK_EDIT_HINT = "This task was sent back for revision, so it's locked for editing. Click Rework on your dashboard's Assigned Tasks to reopen it, then make your changes.";
+const REVIEWED_EDIT_HINT = "This task has already been reviewed and can no longer be edited.";
 
 type PanelMode = "create" | "edit" | "view" | null;
 type ActiveFilter = "all" | "submitted" | "active" | "inactive" | "archived" | "trash";
@@ -1356,6 +1360,12 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                       onSaved={handleTaskSaved}
                     />
                   ) : (
+                    <>
+                    {panelMode === "edit" && selectedTask && !canEditSelectedTask && (
+                      <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-600">
+                        {selectedTask.status === "revision_needed" ? REWORK_EDIT_HINT : REVIEWED_EDIT_HINT}
+                      </p>
+                    )}
                     <TaskEditor
                       // Task id in the key — a shared key kept the previous
                       // task's form state and saved it onto the next one.
@@ -1367,9 +1377,11 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                       isAdminOrManager={isAdminOrManager}
                       teamMembers={teamMembers}
                       currentPayRate={currentPayRate ?? undefined}
+                      readOnly={panelMode === "edit" && Boolean(selectedTask) && !canEditSelectedTask}
                       onCancel={closePanel}
                       onSaved={handleTaskSaved}
                     />
+                    </>
                   )}
                   {panelMode === "edit" && selectedTask && renderStatusField(selectedTask)}
                 </>
