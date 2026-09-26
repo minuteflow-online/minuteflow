@@ -1,5 +1,6 @@
-// On-queue / in-progress assigned tasks. Card, status badges, row layout,
-// the Start button, and drag-to-reorder are all copied from
+// On-queue / in-progress / revision-needed assigned tasks. Card, status badges,
+// the R revision badge, row layout, the Start and Rework buttons, and
+// drag-to-reorder are all copied from
 // AssignedTasksWidget.tsx (src/components/AssignedTasksWidget.tsx) and
 // AGENTS.md's Status Badge / Task list item / Button patterns — same
 // classes, same behavior. Drag state (draggedId/dragOverId) is ephemeral UI
@@ -8,6 +9,7 @@
 // mirroring how onSelect/onStart already work.
 import { useState } from "react";
 import type { VAAssignedTask, AssignedTaskStatus } from "../lib/tasks";
+import RevisionBadge from "./RevisionBadge";
 
 interface TasksPanelProps {
   tasks: VAAssignedTask[];
@@ -16,6 +18,8 @@ interface TasksPanelProps {
   onSelect: (task: VAAssignedTask) => void;
   startingId: number | null;
   onStart: (task: VAAssignedTask) => void;
+  reworkingId: number | null;
+  onRework: (task: VAAssignedTask) => void;
   onReorder: (source: VAAssignedTask, target: VAAssignedTask) => void;
 }
 
@@ -33,6 +37,12 @@ function statusBadge(status: AssignedTaskStatus) {
           In Progress
         </span>
       );
+    case "revision_needed":
+      return (
+        <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+          Revision Needed
+        </span>
+      );
     default:
       return null;
   }
@@ -45,6 +55,8 @@ export default function TasksPanel({
   onSelect,
   startingId,
   onStart,
+  reworkingId,
+  onRework,
   onReorder,
 }: TasksPanelProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
@@ -72,6 +84,8 @@ export default function TasksPanel({
             const isSelected = selectedId === task.id;
             const isStarting = startingId === task.id;
             const isFixedPay = detail.fixed_pay_task_id != null;
+            const isReworking = reworkingId === task.id;
+            const rate = detail.fixed_pay_tasks?.rate;
             const isDragTarget = dragOverId === task.id && draggedId !== null && draggedId !== task.id;
 
             return (
@@ -130,15 +144,28 @@ export default function TasksPanel({
                   </span>
 
                   <div className="flex-1 min-w-0">
-                    <button
-                      onClick={() => onSelect(task)}
-                      className="flex w-full items-start justify-between gap-2 text-left cursor-pointer"
-                    >
-                      <span className="text-[13px] font-semibold text-espresso leading-tight">
-                        {detail.task_detail || detail.task_name}
-                      </span>
-                      {statusBadge(task.status)}
-                    </button>
+                    {/* Wraps so the badges drop under the title when the column
+                        is too narrow for both — otherwise a long name gets
+                        squeezed to a letter per line (same fix as web). */}
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <button
+                        onClick={() => onSelect(task)}
+                        className="flex-[1_1_9rem] min-w-0 text-left cursor-pointer"
+                      >
+                        <span className="min-w-0 break-words text-[13px] font-semibold text-espresso leading-tight">
+                          {detail.task_detail || detail.task_name}
+                        </span>
+                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                        <RevisionBadge count={detail.revision_count ?? 0} />
+                        {statusBadge(task.status)}
+                        {rate != null && (
+                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
+                            ${Number(rate).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
 
                     {(detail.account || detail.project) && (
                       <button
@@ -147,6 +174,18 @@ export default function TasksPanel({
                       >
                         {[detail.account, detail.project].filter(Boolean).join(" · ")}
                       </button>
+                    )}
+
+                    {task.status === "revision_needed" && (
+                      <div className="mt-1.5">
+                        <button
+                          onClick={() => onRework(task)}
+                          disabled={isReworking}
+                          className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-[#a85840] cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isReworking ? "Queuing..." : "Rework"}
+                        </button>
+                      </div>
                     )}
 
                     {task.status === "on_queue" && (

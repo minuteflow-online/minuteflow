@@ -13,9 +13,16 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `src/app/(app)/dashboard/page.tsx` and `src/contexts/SessionContext.tsx`,
   including the duplicate-active-log guard and the overnight-log-capping
   safety net (see `src/lib/clock.ts` for the file-by-file mapping).
-- **Assigned Tasks** — shows your `on_queue` / `in_progress` tasks and their
-  per-task to-do list (TD1, TD2, …), same visual pattern as
-  `AssignedTasksWidget.tsx`. **Start** on an `on_queue` task closes whatever
+- **Assigned Tasks** — shows your `on_queue` / `in_progress` /
+  `revision_needed` tasks and their per-task to-do list (TD1, TD2, …), same
+  visual pattern as `AssignedTasksWidget.tsx`. A task sent back for revision
+  shows an amber "Revision Needed" badge, the red **R / R2 / R3** revision
+  count badge, and a **Rework** button that puts it back on your queue (same
+  `setAssignedTaskStatus` write path as Start) so you can Start it again;
+  fixed-pay tasks also show their `$rate` badge. Long task names wrap under
+  the badges instead of being squeezed. **Not ported: Cancel Grab** for
+  fixed-pay tasks (`DELETE /api/fixed-pay-tasks/:id/grab` has no bearer-token
+  or CORS support yet — same treatment the other desktop routes got). **Start** on an `on_queue` task closes whatever
   log is currently open, begins tracking a new one for it, and flips the
   assignee row to `in_progress` — mirrors `handlePlayAssignedTask` +
   `startTask()` in the web dashboard for the standard (non-fixed-pay) case;

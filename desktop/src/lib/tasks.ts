@@ -45,6 +45,12 @@ export interface AssignedTaskDetail {
    *  hourly — a different, instant-log start flow the desktop app doesn't
    *  implement yet (see startTask.ts). */
   fixed_pay_task_id: number | null;
+  /** How many times this task has been sent back for rework — incremented
+   *  server-side when the revision is issued, so the badge is already right
+   *  when it arrives (see AssignedTasksWidget's updateStatus comment). */
+  revision_count: number | null;
+  /** Flat per-completion rate for fixed-pay tasks; null for hourly ones. */
+  fixed_pay_tasks: { rate: number | null } | null;
   task_todos: TaskTodo[];
 }
 
@@ -65,9 +71,12 @@ export interface VAAssignedTask {
 
 const VA_SELECT =
   "id,va_id,status,log_id,notes,assigned_at,updated_at,sort_order," +
-  "assigned_tasks(id,account,project,task_name,task_detail,task_notes,instructions,due_date,archived_at,deleted_at,fixed_pay_task_id,task_todos(id,text,sort_order))";
+  "assigned_tasks(id,account,project,task_name,task_detail,task_notes,instructions,due_date,archived_at,deleted_at,fixed_pay_task_id,revision_count,fixed_pay_tasks(rate),task_todos(id,text,sort_order))";
 
-const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = ["on_queue", "in_progress"];
+// revision_needed has to stay in this list: the tasks panel is the only place
+// a VA can Rework -> Start -> Submit again. Without it a sent-back task just
+// disappears (the mistake AssignedTasksWidget's Jul 14 change made, then fixed).
+const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = ["on_queue", "in_progress", "revision_needed"];
 
 const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
   pending: -1,
@@ -98,7 +107,7 @@ function todoLabel(sortOrder: number): string {
 }
 export { todoLabel };
 
-/** On-queue and in-progress tasks assigned to this VA, ordered the same way
+/** On-queue, in-progress and revision-needed tasks assigned to this VA, ordered the same way
  *  the web dashboard's Assigned Tasks widget shows them. */
 export async function fetchAssignedTasks(userId: string): Promise<VAAssignedTask[]> {
   const statusList = VA_VISIBLE_STATUSES.join(",");
