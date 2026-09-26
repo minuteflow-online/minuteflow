@@ -7,7 +7,7 @@ import MessageBoardPanel from "./components/MessageBoardPanel";
 import NotificationBell from "./components/NotificationBell";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
-import { fetchAssignedTasks, reorderAssignedTasks, type VAAssignedTask } from "./lib/tasks";
+import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, type VAAssignedTask } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 
@@ -32,6 +32,7 @@ export default function App() {
   const [tasksLoading, setTasksLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<VAAssignedTask | null>(null);
   const [startingId, setStartingId] = useState<number | null>(null);
+  const [reworkingId, setReworkingId] = useState<number | null>(null);
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -201,6 +202,33 @@ export default function App() {
     [userId, profile, sessionRow, orgTimezone, startingId, loadTasks]
   );
 
+  // Rework: a task sent back for revision goes back on the queue, from where
+  // Start -> Submit works as normal. Mirrors AssignedTasksWidget's
+  // updateStatus(task, "on_queue") — same single write path as Start. No
+  // optimistic revision_count bump: it's incremented server-side when the
+  // revision is issued, so bumping again would show R2 for a single revision.
+  const handleRework = useCallback(
+    async (task: VAAssignedTask) => {
+      if (!userId || reworkingId != null) return;
+      setReworkingId(task.id);
+      try {
+        const ok = await setAssignedTaskStatus({
+          assignedTaskId: task.assigned_tasks.id,
+          status: "on_queue",
+          vaId: userId,
+        });
+        if (!ok) {
+          alert("Couldn't move this task back to your queue. Try again in a moment.");
+          return;
+        }
+        await loadTasks(userId);
+      } finally {
+        setReworkingId(null);
+      }
+    },
+    [userId, reworkingId, loadTasks]
+  );
+
   // Drag-to-reorder — mirrors AssignedTasksWidget's handleDrop/persistOrder.
   // App owns `tasks`, so the splice + optimistic update happens here; the
   // drag gesture itself (draggedId/dragOverId) is local UI state in
@@ -331,6 +359,8 @@ export default function App() {
             onSelect={setSelectedTask}
             startingId={startingId}
             onStart={handleStart}
+            reworkingId={reworkingId}
+            onRework={handleRework}
             onReorder={handleReorder}
           />
         </div>
