@@ -36,7 +36,8 @@
     },
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "build/icon.ico"
     ],
     "win": {
       "target": "nsis",
