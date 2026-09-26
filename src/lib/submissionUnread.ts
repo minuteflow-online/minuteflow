@@ -3,7 +3,7 @@
  * not something to open and read, and an auto-approval is written under the
  * submitter's own name, so counting them would double every submission.
  */
-const UNREAD_TYPES = new Set(["submission", "revision", "comment"]);
+const UNREAD_TYPES = new Set(["submission", "revision", "comment", "flag"]);
 
 /**
  * Nothing older than this counts as unread. submission_reads starts empty, so

@@ -1446,9 +1446,10 @@ This cannot be undone.`
           )}
         </button>
 
-        {/* Reviewer-only: tasks paused for a clarification before any
-            revision request goes out. */}
-        {canReview && (
+        {/* Tasks a reviewer paused for a clarification before deciding. Shown
+            to everyone who has one: the VA is told about a flag so the
+            submission gets a priority look. */}
+        {(canReview || Object.keys(flaggedTasks).length > 0) && (
           <button
             type="button"
             onClick={() => setFlaggedOnly((v) => !v)}
@@ -1457,7 +1458,7 @@ This cannot be undone.`
                 ? "border-terracotta/30 bg-terracotta-soft text-terracotta"
                 : "border-sand bg-white text-stone hover:border-walnut"
             }`}
-            title="Show only tasks you've flagged to clarify"
+            title="Show only flagged tasks"
           >
             <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M5 21V4m0 0h11l-2 4 2 4H5" strokeLinecap="round" strokeLinejoin="round" />
@@ -2729,7 +2730,7 @@ function ThreadCard({
                 }}
                 disabled={busy}
                 className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
-                title="Hold this for now to clarify something — no revision request, no points lost"
+                title="Flag this for a priority check — the VA is notified; no revision request, no points lost"
               >
                 Flag
               </button>
@@ -2792,10 +2793,10 @@ function ThreadCard({
           </div>
         )}
 
-        {canReview && flagged && (
+        {flagged && (
           <span
             className="flex shrink-0 items-center gap-1 rounded-full border border-terracotta/30 bg-terracotta-soft px-2 py-[2px] text-[10px] font-semibold text-terracotta"
-            title="You flagged this to clarify before deciding"
+            title="Flagged for a priority check — the reviewer has a question to settle before deciding"
           >
             <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M5 21V4m0 0h11l-2 4 2 4H5" strokeLinecap="round" strokeLinejoin="round" />
@@ -2867,7 +2868,7 @@ function ThreadCard({
                 autoFocus
                 placeholder={
                   noteMode === "flag"
-                    ? "Only reviewers see this. No revision request is sent and no points are affected."
+                    ? "The VA is notified and asked to check this first. No revision request is sent and no points are affected."
                     : "Anything to add — this is appended, nothing is overwritten"
                 }
                 className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"

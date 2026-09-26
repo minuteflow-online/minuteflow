@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
-import { canEmptySubmissionTrash, canReviewSubmissions, REVIEWER_ONLY_TYPES } from "@/lib/submissions";
+import { canEmptySubmissionTrash, canReviewSubmissions } from "@/lib/submissions";
 import { isUnreadCandidate } from "@/lib/submissionUnread";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -508,13 +508,6 @@ export async function GET(request: Request) {
     rows = rows.filter((r) => r.assigned_tasks?.projects?.kind === scope);
   }
 
-  // Flags are a reviewer's private marker; everyone else's view of the thread
-  // never contains them.
-  const viewerCanReview = canReviewSubmissions(profile);
-  if (!viewerCanReview) {
-    rows = rows.filter((r) => !REVIEWER_ONLY_TYPES.includes(r.message_type as string));
-  }
-
   const submissionIds = rows.map((r) => r.id);
   // A log belongs to round N when N revisions had been issued before it
   // started — the same rule the R badge uses, so the timing and the label can
@@ -541,8 +534,7 @@ export async function GET(request: Request) {
       : loadExpectedWork(admin, { isAdminEquivalent, va, scope, projectId, userId: user.id }),
     loadUnreadByTask(admin, rows, user.id),
   ]);
-  const { roundDurations, reviewState } = roundData;
-  const flaggedTasks = viewerCanReview ? roundData.flaggedTasks : {};
+  const { roundDurations, reviewState, flaggedTasks } = roundData;
 
   const submissions = rows.map((row) => {
     const task = row.assigned_tasks;

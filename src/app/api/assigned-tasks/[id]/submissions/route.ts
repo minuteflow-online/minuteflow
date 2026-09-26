@@ -6,7 +6,6 @@ import {
   submissionSummary,
   submissionMeetsBar,
   MIN_SUBMISSION_WORDS,
-  REVIEWER_ONLY_TYPES,
   type SubmissionMessageType,
 } from "@/lib/submissions";
 import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
@@ -200,15 +199,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  // Flags are a reviewer's private working marker — the VA never sees them.
-  const visible = canReviewSubmissions(profile)
-    ? (data ?? [])
-    : (data ?? []).filter(
-        (row) => !REVIEWER_ONLY_TYPES.includes((row as { message_type: string }).message_type)
-      );
-
   return Response.json({
-    submissions: await withAttachments(admin, visible as never),
+    submissions: await withAttachments(admin, (data ?? []) as never),
   });
 }
 
@@ -609,6 +601,35 @@ export async function POST(request: Request, { params }: RouteContext) {
         senderId: user.id,
         content: `${reviewer} requested a revision on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
         telegram: `🔁 <b>${esc(reviewer)}</b> requested a revision on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
+        topic: "submissions",
+        assignedTaskId: Number(id),
+        submissionId: submission.id as number,
+      });
+    }
+  }
+
+  // A flag tells the VA their submission needs a look first — the reviewer has
+  // a question that must be settled before any decision, and wants it treated as
+  // a priority. Same audience and shape as a revision request; it is a heads-up,
+  // not a mark against them, so the wording says so.
+  if (messageType === "flag") {
+    const { data: fProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
+    const flagger = fProf?.full_name || fProf?.username || "A reviewer";
+    const { data: assignees } = await admin
+      .from("assigned_task_assignees")
+      .select("va_id")
+      .eq("assigned_task_id", id);
+    const targets = new Set<string>();
+    for (const a of assignees ?? []) if (a.va_id && a.va_id !== user.id) targets.add(a.va_id as string);
+    const snippet = message && message.length > 160 ? `${message.slice(0, 160)}…` : (message || "");
+    for (const target of targets) {
+      await notifyOne(admin, {
+        targetUserId: target,
+        senderId: user.id,
+        content: `${flagger} flagged “${task.task_name ?? "a task"}” for a priority check — no revision requested${snippet ? `: ${snippet}` : ""}`,
+        telegram: `🚩 <b>${esc(flagger)}</b> flagged <b>${esc(task.task_name ?? "a task")}</b> for a priority check. No revision has been requested.${snippet ? `
+
+${esc(snippet)}` : ""}`,
         topic: "submissions",
         assignedTaskId: Number(id),
         submissionId: submission.id as number,
