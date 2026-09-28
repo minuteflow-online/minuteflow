@@ -24,7 +24,7 @@ type Comment = { id: number; body: string; created_at: string; author?: string; 
 type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
 type Notif = { id: number; content: string; read: boolean; created_at: string; kind?: string | null };
 type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
-type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string };
+type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string; archived: boolean };
 type DM = { id: number; body: string; created_at: string; edited_at?: string | null; mine: boolean; sender_name: string; sender_id?: string | null; attachments?: Attachment[] };
 
 // ── Admin (moderator-only oversight of everyone's Personal conversations) ──
@@ -57,11 +57,41 @@ const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
 // never part of it.
 const URL_TRAILING_PUNCTUATION = /[.,!?;:)\]"']+$/;
 
-/** Turns any bare https:// URL sitting inside typed text into a real link — for the message someone just types, as opposed to the dedicated Link field. */
-function linkifyText(text: string): ReactNode {
+function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+/**
+ * Turns "@Full Name", "@everyone" or "@all" into a highlighted span —
+ * matched against actual team member names, the same way notifyMentions.ts
+ * parses the same text server-side, so a stray "@" in ordinary text is never
+ * mistaken for a mention.
+ */
+function highlightMentions(text: string, knownNames: string[]): ReactNode {
+  if (knownNames.length === 0) return text;
+  const names = Array.from(new Set([...knownNames, "everyone", "all"]));
+  const pattern = names.slice().sort((a, b) => b.length - a.length).map(escapeRegex).join("|");
+  const re = new RegExp(`@(${pattern})\\b`, "gi");
+  const parts = text.split(re);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <span key={i} className="text-slate-blue font-semibold">{`@${part}`}</span>
+    ) : (
+      part
+    )
+  );
+}
+
+/**
+ * Turns any bare https:// URL sitting inside typed text into a real link —
+ * for the message someone just types, as opposed to the dedicated Link field
+ * — and any @mention of a real team member into a highlighted span.
+ * `mentionNames` is optional so callers that don't have a member list handy
+ * still get URL-linkifying as before.
+ */
+function linkifyText(text: string, mentionNames: string[] = []): ReactNode {
   const parts = text.split(URL_PATTERN);
   return parts.map((part, i) => {
-    if (i % 2 === 0) return part;
+    if (i % 2 === 0) return <span key={i}>{highlightMentions(part, mentionNames)}</span>;
     const trailingMatch = part.match(URL_TRAILING_PUNCTUATION);
     const trailing = trailingMatch ? trailingMatch[0] : "";
     const url = trailing ? part.slice(0, -trailing.length) : part;
@@ -195,6 +225,16 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
   // Editing one of your own DMs in place — same shape as editing a comment.
   const [editingDm, setEditingDm] = useState<number | null>(null);
   const [editDmText, setEditDmText] = useState("");
+  // Deleting a single DM (sender-only) or the whole conversation (any member)
+  // — id of whichever one is mid-request, so its button can show busy and
+  // nothing else double-fires while it's in flight.
+  const [busyDm, setBusyDm] = useState<number | null>(null);
+  const [busyConv, setBusyConv] = useState<string | null>(null);
+  // Archiving is per-viewer: it hides a conversation from your own list, not
+  // your conversation partner's. Loaded lazily, same idea as General's
+  // archived/trash lists.
+  const [viewingArchivedConvs, setViewingArchivedConvs] = useState(false);
+  const [archivedConvs, setArchivedConvs] = useState<Conversation[]>([]);
 
   // ── Admin (moderator-only, read-only) ───────────────────────────────────────
   const [adminConvs, setAdminConvs] = useState<AdminConvListItem[]>([]);
@@ -235,6 +275,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
 
   const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const memberById = useMemo(() => new Map(allMembers.map((m) => [m.id, m])), [allMembers]);
+  // Real team member names, for telling an actual @mention apart from a
+  // stray "@" in ordinary text when highlighting rendered messages.
+  const mentionNames = useMemo(() => allMembers.map(nameOf), [allMembers]);
 
   /** Everyone who has said something in a topic: its author, then repliers. */
   const participantsOf = (t: Thread) => {
@@ -398,6 +441,17 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
     return (towardEveryone ? [EVERYONE_MENTION, ...list] : list).slice(0, 6);
   }, [team, mentionQuery]);
 
+  // Same idea as mentionMatches, but scoped to whoever is actually in the
+  // open conversation rather than the whole team — @everyone here only means
+  // everyone in this chat (see notifyMentions' restrictToIds).
+  const dmMentionMatches = useMemo(() => {
+    const q = mentionQuery.trim().toLowerCase();
+    const convMembers = (activeConv?.members ?? []).map((m) => memberById.get(m.id) ?? asMember(m.id, m.name, null));
+    const list = q ? convMembers.filter((m) => nameOf(m).toLowerCase().includes(q)) : convMembers;
+    const towardEveryone = !q || "everyone".startsWith(q) || "all".startsWith(q);
+    return (towardEveryone ? [EVERYONE_MENTION, ...list] : list).slice(0, 6);
+  }, [activeConv, memberById, mentionQuery]);
+
   const createTopic = useCallback(async () => {
     if (!topicTitle.trim() || (!topicBody.trim() && !topicComposer.hasAttachment)) return;
     setSending(true);
@@ -465,8 +519,29 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
             .catch(() => ({})),
         ]);
         if (cancelled) return;
+        // /api/project-messages returns each post's replies under
+        // project_message_comments (the raw column name — ProjectMessageBoard,
+        // the other consumer of this same route, reads it as-is) rather than
+        // under `comments`, which is what this Thread type and every render
+        // below it expects. /api/projects/messages-overview already does this
+        // same rename server-side for fromProjects; general topics need it
+        // done here instead, or a reply is only ever visible for the one
+        // render right after posting it, before the next refetch drops it.
+        // Each raw comment's author arrives nested (author: {full_name,
+        // username}, matching authorSelect) rather than flattened to a
+        // string the way this Comment type expects — same shape
+        // messages-overview's own server-side transform above starts from.
+        type RawComment = Omit<Comment, "author"> & { author?: { full_name?: string | null; username?: string | null } | null };
+        type RawGeneralThread = Omit<Thread, "comments" | "comment_count"> & { project_message_comments?: RawComment[] };
+        const generalThreads: Thread[] = ((general.messages ?? []) as RawGeneralThread[]).map((m) => {
+          const comments: Comment[] = (m.project_message_comments ?? []).map((c) => ({
+            ...c,
+            author: c.author?.full_name || c.author?.username || "Someone",
+          }));
+          return { ...m, comments, comment_count: comments.length };
+        });
         const merged = [
-          ...((general.messages ?? []) as Thread[]),
+          ...generalThreads,
           ...((fromProjects.messages ?? []) as Thread[]),
         ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         setThreads(merged);
@@ -502,6 +577,11 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
     setConvs((d.conversations ?? []) as Conversation[]);
   }, []);
   useEffect(() => { void loadConvs(); }, [loadConvs, reloadKey]);
+  const loadArchivedConvs = useCallback(async () => {
+    const d = await fetch("/api/conversations?archived=1", { cache: "no-store" }).then((r) => r.json()).catch(() => ({}));
+    setArchivedConvs((d.conversations ?? []) as Conversation[]);
+  }, []);
+  useEffect(() => { void loadArchivedConvs(); }, [loadArchivedConvs, reloadKey]);
   useEffect(() => {
     if (tab !== "personal") return;
     const t = setInterval(() => void loadConvs(), 15000);
@@ -654,6 +734,55 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
     }
   }, [activeConv, editDmText]);
 
+  // Soft delete: the route stamps deleted_at, so the message leaves the
+  // thread without touching anyone else's copy of the conversation.
+  // Sender-only, same rule as editing it.
+  const deleteDm = useCallback(async (messageId: number) => {
+    if (!activeConv) return;
+    if (!confirm("Delete this message? This can't be undone from here.")) return;
+    setBusyDm(messageId);
+    try {
+      const r = await fetch(`/api/conversations/${activeConv.id}/messages?messageId=${messageId}`, { method: "DELETE" });
+      if (r.ok) setDms((prev) => prev.filter((m) => m.id !== messageId));
+    } finally {
+      setBusyDm(null);
+    }
+  }, [activeConv]);
+
+  // Archiving is per-viewer — it only ever changes what shows in *your* list.
+  const setConvArchived = useCallback(async (c: Conversation, next: boolean) => {
+    setBusyConv(c.id);
+    try {
+      const r = await fetch(`/api/conversations/${c.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: next }),
+      });
+      if (r.ok) {
+        setActiveConv(null);
+        await Promise.all([loadConvs(), loadArchivedConvs()]);
+      }
+    } finally {
+      setBusyConv(null);
+    }
+  }, [loadConvs, loadArchivedConvs]);
+
+  // Removes the whole conversation for every member, not just you — there's
+  // no single "owner" of a DM the way a General topic has an author.
+  const deleteConv = useCallback(async (c: Conversation) => {
+    if (!confirm(`Delete this conversation${c.is_group ? "" : ` with ${c.title}`}? It disappears for everyone in it. This can't be undone from here.`)) return;
+    setBusyConv(c.id);
+    try {
+      const r = await fetch(`/api/conversations/${c.id}`, { method: "DELETE" });
+      if (r.ok) {
+        setActiveConv(null);
+        await Promise.all([loadConvs(), loadArchivedConvs()]);
+      }
+    } finally {
+      setBusyConv(null);
+    }
+  }, [loadConvs, loadArchivedConvs]);
+
   const startChat = useCallback(async () => {
     const ids = Array.from(picked);
     if (ids.length === 0) return;
@@ -729,7 +858,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
           {canModerate && (
             <button
               type="button"
-              onClick={() => { setTab("admin"); setActiveThread(null); setActiveConv(null); setActiveAdminConv(null); setComposingChat(false); }}
+              onClick={() => { setTab("admin"); setActiveThread(null); setActiveConv(null); setActiveAdminConv(null); setComposingChat(false); setViewingArchivedConvs(false); }}
               title="Admin \u2014 review private conversations"
               className={`rounded-md px-2 py-1 text-[10px] font-semibold transition-colors ${tab === "admin" ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"}`}
             >
@@ -753,7 +882,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
           ["personal", "Personal"],
           ["comments", "Comments"],
         ] as [Tab, string][]).map(([k, label]) => (
-          <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setActiveAdminConv(null); setComposingChat(false); }}
+          <button key={k} type="button" onClick={() => { setTab(k); setActiveThread(null); setActiveConv(null); setActiveAdminConv(null); setComposingChat(false); setViewingArchivedConvs(false); }}
             className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors ${tab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"}`}>
             {label}
             {k === "general" && newGeneralCount > 0 && <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] px-1 rounded-full bg-terracotta text-white text-[8px] align-middle animate-pulse">{newGeneralCount}</span>}
@@ -837,7 +966,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                 ) : (
                   <>
                     <p className="text-[12px] font-bold text-espresso">{activeThread.title || "Untitled"}</p>
-                    {activeThread.body && <p className="mt-1 text-[11px] text-espresso whitespace-pre-wrap">{linkifyText(activeThread.body)}</p>}
+                    {activeThread.body && <p className="mt-1 text-[11px] text-espresso whitespace-pre-wrap">{linkifyText(activeThread.body, mentionNames)}</p>}
                     <AttachmentList attachments={activeThread.attachments} />
                     <p className="mt-1 text-[10px] text-bark">
                       {projectName.get(activeThread.project_id) ?? "Project"} · {ago(activeThread.created_at)} ago
@@ -879,7 +1008,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                       </div>
                     ) : (
                       <>
-                        <p className="text-[11px] text-espresso whitespace-pre-wrap">{linkifyText(c.body)}</p>
+                        <p className="text-[11px] text-espresso whitespace-pre-wrap">{linkifyText(c.body, mentionNames)}</p>
                         <AttachmentList attachments={c.attachments} />
                         <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-bark">
                           <span>
@@ -1000,7 +1129,15 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                   {topicTitles.map((t) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
-                  {archived.length > 0 && <option value="__archived">Archived ({archived.length})</option>}
+                  {/* Stays in the list while it's the active selection even at
+                      zero items — otherwise unarchiving the last one removes
+                      this option out from under the <select>'s current value,
+                      and the browser silently falls back to displaying "All
+                      topics" while the panel is actually still filtered to
+                      __archived, stuck showing "Nothing archived." */}
+                  {(archived.length > 0 || projectFilter === "__archived") && (
+                    <option value="__archived">Archived ({archived.length})</option>
+                  )}
                   {canSeeTrash && <option value="__trash">Trash ({trashed.length})</option>}
                 </select>
               </div>
@@ -1099,7 +1236,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                       <Avatar member={asMember(m.sender_id, m.sender_name, adminMemberById.get(m.sender_id)?.avatar_url ?? null)} size={20} />
                       <div className="max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] bg-parchment text-espresso">
                         <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>
-                        <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
+                        <p className="whitespace-pre-wrap">{linkifyText(m.body, mentionNames)}</p>
                         <AttachmentList attachments={m.attachments} />
                         <p className="mt-0.5 text-[9px] text-bark">
                           {ago(m.created_at)} ago
@@ -1152,9 +1289,30 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
           /* ── Personal ── */
           activeConv ? (
             <div className="flex flex-col gap-2 h-full">
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={() => { setActiveConv(null); void loadConvs(); }} className="text-[10px] font-semibold text-slate-blue hover:underline">← Back</button>
-                <span className="text-[12px] font-bold text-espresso truncate">{activeConv.title}</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2 min-w-0">
+                  <button type="button" onClick={() => { setActiveConv(null); setViewingArchivedConvs(activeConv.archived); void loadConvs(); }} className="shrink-0 text-[10px] font-semibold text-slate-blue hover:underline">← Back</button>
+                  <span className="text-[12px] font-bold text-espresso truncate">{activeConv.title}</span>
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void setConvArchived(activeConv, !activeConv.archived)}
+                    disabled={busyConv === activeConv.id}
+                    title={activeConv.archived ? "Bring this back into your active list." : "File this out of your list. It stays readable in Archived."}
+                    className="text-[10px] font-semibold text-bark hover:text-espresso transition-colors disabled:opacity-50"
+                  >
+                    {activeConv.archived ? "Unarchive" : "Archive"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteConv(activeConv)}
+                    disabled={busyConv === activeConv.id}
+                    className="text-[10px] font-semibold text-bark hover:text-terracotta transition-colors disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </span>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-0.5">
                 {dms.length === 0 && <p className="text-[11px] text-walnut">No messages yet — say hi.</p>}
@@ -1190,7 +1348,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                         </div>
                       ) : (
                         <>
-                          <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
+                          <p className="whitespace-pre-wrap">{linkifyText(m.body, mentionNames)}</p>
                           <AttachmentList attachments={m.attachments} />
                           <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-bark">
                             <span>
@@ -1198,16 +1356,26 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                               {m.edited_at && <span className="italic text-stone"> · edited</span>}
                             </span>
                             {m.mine && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingDm(m.id);
-                                  setEditDmText(m.body);
-                                }}
-                                className="font-semibold text-slate-blue hover:underline"
-                              >
-                                Edit
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingDm(m.id);
+                                    setEditDmText(m.body);
+                                  }}
+                                  className="font-semibold text-slate-blue hover:underline"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteDm(m.id)}
+                                  disabled={busyDm === m.id}
+                                  className="font-semibold text-bark hover:text-terracotta transition-colors disabled:opacity-50"
+                                >
+                                  Delete
+                                </button>
+                              </>
                             )}
                           </p>
                         </>
@@ -1218,8 +1386,29 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                 <div ref={dmEndRef} />
               </div>
               <AttachmentPicker composer={dmComposer} disabled={sending} />
-              <div className="flex items-end gap-1.5">
-                <textarea value={dmText} onChange={(e) => setDmText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDm(); } }} rows={1} placeholder="Message…" className={`${input} resize-none flex-1`} />
+              <div className="relative flex items-end gap-1.5">
+                {mentionFor === "dm" && dmMentionMatches.length > 0 && (
+                  <div className="absolute bottom-full mb-1 left-0 right-0 z-10 rounded-lg border border-sand bg-white shadow-sm overflow-hidden">
+                    {dmMentionMatches.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => applyMention(dmText, m, setDmText)}
+                        className="w-full text-left px-2.5 py-1.5 text-[11px] text-espresso hover:bg-cream transition-colors"
+                      >
+                        {nameOf(m)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <textarea
+                  value={dmText}
+                  onChange={(e) => { setDmText(e.target.value); onMentionInput(e.target.value, "dm"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && mentionFor !== "dm") { e.preventDefault(); void sendDm(); } }}
+                  rows={1}
+                  placeholder="Message… (@name to tag)"
+                  className={`${input} resize-none flex-1`}
+                />
                 <button type="button" onClick={() => void sendDm()} disabled={sending || (!dmText.trim() && !dmComposer.hasAttachment)} className="px-2.5 py-1.5 rounded-lg bg-amber-soft text-amber text-[11px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50 shrink-0">Send</button>
               </div>
             </div>
@@ -1238,12 +1427,60 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
               {picked.size > 1 && <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} placeholder="Group name (optional)" className={input} />}
               <button type="button" onClick={() => void startChat()} disabled={sending || picked.size === 0} className="w-full px-3 py-1.5 rounded-lg bg-amber-soft text-amber text-[12px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50">{picked.size > 1 ? "Start group chat" : "Start chat"}</button>
             </div>
+          ) : viewingArchivedConvs ? (
+            <div className="space-y-2">
+              <button type="button" onClick={() => setViewingArchivedConvs(false)} className="text-[10px] font-semibold text-slate-blue hover:underline">← Back</button>
+              {archivedConvs.length === 0 ? (
+                <p className="text-[12px] text-walnut px-1">Nothing archived.</p>
+              ) : (
+                archivedConvs.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => void openConv(c)}
+                    className="w-full text-left rounded-lg border border-sand bg-parchment/30 px-2.5 py-2 hover:bg-cream transition-colors"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className="flex -space-x-1 shrink-0">
+                        {c.members
+                          .filter((m) => m.id !== currentUserId)
+                          .slice(0, 3)
+                          .map((m) => (
+                            <Avatar key={m.id} member={memberById.get(m.id)} name={m.name} size={18} />
+                          ))}
+                      </span>
+                      <span className="text-[12px] font-semibold text-espresso truncate">{c.is_group ? "👥 " : ""}{c.title}</span>
+                    </span>
+                    {c.last_message && <span className="block text-[11px] text-walnut truncate">{c.last_message.mine ? "You: " : ""}{c.last_message.body}</span>}
+                    <span className="block text-[10px] text-bark truncate">archived</span>
+                  </button>
+                ))
+              )}
+            </div>
           ) : (
             <div className="space-y-2">
-              <button type="button" onClick={() => setComposingChat(true)} className="w-full rounded-lg border border-dashed border-sand py-1.5 text-[11px] font-semibold text-walnut hover:bg-cream transition-colors">+ New message</button>
+              <div className="flex items-center gap-1.5">
+                <button type="button" onClick={() => setComposingChat(true)} className="flex-1 rounded-lg border border-dashed border-sand py-1.5 text-[11px] font-semibold text-walnut hover:bg-cream transition-colors">+ New message</button>
+                {archivedConvs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setViewingArchivedConvs(true)}
+                    className="shrink-0 px-2.5 py-1.5 rounded-lg bg-stone/10 text-stone text-[11px] font-semibold hover:bg-stone/20 transition-colors"
+                  >
+                    Archived ({archivedConvs.length})
+                  </button>
+                )}
+              </div>
               {convs.length === 0 ? <p className="text-[12px] text-walnut px-1">No conversations yet.</p> : (
                 convs.map((c) => (
-                  <button key={c.id} type="button" onClick={() => void openConv(c)} className="w-full text-left rounded-lg border border-sand bg-white px-2.5 py-2 hover:bg-cream transition-colors">
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => void openConv(c)}
+                    className={`w-full text-left rounded-lg border px-2.5 py-2 transition-colors ${
+                      c.unread > 0 ? "border-terracotta/30 bg-terracotta-soft/30 hover:bg-terracotta-soft/50" : "border-sand bg-white hover:bg-cream"
+                    }`}
+                  >
                     <span className="flex items-center justify-between gap-2">
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="flex -space-x-1 shrink-0">
@@ -1258,7 +1495,11 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                       </span>
                       {c.unread > 0 && <span className="shrink-0 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-terracotta text-white text-[9px]">{c.unread}</span>}
                     </span>
-                    {c.last_message && <span className="block text-[11px] text-walnut truncate">{c.last_message.mine ? "You: " : ""}{c.last_message.body}</span>}
+                    {c.last_message && (
+                      <span className={`block text-[11px] truncate ${c.unread > 0 ? "text-espresso font-medium" : "text-walnut"}`}>
+                        {c.last_message.mine ? "You: " : ""}{c.last_message.body}
+                      </span>
+                    )}
                     {c.last_message && <span className="block text-[10px] text-bark">{ago(c.last_message.created_at)} ago</span>}
                   </button>
                 ))

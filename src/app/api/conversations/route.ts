@@ -15,28 +15,35 @@ async function requireUser(request: Request) {
 
 /**
  * GET /api/conversations
+ * GET /api/conversations?archived=1
  * The user's DM + group conversations, newest activity first, each with its
  * members, last message, and unread count (messages after the user's
- * last_read_at that they didn't send).
+ * last_read_at that they didn't send). Deleted conversations never show.
+ * Archiving is per-viewer (conversation_members.archived_at) — plain GET
+ * returns only what isn't archived for you; ?archived=1 returns only what is.
  */
 export async function GET(request: Request) {
   const auth = await requireUser(request);
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const supabase = serviceClient();
+  const { searchParams } = new URL(request.url);
+  const wantArchived = searchParams.get("archived") === "1";
 
   const { data: mine } = await supabase
     .from("conversation_members")
-    .select("conversation_id, last_read_at")
+    .select("conversation_id, last_read_at, archived_at")
     .eq("user_id", user.id);
-  const convIds = (mine ?? []).map((m) => m.conversation_id as string);
+  const convIds = (mine ?? [])
+    .filter((m) => (wantArchived ? m.archived_at !== null : m.archived_at === null))
+    .map((m) => m.conversation_id as string);
   const lastReadBy = new Map<string, string | null>((mine ?? []).map((m) => [m.conversation_id as string, m.last_read_at as string | null]));
   if (convIds.length === 0) return Response.json({ conversations: [] });
 
   const [{ data: convs }, { data: allMembers }, { data: msgs }] = await Promise.all([
-    supabase.from("conversations").select("id, is_group, title, created_by, updated_at").in("id", convIds),
+    supabase.from("conversations").select("id, is_group, title, created_by, updated_at").in("id", convIds).is("deleted_at", null),
     supabase.from("conversation_members").select("conversation_id, user_id").in("conversation_id", convIds),
-    supabase.from("direct_messages").select("conversation_id, sender_id, body, created_at").in("conversation_id", convIds).order("created_at", { ascending: false }).limit(2000),
+    supabase.from("direct_messages").select("conversation_id, sender_id, body, created_at").in("conversation_id", convIds).is("deleted_at", null).order("created_at", { ascending: false }).limit(2000),
   ]);
 
   // Resolve member profile names.
@@ -63,6 +70,8 @@ export async function GET(request: Request) {
     if (m.sender_id !== user.id && (!lr || (m.created_at as string) > lr)) unread.set(cid, (unread.get(cid) ?? 0) + 1);
   }
 
+  const archivedByConv = new Map<string, boolean>((mine ?? []).map((m) => [m.conversation_id as string, m.archived_at !== null]));
+
   const conversations = (convs ?? [])
     .map((c) => {
       const members = (membersByConv.get(c.id as string) ?? []).filter((m) => m.id !== user.id);
@@ -76,6 +85,11 @@ export async function GET(request: Request) {
         last_message: lm ? { body: lm.body, created_at: lm.created_at, mine: lm.sender_id === user.id } : null,
         unread: unread.get(c.id as string) ?? 0,
         updated_at: c.updated_at as string,
+        // Reported straight from the data rather than inferred client-side —
+        // this is what tells the UI whether to offer "Archive" or "Unarchive"
+        // for whichever conversation happens to be open, no matter how it got
+        // there (the active list, the archived list, or a freshly started chat).
+        archived: archivedByConv.get(c.id as string) ?? false,
       };
     })
     .sort((a, b) => (b.last_message?.created_at ?? b.updated_at).localeCompare(a.last_message?.created_at ?? a.updated_at));
@@ -109,10 +123,14 @@ export async function POST(request: Request) {
       const { data: pairs } = await supabase.from("conversation_members").select("conversation_id, user_id").in("conversation_id", ids);
       const byConv = new Map<string, Set<string>>();
       for (const p of pairs ?? []) { const s = byConv.get(p.conversation_id as string) ?? new Set(); s.add(p.user_id as string); byConv.set(p.conversation_id as string, s); }
-      const { data: groupFlags } = await supabase.from("conversations").select("id, is_group").in("id", ids);
+      // Excludes deleted_at so a deleted 1:1 doesn't keep getting "reused" —
+      // without this, starting a new chat with someone you'd deleted a
+      // conversation with would silently resurrect the dead conversation_id,
+      // which every other route filters out, making it unopenable.
+      const { data: groupFlags } = await supabase.from("conversations").select("id, is_group").in("id", ids).is("deleted_at", null);
       const isG = new Map((groupFlags ?? []).map((g) => [g.id as string, g.is_group as boolean]));
       for (const [cid, set] of byConv) {
-        if (!isG.get(cid) && set.size === 2 && set.has(user.id) && set.has(others[0])) {
+        if (isG.has(cid) && !isG.get(cid) && set.size === 2 && set.has(user.id) && set.has(others[0])) {
           return Response.json({ conversation_id: cid, existing: true });
         }
       }

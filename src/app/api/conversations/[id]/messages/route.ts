@@ -3,6 +3,7 @@ import { serviceClient } from "@/lib/projectAccess";
 import { notifyOne } from "@/lib/notifyOne";
 import { esc } from "@/lib/telegram";
 import { fetchAttachmentsByTargets } from "@/lib/messageAttachments";
+import { notifyMentions } from "@/lib/notifyMentions";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     .from("direct_messages")
     .select("id, sender_id, body, created_at, edited_at")
     .eq("conversation_id", id)
+    .is("deleted_at", null)
     .order("created_at", { ascending: true })
     .limit(500);
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -105,10 +107,24 @@ export async function POST(request: Request, { params }: RouteContext) {
   const senderName = me?.full_name || me?.username || "Someone";
   const where = conv?.is_group && conv?.title ? ` in ${conv.title}` : "";
   const snippet = body.length > 160 ? `${body.slice(0, 160)}…` : body;
-  for (const m of members ?? []) {
-    if ((m.user_id as string) === user.id) continue;
+  const otherIds = (members ?? []).map((m) => m.user_id as string).filter((uid) => uid !== user.id);
+
+  // @name (or @everyone/@all) inside a DM only ever reaches this
+  // conversation's own members — never the whole company — via restrictToIds.
+  const mentionedIds = await notifyMentions({
+    text: body,
+    senderId: user.id,
+    senderName,
+    context: conv?.is_group && conv?.title ? conv.title : "a direct message",
+    restrictToIds: otherIds,
+  });
+
+  for (const uid of otherIds) {
+    // Anyone @mentioned just got a more specific "mentioned you" notification
+    // above — this generic "sent you a message" one would just be a duplicate.
+    if (mentionedIds.has(uid)) continue;
     await notifyOne(admin, {
-      targetUserId: m.user_id as string,
+      targetUserId: uid,
       senderId: user.id,
       content: `${senderName} sent you a message${where}`,
       telegram: `💬 <b>${esc(senderName)}</b>${where ? ` <i>${esc(where.trim())}</i>` : ""}\n\n${esc(snippet)}`,
@@ -158,4 +174,35 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     .single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
   return Response.json({ message: data });
+}
+
+/**
+ * DELETE /api/conversations/[id]/messages?messageId=<id>
+ * Soft delete (deleted_at), sender-only — same rule as editing a DM.
+ */
+export async function DELETE(request: Request, { params }: RouteContext) {
+  const { id } = await params;
+  const auth = await requireMember(request, id);
+  if ("error" in auth) return auth.error;
+  const { user, admin } = auth;
+
+  const { searchParams } = new URL(request.url);
+  const messageId = searchParams.get("messageId");
+  if (!messageId) return Response.json({ error: "messageId is required" }, { status: 400 });
+
+  const { data: existing } = await admin
+    .from("direct_messages")
+    .select("sender_id")
+    .eq("id", messageId)
+    .eq("conversation_id", id)
+    .maybeSingle();
+  if (!existing) return Response.json({ error: "Message not found" }, { status: 404 });
+  if (existing.sender_id !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
+
+  const { error } = await admin
+    .from("direct_messages")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", messageId);
+  if (error) return Response.json({ error: error.message }, { status: 400 });
+  return Response.json({ ok: true });
 }
