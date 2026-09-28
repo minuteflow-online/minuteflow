@@ -25,23 +25,38 @@ const EVERYONE_RE = /@(everyone|all)\b/i;
  * a wider match. The sender is never notified about their own mention (named
  * or broadcast). Failures are swallowed so a post/reply never fails just
  * because a notification could not be delivered.
+ *
+ * `restrictToIds`, when given, narrows both who @everyone/@all reaches and
+ * who a named mention can resolve to — e.g. a DM's conversation members, so
+ * "@everyone" inside a private chat pings that chat, not the whole company.
+ * Omit it for a team-wide surface like General, where every active member is
+ * a valid target.
+ *
+ * Returns the ids of everyone actually notified, so a caller that also sends
+ * its own "new message" notification can skip it for anyone who already got
+ * a more specific "mentioned you" one.
  */
 export async function notifyMentions(opts: {
   text: string;
   senderId: string;
   senderName: string;
   context: string;
-}): Promise<void> {
-  const { text, senderId, senderName, context } = opts;
-  if (!text?.trim()) return;
+  restrictToIds?: string[];
+}): Promise<Set<string>> {
+  const { text, senderId, senderName, context, restrictToIds } = opts;
+  if (!text?.trim()) return new Set();
 
   const supabase = serviceClient();
   const { data: profiles } = await supabase
     .from("profiles")
     .select("id, full_name, username, telegram_chat_id")
     .eq("is_active", true);
-  const members = (profiles ?? []) as Array<{ id: string; full_name: string | null; username: string | null; telegram_chat_id: number | string | null }>;
-  if (members.length === 0) return;
+  let members = (profiles ?? []) as Array<{ id: string; full_name: string | null; username: string | null; telegram_chat_id: number | string | null }>;
+  if (restrictToIds) {
+    const allow = new Set(restrictToIds);
+    members = members.filter((p) => allow.has(p.id));
+  }
+  if (members.length === 0) return new Set();
 
   const mentioned = new Map<string, (typeof members)[number]>();
   if (EVERYONE_RE.test(text)) {
@@ -65,7 +80,7 @@ export async function notifyMentions(opts: {
       if (prof && prof.id !== senderId) mentioned.set(prof.id, prof);
     }
   }
-  if (mentioned.size === 0) return;
+  if (mentioned.size === 0) return new Set();
 
   const snippet = text.length > 160 ? `${text.slice(0, 160)}…` : text;
 
@@ -88,4 +103,6 @@ export async function notifyMentions(opts: {
       });
     } catch { /* ignore */ }
   }
+
+  return new Set(mentioned.keys());
 }
