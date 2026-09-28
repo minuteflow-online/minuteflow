@@ -22,6 +22,13 @@ import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPref
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import { isUnreadCandidate } from "@/lib/submissionUnread";
+import {
+  localDay,
+  deadlineFor as sharedDeadlineFor,
+  isLate as sharedIsLate,
+  timelinessOf as sharedTimelinessOf,
+  type Timeliness,
+} from "@/lib/onTime";
 
 type FeedItem = {
   id: number;
@@ -200,11 +207,6 @@ function formatDuration(ms: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-/** Local YYYY-MM-DD for a timestamp, in the org's timezone. */
-function localDay(iso: string, timezone: string) {
-  return new Date(iso).toLocaleDateString("en-CA", { timeZone: timezone });
-}
-
 /**
  * Applies a filter that describes submitted work — "from this VA", "in this
  * date range" — by deciding which THREADS qualify (does the task have a
@@ -343,73 +345,26 @@ function DateRangeChip({
  * can't be late, so it gets no verdict rather than a wrong one.
  */
 function deadlineFor(task: FeedItem["task"], timezone: string): string | null {
-  if (!task) return null;
-  if (task.due_date) {
-    return `${task.due_date} ${(task.due_time ?? "23:59:59").padEnd(8, ":00").slice(0, 8)}`;
-  }
-  if (task.end_time) {
-    return `${localDay(task.end_time, timezone)} ${new Date(task.end_time).toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
-  }
-  if (task.end_date) return `${task.end_date} 23:59:00`;
-  return null;
+  return sharedDeadlineFor(task, timezone);
 }
 
 /**
- * Comparing local wall-clock strings rather than instants keeps a due_time like
- * "17:27" — which carries no timezone — anchored to the org's day, so the
- * verdict doesn't shift with the viewer's location.
+ * Whether a submission was on time, revision-aware: a revision can set a new
+ * due date for the rework, so this is judged against the most recent
+ * revision deadline issued before it, and the task's own due date only when
+ * no revision has moved it. See `@/lib/onTime` for the shared formula — the
+ * same one the On-Time report runs, so a VA's report number can never
+ * disagree with the badge on their own submission.
  */
-/**
- * The deadline in force when a submission landed.
- *
- * A revision can set a new due date for the rework. Judging every submission
- * against whatever the task says today would let a moved deadline rewrite an
- * earlier verdict — work that was on time becoming late months later. Each
- * submission is measured against the most recent revision deadline before
- * it, and the task's own due date only when no revision has moved it.
- */
-function deadlineForSubmission(
-  item: FeedItem,
-  thread: FeedItem[],
-  timezone: string
-): string | null {
-  const priorRevision = thread
-    .filter((e) => e.message_type === "revision" && e.due_at && e.created_at < item.created_at)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-
-  if (priorRevision?.due_at) {
-    const when = new Date(priorRevision.due_at);
-    return `${localDay(priorRevision.due_at, timezone)} ${when.toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
-  }
-  return deadlineFor(item.task, timezone);
-}
-
 function isLate(item: FeedItem, timezone: string, thread?: FeedItem[]): boolean | null {
-  const deadline = thread
-    ? deadlineForSubmission(item, thread, timezone)
-    : deadlineFor(item.task, timezone);
-  if (!deadline) return null;
-  const submitted = `${localDay(item.created_at, timezone)} ${new Date(item.created_at).toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
-  return submitted > deadline;
+  const priorRevision = thread
+    ?.filter((e) => e.message_type === "revision" && e.due_at && e.created_at < item.created_at)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  return sharedIsLate(item.created_at, item.task, timezone, priorRevision?.due_at ?? null);
 }
-
-/**
- * How a submission landed against its deadline.
- *
- * "same day" is separated from "another day" because they are different
- * failures: an hour past the time is a slip, a day past it is a miss, and
- * one colour for both hides which happened.
- */
-type Timeliness = "on_time" | "late_same_day" | "late_other_day" | "no_deadline";
 
 function timelinessOf(item: FeedItem, timezone: string): Timeliness {
-  const deadline = deadlineFor(item.task, timezone);
-  if (!deadline) return "no_deadline";
-  const submitted = `${localDay(item.created_at, timezone)} ${new Date(item.created_at).toLocaleTimeString("en-GB", { hour12: false, timeZone: timezone })}`;
-  if (submitted <= deadline) return "on_time";
-  return localDay(item.created_at, timezone) === deadline.slice(0, 10)
-    ? "late_same_day"
-    : "late_other_day";
+  return sharedTimelinessOf(item.created_at, item.task, timezone);
 }
 
 /**

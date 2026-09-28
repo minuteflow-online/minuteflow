@@ -19,6 +19,7 @@ import { computeTransitionMs } from "@/lib/transitionTime";
 import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ProgressBar } from "@/components/VAPerformanceMetrics";
+import { isLate } from "@/lib/onTime";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -70,7 +71,18 @@ type AssignedTaskRow = {
   account: string | null;
   due_date: string | null;
   due_time: string | null;
+  end_date: string | null;
+  end_time: string | null;
   revision_count: number | null;
+};
+
+/* A revision entry that moved the deadline — only the fields the On-Time
+   report needs to find, per task, the most recent one issued before a given
+   resubmission. See `@/lib/onTime`'s isLate for how this is used. */
+type RevisionDeadlineRow = {
+  assigned_task_id: number | null;
+  created_at: string;
+  due_at: string;
 };
 
 /* One submitted task inside an account's drill-down. A task resubmitted after a
@@ -216,10 +228,11 @@ export default function ReportsPage() {
   const [selectedClient, setSelectedClient] = useState<string>("all");
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
   const [assignedTasks, setAssignedTasks] = useState<AssignedTaskRow[]>([]);
+  const [revisionDeadlines, setRevisionDeadlines] = useState<RevisionDeadlineRow[]>([]);
   const [summaryTab, setSummaryTab] = useState<"account" | "project" | "task" | "team">("account");
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   const [submissionPage, setSubmissionPage] = useState<Record<string, number>>({});
-  const [reportTab, setReportTab] = useUrlTab<"overview" | "progress">("tab", "overview", ["overview", "progress"]);
+  const [reportTab] = useUrlTab<"overview" | "progress" | "ontime">("tab", "overview", ["overview", "progress", "ontime"]);
   const [compLogs, setCompLogs] = useState<TimeLog[]>([]);
 
   /* ── Fetch org timezone on mount ────────────────────────── */
@@ -402,13 +415,27 @@ export default function ReportsPage() {
         new Set(subRows.map((s) => s.assigned_task_id).filter((id): id is number => id != null))
       );
       if (taskIds.length > 0) {
-        const { data: taskRows } = await supabase
-          .from("assigned_tasks")
-          .select("id, task_name, account, due_date, due_time, revision_count")
-          .in("id", taskIds);
+        const [{ data: taskRows }, { data: revisionRows }] = await Promise.all([
+          supabase
+            .from("assigned_tasks")
+            .select("id, task_name, account, due_date, due_time, end_date, end_time, revision_count")
+            .in("id", taskIds),
+          // Every revision that moved a deadline for these tasks, regardless
+          // of when the revision itself was issued — the On-Time report
+          // judges each resubmission against whichever one was in force when
+          // it landed, same as the "On time" badge on the Submissions page.
+          supabase
+            .from("task_submissions")
+            .select("assigned_task_id, created_at, due_at")
+            .eq("message_type", "revision")
+            .in("assigned_task_id", taskIds)
+            .not("due_at", "is", null),
+        ]);
         setAssignedTasks((taskRows ?? []) as AssignedTaskRow[]);
+        setRevisionDeadlines((revisionRows ?? []) as RevisionDeadlineRow[]);
       } else {
         setAssignedTasks([]);
+        setRevisionDeadlines([]);
       }
     } catch (err) {
       console.error("Reports fetch error:", err);
@@ -901,6 +928,71 @@ export default function ReportsPage() {
       })),
     [accountHours, submissionsByAccount]
   );
+
+  /* ── On-Time Report ───────────────────────────────────────
+   * Per submission, judged against the task's own due date, or the most
+   * recent revision deadline issued before it — exactly the same formula
+   * behind the "On time" badge on the Submissions page (see @/lib/onTime).
+   * A submission whose task carries no deadline at all isn't judged either
+   * way; it's counted separately so it doesn't silently inflate or deflate
+   * the percentage. */
+  const onTimeByVa = useMemo(() => {
+    const taskById = new Map(assignedTasks.map((t) => [t.id, t]));
+    const revisionsByTask = new Map<number, RevisionDeadlineRow[]>();
+    revisionDeadlines.forEach((r) => {
+      if (r.assigned_task_id == null) return;
+      const list = revisionsByTask.get(r.assigned_task_id) ?? [];
+      list.push(r);
+      revisionsByTask.set(r.assigned_task_id, list);
+    });
+
+    const byVa = new Map<
+      string,
+      { judged: number; onTime: number; late: number; noDeadline: number }
+    >();
+
+    filteredSubmissions.forEach((s) => {
+      const entry = byVa.get(s.user_id) ?? { judged: 0, onTime: 0, late: 0, noDeadline: 0 };
+      const task = s.assigned_task_id != null ? taskById.get(s.assigned_task_id) : undefined;
+      const priorRevision =
+        s.assigned_task_id != null
+          ? (revisionsByTask.get(s.assigned_task_id) ?? [])
+              .filter((r) => r.created_at < s.created_at)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+          : undefined;
+      const late = isLate(s.created_at, task ?? null, orgTimezone, priorRevision?.due_at ?? null);
+      if (late === null) entry.noDeadline += 1;
+      else {
+        entry.judged += 1;
+        if (late) entry.late += 1;
+        else entry.onTime += 1;
+      }
+      byVa.set(s.user_id, entry);
+    });
+
+    const rows = Array.from(byVa.entries()).map(([vaId, stats]) => {
+      const profile = profiles.find((p) => p.id === vaId);
+      return {
+        userId: vaId,
+        name: profile?.full_name || profile?.username || "Unknown",
+        ...stats,
+        onTimePct: stats.judged > 0 ? (stats.onTime / stats.judged) * 100 : null,
+      };
+    });
+    rows.sort((a, b) => a.name.localeCompare(b.name));
+
+    const totals = rows.reduce(
+      (sum, r) => ({
+        judged: sum.judged + r.judged,
+        onTime: sum.onTime + r.onTime,
+        late: sum.late + r.late,
+        noDeadline: sum.noDeadline + r.noDeadline,
+      }),
+      { judged: 0, onTime: 0, late: 0, noDeadline: 0 }
+    );
+
+    return { rows, totals };
+  }, [filteredSubmissions, assignedTasks, revisionDeadlines, profiles, orgTimezone]);
 
   /* ── Transition Time ─────────────────────────────────────── */
   //
@@ -1396,6 +1488,94 @@ export default function ReportsPage() {
               className="h-28 w-40 animate-pulse rounded-xl border border-sand bg-white"
             />
           ))}
+        </div>
+      ) : reportTab === "ontime" ? (
+        /* ── On-Time Report Tab ─────────────────────────────────── */
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-4">
+            <BigStat
+              value={
+                onTimeByVa.totals.judged > 0
+                  ? `${((onTimeByVa.totals.onTime / onTimeByVa.totals.judged) * 100).toFixed(0)}%`
+                  : "—"
+              }
+              label="On time, overall"
+              color={
+                onTimeByVa.totals.judged === 0
+                  ? "default"
+                  : onTimeByVa.totals.onTime / onTimeByVa.totals.judged >= 0.9
+                    ? "green"
+                    : onTimeByVa.totals.onTime / onTimeByVa.totals.judged >= 0.7
+                      ? "gold"
+                      : "terra"
+              }
+            />
+            <BigStat value={onTimeByVa.totals.onTime} label="Submitted on time" color="green" />
+            <BigStat value={onTimeByVa.totals.late} label="Submitted late" color="terra" />
+            <BigStat
+              value={onTimeByVa.totals.noDeadline}
+              label="No due date to judge"
+              color="walnut"
+            />
+          </div>
+
+          <div className="rounded-xl border border-sand bg-white">
+            <div className="border-b border-parchment px-5 py-3">
+              <h3 className="text-[13px] font-bold text-espresso">On-Time, by VA</h3>
+              <p className="mt-0.5 text-[11px] text-bark">
+                Submitted vs. the internal due date — or the most recent revision deadline, when one
+                was issued. A task with no due date isn&apos;t counted either way.
+              </p>
+            </div>
+            {onTimeByVa.rows.length === 0 ? (
+              <div className="px-5 py-10 text-center">
+                <p className="text-[13px] text-bark">No submissions with a due date in this period.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-parchment text-left text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-5 py-2">VA</th>
+                      <th className="px-3 py-2 text-right">On time</th>
+                      <th className="px-3 py-2 text-right">Late</th>
+                      <th className="px-3 py-2 text-right">Judged</th>
+                      <th className="px-3 py-2 text-right">On-time %</th>
+                      <th className="px-3 py-2 text-right">No due date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {onTimeByVa.rows.map((r) => (
+                      <tr key={r.userId} className="border-b border-parchment last:border-0">
+                        <td className="px-5 py-2.5 font-semibold text-espresso">{r.name}</td>
+                        <td className="px-3 py-2.5 text-right text-sage">{r.onTime}</td>
+                        <td className="px-3 py-2.5 text-right text-terracotta">{r.late}</td>
+                        <td className="px-3 py-2.5 text-right text-bark">{r.judged}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold">
+                          {r.onTimePct !== null ? (
+                            <span
+                              className={
+                                r.onTimePct >= 90
+                                  ? "text-sage"
+                                  : r.onTimePct >= 70
+                                    ? "text-amber"
+                                    : "text-terracotta"
+                              }
+                            >
+                              {r.onTimePct.toFixed(0)}%
+                            </span>
+                          ) : (
+                            <span className="text-stone">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-stone">{r.noDeadline}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       ) : reportTab === "progress" ? (
         /* ── Progress Report Tab ────────────────────────────────── */
