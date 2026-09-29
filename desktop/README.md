@@ -85,10 +85,21 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
     `notifyMentions()` (bell + Telegram for anyone @mentioned) still fires —
     see `src/lib/messageBoard.ts`.
   - **Personal** — direct messages and group chats. List conversations
-    (unread counts, last-message preview), open one, reply, start a new 1:1
-    or group by picking teammates. Goes through `/api/conversations` (+ its
-    `/messages` sub-route) and `/api/team-members`, so `notifyOne()` (bell +
-    Telegram) still fires on send — see `src/lib/conversations.ts`.
+    (unread counts, last-message preview, unread rows highlighted), open one,
+    reply, start a new 1:1 or group by picking teammates. Goes through
+    `/api/conversations` (+ its `/messages` and (`PATCH`/`DELETE`) `/:id`
+    sub-routes) and `/api/team-members`, so `notifyOne()` (bell + Telegram)
+    still fires on send — see `src/lib/conversations.ts`. **Delete a message**
+    (sender-only, soft-deleted) and **delete a whole conversation** (any
+    member — a DM has no single author the way a General topic does) via
+    Delete links/buttons. **Archive/unarchive** a conversation is per-viewer —
+    it hides it from your own list only, with an "Archived (N)" toggle to
+    read it back. No @mention autocomplete on desktop yet (typing "@" doesn't
+    open a picker), but a real @Full Name/`@everyone`/`@all` mention already
+    typed gets highlighted when rendered, in both Personal and General
+    (`highlightMentions` in `src/lib/linkify.tsx`) — the notification itself
+    already fires either way, since `notifyMentions()` runs server-side on
+    whatever text you send.
   - **Comments** — the notification feed (submission comments, @mentions,
     job orders, new DMs), read-only. Reads the `messages` table directly
     (RLS-scoped, same as tasks/sessions) rather than through an API route —
@@ -112,11 +123,12 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
     `/api/conversations/:id/messages`), which already carried the
     bearer-token/CORS treatment from earlier PRs — no new backend work
     needed. See `editTopic`/`editComment` in `src/lib/messageBoard.ts` and
-    `editMessage` in `src/lib/conversations.ts`. Still no delete/pin/archive.
+    `editMessage` in `src/lib/conversations.ts`. General still has no
+    delete/pin/archive of its own (Personal's above is separate).
   - Not in this version: Admin oversight (beyond edit-any-post), per-project
-    boards, @mention autocomplete, delete/pin/archive, marking a
-    notification read, realtime (all four tabs poll instead — see each lib
-    file's poll interval).
+    boards, @mention autocomplete *for composing* (see Personal above),
+    General's own delete/pin/archive, marking a notification read, realtime
+    (all four tabs poll instead — see each lib file's poll interval).
 
 ## What it deliberately does NOT do yet
 

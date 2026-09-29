@@ -5,16 +5,21 @@
 //
 // Scoped down from the full web feature — see lib/messageBoard.ts,
 // lib/conversations.ts, and the desktop README for exactly what's not here
-// yet (Admin oversight, per-project boards, attachments, @mention
-// autocomplete, editing, group-chat title beyond the basics, delete/pin).
-import { useCallback, useEffect, useState } from "react";
+// yet (Admin oversight, per-project boards, @mention autocomplete for
+// composing, General's own delete/pin/archive, group-chat title beyond the
+// basics).
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchGeneralTopics, postTopic, postReply, editTopic, editComment, type Topic } from "../lib/messageBoard";
 import {
   fetchConversations,
+  fetchArchivedConversations,
   fetchTeamMembers,
   fetchMessages,
   sendMessage,
   editMessage,
+  deleteMessage,
+  setConversationArchived,
+  deleteConversation,
   startConversation,
   type Conversation,
   type DirectMessage,
@@ -111,6 +116,14 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   // Editing one of your own DMs in place — same shape as editing a reply.
   const [editingDm, setEditingDm] = useState<number | null>(null);
   const [editDmText, setEditDmText] = useState("");
+  // Deleting a single DM (sender-only) or the whole conversation (any
+  // member) — id of whichever is mid-request, so its button shows busy and
+  // nothing else double-fires while it's in flight.
+  const [busyDm, setBusyDm] = useState<number | null>(null);
+  const [busyConv, setBusyConv] = useState<string | null>(null);
+  // Archiving is per-viewer: hides a conversation from your own list only.
+  const [viewingArchivedConvs, setViewingArchivedConvs] = useState(false);
+  const [archivedConvs, setArchivedConvs] = useState<Conversation[]>([]);
 
   // ── Comments ─────────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<Notification[]>([]);
@@ -145,9 +158,19 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
     const timer = setInterval(loadConvs, CONVERSATIONS_POLL_MS);
     return () => clearInterval(timer);
   }, [innerTab, loadConvs]);
+  const loadArchivedConvs = useCallback(async () => {
+    const rows = await fetchArchivedConversations();
+    setArchivedConvs(rows);
+  }, []);
+  useEffect(() => {
+    loadArchivedConvs();
+  }, [loadArchivedConvs]);
   useEffect(() => {
     fetchTeamMembers().then((members) => setTeam(members.filter((m) => m.id !== userId)));
   }, [userId]);
+  // Real team member names, for telling an actual @mention apart from a
+  // stray "@" in ordinary text when highlighting rendered messages.
+  const mentionNames = useMemo(() => team.map(memberLabel), [team]);
   // Poll the open conversation's messages.
   useEffect(() => {
     if (innerTab !== "personal" || !activeConv) return;
@@ -297,6 +320,50 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
     }
   }, [activeConv, editDmText]);
 
+  // Soft delete: leaves the thread without touching anyone else's copy of
+  // the conversation. Sender-only, same rule as editing it.
+  const handleDeleteDm = useCallback(async (messageId: number) => {
+    if (!activeConv) return;
+    if (!confirm("Delete this message? This can't be undone from here.")) return;
+    setBusyDm(messageId);
+    try {
+      const ok = await deleteMessage(activeConv.id, messageId);
+      if (ok) setDms((prev) => prev.filter((m) => m.id !== messageId));
+    } finally {
+      setBusyDm(null);
+    }
+  }, [activeConv]);
+
+  // Archiving is per-viewer — it only ever changes what shows in your list.
+  const handleSetConvArchived = useCallback(async (conv: Conversation, next: boolean) => {
+    setBusyConv(conv.id);
+    try {
+      const ok = await setConversationArchived(conv.id, next);
+      if (ok) {
+        setActiveConv(null);
+        await Promise.all([loadConvs(), loadArchivedConvs()]);
+      }
+    } finally {
+      setBusyConv(null);
+    }
+  }, [loadConvs, loadArchivedConvs]);
+
+  // Removes the whole conversation for every member, not just you — there's
+  // no single "owner" of a DM the way a General topic has an author.
+  const handleDeleteConv = useCallback(async (conv: Conversation) => {
+    if (!confirm(`Delete this conversation${conv.is_group ? "" : ` with ${conv.title}`}? It disappears for everyone in it. This can't be undone from here.`)) return;
+    setBusyConv(conv.id);
+    try {
+      const ok = await deleteConversation(conv.id);
+      if (ok) {
+        setActiveConv(null);
+        await Promise.all([loadConvs(), loadArchivedConvs()]);
+      }
+    } finally {
+      setBusyConv(null);
+    }
+  }, [loadConvs, loadArchivedConvs]);
+
   const handleStartChat = useCallback(async () => {
     if (picked.size === 0 || posting) return;
     setPosting(true);
@@ -337,6 +404,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
               setEditingTopic(false);
               setEditingComment(null);
               setEditingDm(null);
+              setViewingArchivedConvs(false);
             }}
             className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors cursor-pointer ${
               innerTab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"
@@ -439,7 +507,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                           {authorName(activeTopic.author)} · {ago(activeTopic.created_at)}
                           {activeTopic.edited_at && <span className="italic text-stone"> · edited</span>}
                         </p>
-                        <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(activeTopic.body)}</p>
+                        <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(activeTopic.body, mentionNames)}</p>
                         <AttachmentList attachments={activeTopic.attachments} />
                       </>
                     )}
@@ -491,7 +559,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                               </button>
                             )}
                           </p>
-                          <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(c.body)}</p>
+                          <p className="text-[12px] text-espresso whitespace-pre-wrap mt-0.5">{linkifyText(c.body, mentionNames)}</p>
                           <AttachmentList attachments={c.attachments} />
                         </>
                       )}
@@ -600,18 +668,38 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
           /* ── Personal ── */
           activeConv ? (
             <div className="flex flex-col h-full">
-              <div className="flex items-center gap-2 mb-3">
-                <button
-                  onClick={() => {
-                    setActiveConv(null);
-                    setEditingDm(null);
-                    void loadConvs();
-                  }}
-                  className="text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer"
-                >
-                  ← Back
-                </button>
-                <span className="text-[13px] font-bold text-espresso truncate">{activeConv.title}</span>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="flex items-center gap-2 min-w-0">
+                  <button
+                    onClick={() => {
+                      setViewingArchivedConvs(activeConv.archived);
+                      setActiveConv(null);
+                      setEditingDm(null);
+                      void loadConvs();
+                    }}
+                    className="shrink-0 text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer"
+                  >
+                    ← Back
+                  </button>
+                  <span className="text-[13px] font-bold text-espresso truncate">{activeConv.title}</span>
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => void handleSetConvArchived(activeConv, !activeConv.archived)}
+                    disabled={busyConv === activeConv.id}
+                    title={activeConv.archived ? "Bring this back into your active list." : "File this out of your list. It stays readable in Archived."}
+                    className="text-[10px] font-semibold text-bark hover:text-espresso transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {activeConv.archived ? "Unarchive" : "Archive"}
+                  </button>
+                  <button
+                    onClick={() => void handleDeleteConv(activeConv)}
+                    disabled={busyConv === activeConv.id}
+                    className="text-[10px] font-semibold text-bark hover:text-terracotta transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    Delete
+                  </button>
+                </span>
               </div>
 
               <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-0.5">
@@ -651,22 +739,31 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                         </div>
                       ) : (
                         <>
-                          <p className="whitespace-pre-wrap">{linkifyText(m.body)}</p>
+                          <p className="whitespace-pre-wrap">{linkifyText(m.body, mentionNames)}</p>
                           <AttachmentList attachments={m.attachments} />
                           <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-bark">
                             <span>
                               {ago(m.created_at)} ago{m.edited_at && <span className="italic text-stone"> · edited</span>}
                             </span>
                             {m.mine && (
-                              <button
-                                onClick={() => {
-                                  setEditingDm(m.id);
-                                  setEditDmText(m.body);
-                                }}
-                                className="font-semibold text-slate-blue hover:underline cursor-pointer"
-                              >
-                                Edit
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setEditingDm(m.id);
+                                    setEditDmText(m.body);
+                                  }}
+                                  className="font-semibold text-slate-blue hover:underline cursor-pointer"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => void handleDeleteDm(m.id)}
+                                  disabled={busyDm === m.id}
+                                  className="font-semibold text-bark hover:text-terracotta transition-colors disabled:opacity-50 cursor-pointer"
+                                >
+                                  Delete
+                                </button>
+                              </>
                             )}
                           </p>
                         </>
@@ -745,14 +842,63 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                 {picked.size > 1 ? "Start group chat" : "Start chat"}
               </button>
             </div>
+          ) : viewingArchivedConvs ? (
+            <div className="space-y-1.5">
+              <button
+                onClick={() => setViewingArchivedConvs(false)}
+                className="text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer"
+              >
+                ← Back
+              </button>
+              {archivedConvs.length === 0 ? (
+                <p className="text-xs text-stone py-3 text-center">Nothing archived.</p>
+              ) : (
+                archivedConvs.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => void openConv(c)}
+                    className="w-full text-left rounded-lg border border-sand bg-parchment/30 px-2.5 py-2 hover:bg-cream transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className="flex -space-x-1 shrink-0">
+                        {c.members.slice(0, 3).map((m) => (
+                          <AvatarCircle key={m.id} name={m.name} size={18} />
+                        ))}
+                      </span>
+                      <span className="text-[12px] font-semibold text-espresso truncate">
+                        {c.is_group ? "👥 " : ""}
+                        {c.title}
+                      </span>
+                    </span>
+                    {c.last_message && (
+                      <span className="block text-[11px] text-walnut truncate">
+                        {c.last_message.mine ? "You: " : ""}
+                        {c.last_message.body}
+                      </span>
+                    )}
+                    <span className="block text-[10px] text-bark">archived</span>
+                  </button>
+                ))
+              )}
+            </div>
           ) : (
             <div className="space-y-2">
-              <button
-                onClick={() => setComposingChat(true)}
-                className="w-full rounded-lg border border-dashed border-sand py-1.5 text-[11px] font-semibold text-walnut hover:bg-cream transition-colors cursor-pointer"
-              >
-                + New message
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setComposingChat(true)}
+                  className="flex-1 rounded-lg border border-dashed border-sand py-1.5 text-[11px] font-semibold text-walnut hover:bg-cream transition-colors cursor-pointer"
+                >
+                  + New message
+                </button>
+                {archivedConvs.length > 0 && (
+                  <button
+                    onClick={() => setViewingArchivedConvs(true)}
+                    className="shrink-0 px-2.5 py-1.5 rounded-lg bg-stone/10 text-stone text-[11px] font-semibold hover:bg-stone/20 transition-colors cursor-pointer"
+                  >
+                    Archived ({archivedConvs.length})
+                  </button>
+                )}
+              </div>
               {convsLoading ? (
                 <div className="space-y-1.5">
                   {[1, 2].map((i) => <div key={i} className="animate-pulse h-14 w-full bg-parchment rounded-lg" />)}
