@@ -6,7 +6,8 @@
 // Scoped down from the full web feature — see lib/messageBoard.ts,
 // lib/conversations.ts, and the desktop README for exactly what's not here
 // yet (Admin oversight, per-project boards, @mention autocomplete for
-// composing, General's own delete/pin/archive, group-chat title beyond the
+// composing a General topic/reply — Personal's DM composer has it, General's
+// doesn't yet, General's own delete/pin/archive, group-chat title beyond the
 // basics).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchGeneralTopics, postTopic, postReply, editTopic, editComment, type Topic } from "../lib/messageBoard";
@@ -22,6 +23,7 @@ import {
   deleteConversation,
   startConversation,
   type Conversation,
+  type ConversationMember,
   type DirectMessage,
   type TeamMember,
 } from "../lib/conversations";
@@ -71,6 +73,22 @@ function AvatarCircle({ name, size = 18 }: { name: string; size?: number }) {
 }
 
 const inputClass = "w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white";
+
+// The DM autocomplete's stand-in for "everyone in this chat" — matched by
+// notifyMentions() server-side the same way a real name is, scoped to the
+// conversation's own members (see PR #253's restrictToIds).
+const EVERYONE_MENTION: ConversationMember = { id: "__everyone__", name: "Everyone" };
+
+/** The partial name being typed after an "@", or null when the caret isn't
+ *  in a mention. Only the run of characters since the last "@" counts — a
+ *  space closes it, so "@ann smith" is a finished mention plus a word. */
+function mentionFragment(text: string): string | null {
+  const at = text.lastIndexOf("@");
+  if (at === -1) return null;
+  const after = text.slice(at + 1);
+  if (/\s/.test(after)) return null;
+  return after;
+}
 
 interface MessageBoardPanelProps {
   userId: string;
@@ -124,6 +142,9 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   // Archiving is per-viewer: hides a conversation from your own list only.
   const [viewingArchivedConvs, setViewingArchivedConvs] = useState(false);
   const [archivedConvs, setArchivedConvs] = useState<Conversation[]>([]);
+  // The "@" autocomplete while composing a DM — null means closed, "" means
+  // open showing everyone (just typed a bare "@").
+  const [dmMentionQuery, setDmMentionQuery] = useState<string | null>(null);
 
   // ── Comments ─────────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<Notification[]>([]);
@@ -171,6 +192,30 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   // Real team member names, for telling an actual @mention apart from a
   // stray "@" in ordinary text when highlighting rendered messages.
   const mentionNames = useMemo(() => team.map(memberLabel), [team]);
+
+  // Scoped to whoever is actually in the open conversation, not the whole
+  // team — @everyone here only ever means everyone in this chat (see
+  // notifyMentions' restrictToIds), never the whole company.
+  const dmMentionMatches = useMemo(() => {
+    if (dmMentionQuery === null || !activeConv) return [];
+    const q = dmMentionQuery.trim().toLowerCase();
+    const list = q ? activeConv.members.filter((m) => m.name.toLowerCase().includes(q)) : activeConv.members;
+    const towardEveryone = !q || "everyone".startsWith(q) || "all".startsWith(q);
+    return (towardEveryone ? [EVERYONE_MENTION, ...list] : list).slice(0, 6);
+  }, [activeConv, dmMentionQuery]);
+
+  const onDmTextChange = useCallback((value: string) => {
+    setDmText(value);
+    setDmMentionQuery(mentionFragment(value));
+  }, []);
+
+  const applyDmMention = useCallback((member: ConversationMember) => {
+    setDmText((prev) => {
+      const at = prev.lastIndexOf("@");
+      return prev.slice(0, at) + "@" + member.name + " ";
+    });
+    setDmMentionQuery(null);
+  }, []);
   // Poll the open conversation's messages.
   useEffect(() => {
     if (innerTab !== "personal" || !activeConv) return;
@@ -259,6 +304,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   const openConv = useCallback(async (c: Conversation) => {
     setActiveConv(c);
     setEditingDm(null);
+    setDmMentionQuery(null);
     const rows = await fetchMessages(c.id);
     setDms(rows);
     void loadConvs();
@@ -293,6 +339,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
       if (sent) {
         setDms((prev) => [...prev, sent]);
         setDmText("");
+        setDmMentionQuery(null);
         if (sent.id != null) {
           await dmComposer.flush("direct_message", sent.id);
           // Attachments land after the optimistic append above (which has
@@ -405,6 +452,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
               setEditingComment(null);
               setEditingDm(null);
               setViewingArchivedConvs(false);
+              setDmMentionQuery(null);
             }}
             className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors cursor-pointer ${
               innerTab === k ? "bg-amber-soft text-amber border border-amber/30" : "bg-stone/10 text-stone hover:bg-stone/20"
@@ -675,6 +723,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                       setViewingArchivedConvs(activeConv.archived);
                       setActiveConv(null);
                       setEditingDm(null);
+                      setDmMentionQuery(null);
                       void loadConvs();
                     }}
                     className="shrink-0 text-[10px] font-semibold text-slate-blue hover:underline cursor-pointer"
@@ -775,18 +824,31 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
 
               <div className="mt-3 pt-3 border-t border-sand space-y-1.5">
                 <AttachmentPicker composer={dmComposer} disabled={posting} />
-                <div className="flex items-end gap-1.5">
+                <div className="relative flex items-end gap-1.5">
+                  {dmMentionQuery !== null && dmMentionMatches.length > 0 && (
+                    <div className="absolute bottom-full mb-1 left-0 right-0 z-10 rounded-lg border border-sand bg-white shadow-sm overflow-hidden">
+                      {dmMentionMatches.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => applyDmMention(m)}
+                          className="w-full text-left px-2.5 py-1.5 text-[11px] text-espresso hover:bg-cream transition-colors cursor-pointer"
+                        >
+                          {m.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <textarea
                     value={dmText}
-                    onChange={(e) => setDmText(e.target.value)}
+                    onChange={(e) => onDmTextChange(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
+                      if (e.key === "Enter" && !e.shiftKey && dmMentionQuery === null) {
                         e.preventDefault();
                         void handleSendDm();
                       }
                     }}
                     rows={1}
-                    placeholder="Message…"
+                    placeholder="Message… (@name to tag)"
                     className={`${inputClass} resize-none flex-1`}
                   />
                   <button

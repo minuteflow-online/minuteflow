@@ -94,12 +94,16 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
     member — a DM has no single author the way a General topic does) via
     Delete links/buttons. **Archive/unarchive** a conversation is per-viewer —
     it hides it from your own list only, with an "Archived (N)" toggle to
-    read it back. No @mention autocomplete on desktop yet (typing "@" doesn't
-    open a picker), but a real @Full Name/`@everyone`/`@all` mention already
-    typed gets highlighted when rendered, in both Personal and General
-    (`highlightMentions` in `src/lib/linkify.tsx`) — the notification itself
-    already fires either way, since `notifyMentions()` runs server-side on
-    whatever text you send.
+    read it back. Typing "@" in the DM composer opens a picker scoped to that
+    conversation's own members (plus `@everyone`/`@all`, also scoped to just
+    this chat, not the whole company — see `notifyMentions`'s `restrictToIds`
+    on the web side) — picking a name inserts it, same as the web composer.
+    Any real @Full Name/`@everyone`/`@all` mention, typed or picked, gets
+    highlighted when rendered, in both Personal and General
+    (`highlightMentions` in `src/lib/linkify.tsx`). General's own composer
+    still has no "@" picker (typing "@" there doesn't open one) — the
+    notification itself already fires either way, since `notifyMentions()`
+    runs server-side on whatever text you send.
   - **Comments** — the notification feed (submission comments, @mentions,
     job orders, new DMs), read-only. Reads the `messages` table directly
     (RLS-scoped, same as tasks/sessions) rather than through an API route —
