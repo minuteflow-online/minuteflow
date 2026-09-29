@@ -94,7 +94,7 @@ export function formatShiftMessage(
   const billableMs = result.logs
     .filter((row) => row.billable)
     .reduce((sum, row) => sum + entryDurationMs(row), 0);
-  const footer = `Day: <b>${compactDuration(billableMs)}</b> billable · ${result.logs.length} entries`;
+  const footer = `Day: <b>${compactDuration(billableMs)}</b> billable · ${result.logs.length} entries · ${result.submissionCount} submission${result.submissionCount === 1 ? "" : "s"}`;
 
   if (result.clean) {
     return [`✅ <b>${vaName}</b> — ${sessionDate}`, "", "Shift looks clean.", "", footer].join("\n");
