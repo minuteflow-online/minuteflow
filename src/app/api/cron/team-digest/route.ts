@@ -110,7 +110,13 @@ export async function GET(request: NextRequest) {
   // unchanged.
   if (kind === "my-tasks-today" || kind === "my-tasks-tomorrow") {
     const when = kind === "my-tasks-today" ? "today" : "tomorrow";
-    const messages = await buildMyTasksMessages(when);
+    let messages = await buildMyTasksMessages(when);
+
+    // Debug-only: hitting this with &vaId=<id> sends to just that one person
+    // instead of the whole team — a safe way to test the real cron by hand
+    // (real due-date data, real Telegram send) without messaging everyone.
+    const onlyVaId = request.nextUrl.searchParams.get("vaId");
+    if (onlyVaId) messages = messages.filter((m) => m.vaId === onlyVaId);
 
     let dmSent = 0;
     for (const m of messages) {
