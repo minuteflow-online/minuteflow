@@ -20,6 +20,7 @@ import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ProgressBar } from "@/components/VAPerformanceMetrics";
 import { isLate } from "@/lib/onTime";
+import { shiftHoursFromProfile, workDaysFromProfile } from "@/lib/budget";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -994,6 +995,54 @@ export default function ReportsPage() {
     return { rows, totals };
   }, [filteredSubmissions, assignedTasks, revisionDeadlines, profiles, orgTimezone]);
 
+  /* ── Planning Time (part of Calendar Set-Up) ─────────────────────────────
+   * Time logged under the "Planning" category (Sorting Tasks), as a share of
+   * each VA's scheduled hours — Toni confirmed 5% of the weekly shift as the
+   * threshold (2026-09-29). Scheduled hours reuse shiftHoursFromProfile /
+   * workDaysFromProfile, the same helpers behind the Portal's own Schedule
+   * card and the Budget widget, so this can't disagree with what a VA
+   * already sees there. Prorated by how many days the selected range covers,
+   * so "This Month" or "This Year" scale the same weekly figure rather than
+   * needing a separate formula per range length.
+   *
+   * NOT included here: whether the plan was submitted by Friday 5pm EST —
+   * there's no timestamp recorded anywhere for when a VA's schedule was last
+   * set, so that half can't be built without a decision first. See the PR
+   * description.
+   */
+  const planningTimeByVa = useMemo(() => {
+    const rangeDays = start && end ? Math.max((end.getTime() - start.getTime()) / 86400000, 0) : 0;
+
+    const msByVa = new Map<string, number>();
+    filteredLogs.forEach((l) => {
+      if (normalizeCategoryLabel(l.category || "Task") !== "Planning") return;
+      msByVa.set(l.user_id, (msByVa.get(l.user_id) ?? 0) + (l.duration_ms || 0));
+    });
+
+    const relevantProfiles = selectedVA === "all" ? profiles : profiles.filter((p) => p.id === selectedVA);
+
+    const rows = relevantProfiles.map((profile) => {
+      const dailyHours = shiftHoursFromProfile(profile);
+      const days = workDaysFromProfile(profile).length;
+      const weeklyScheduledMs = dailyHours ? dailyHours * days * 3600000 : null;
+      const scheduledMs = weeklyScheduledMs != null ? weeklyScheduledMs * (rangeDays / 7) : null;
+      const planningMs = msByVa.get(profile.id) ?? 0;
+      return {
+        userId: profile.id,
+        name: profile.full_name || profile.username || "Unknown",
+        planningMs,
+        scheduledMs,
+        pct: scheduledMs && scheduledMs > 0 ? (planningMs / scheduledMs) * 100 : null,
+      };
+    });
+
+    // Only show a VA who either logged some planning time or has a schedule
+    // set — someone with neither has nothing this report can say about them.
+    const filtered = rows.filter((r) => r.planningMs > 0 || r.scheduledMs != null);
+    filtered.sort((a, b) => a.name.localeCompare(b.name));
+    return filtered;
+  }, [filteredLogs, profiles, selectedVA, start, end]);
+
   /* ── Transition Time ─────────────────────────────────────── */
   //
   // The stretch between finishing one entry and starting the next: the wizard
@@ -1569,6 +1618,61 @@ export default function ReportsPage() {
                           )}
                         </td>
                         <td className="px-3 py-2.5 text-right text-stone">{r.noDeadline}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-sand bg-white">
+            <div className="border-b border-parchment px-5 py-3">
+              <h3 className="text-[13px] font-bold text-espresso">Planning Time, by VA</h3>
+              <p className="mt-0.5 text-[11px] text-bark">
+                Time logged as Planning, against a 5% ceiling of the weekly shift — a VA with no
+                schedule set, and no Planning time logged, isn&apos;t shown. Doesn&apos;t yet include
+                whether the plan itself was submitted on time.
+              </p>
+            </div>
+            {planningTimeByVa.length === 0 ? (
+              <div className="px-5 py-10 text-center">
+                <p className="text-[13px] text-bark">No planning time or schedule data for this period.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-parchment text-left text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-5 py-2">VA</th>
+                      <th className="px-3 py-2 text-right">Planning time</th>
+                      <th className="px-3 py-2 text-right">Scheduled hours</th>
+                      <th className="px-3 py-2 text-right">% of schedule</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planningTimeByVa.map((r) => (
+                      <tr key={r.userId} className="border-b border-parchment last:border-0">
+                        <td className="px-5 py-2.5 font-semibold text-espresso">{r.name}</td>
+                        <td className="px-3 py-2.5 text-right text-bark">{formatDuration(r.planningMs)}</td>
+                        <td className="px-3 py-2.5 text-right text-bark">
+                          {r.scheduledMs != null ? formatDuration(r.scheduledMs) : (
+                            <span className="text-stone">No schedule</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-semibold">
+                          {r.pct !== null ? (
+                            <span
+                              className={
+                                r.pct > 10 ? "text-terracotta" : r.pct > 5 ? "text-amber" : "text-sage"
+                              }
+                            >
+                              {r.pct.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-stone">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
