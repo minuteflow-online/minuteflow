@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { formatPayMoney } from "@/lib/payroll";
 
 // /admin/paystub-review/[id] — review an auto-generated paystub DRAFT, see the
 // daily breakdown, then approve (which sends the VA their paystub via the
@@ -24,6 +25,7 @@ interface SnapshotRow {
   gross_pay: number;
   by_date: Record<string, number | { ms: number; rate: number }> | null;
   status: string;
+  currency: string | null;
 }
 
 const PAYMENT_METHODS = [
@@ -39,7 +41,6 @@ const PAYMENT_METHODS = [
   { value: "other", label: "Other" },
 ];
 
-function fmtMoney(n: number) { return n.toLocaleString("en-US", { style: "currency", currency: "USD" }); }
 function fmtHours(ms: number) { return (ms / 3_600_000).toFixed(2) + "h"; }
 function fmtDate(iso: string) {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
@@ -92,6 +93,7 @@ export default function PaystubReviewPage() {
   if (!snap) return <div className="p-8 text-sm text-terracotta">Paystub not found.</div>;
 
   const rate = Number(snap.pay_rate) || 0;
+  const fmtMoney = (n: number) => formatPayMoney(n, snap.currency);
   const days = Object.entries(snap.by_date ?? {})
     .map(([date, v]) => {
       const { ms, rate: r } = readDay(v, rate);

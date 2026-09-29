@@ -188,14 +188,14 @@ const RATE_SUFFIX: Record<string, string> = {
  * "$300.00/hr". Screens that assumed hourly displayed a monthly salary as an
  * hourly price, which reads as a VA costing hundreds of dollars an hour.
  */
-export function formatPayRate(amount: number, rateType?: PayRateType | string | null): string {
-  return `${formatUsd(amount)}${RATE_SUFFIX[String(rateType ?? "hourly")] ?? "/hr"}`;
+export function formatPayRate(amount: number, rateType?: PayRateType | string | null, currency?: string | null): string {
+  return `${formatPayMoney(amount, currency)}${RATE_SUFFIX[String(rateType ?? "hourly")] ?? "/hr"}`;
 }
 
 /** "36.00h @ $18.00/hr + 30.00h @ $22.00/hr" */
-export function formatRateSegments(segments: RateSegment[]): string {
+export function formatRateSegments(segments: RateSegment[], currency?: string | null): string {
   return segments
-    .map((s) => `${s.hours.toFixed(2)}h @ ${formatUsd(s.rate)}/hr`)
+    .map((s) => `${s.hours.toFixed(2)}h @ ${formatPayMoney(s.rate, currency)}/hr`)
     .join(" + ");
 }
 
@@ -208,9 +208,43 @@ export function normalizeByDateValue(
   return { ms: Number(value?.ms) || 0, rate: value?.rate ?? fallbackRate };
 }
 
-function formatUsd(amount: number): string {
+/**
+ * The currency a VA is paid in (profiles.pay_currency), carried onto each
+ * paystub snapshot (paystub_snapshots.currency) so a stub already sent keeps
+ * its symbol even if the VA's setting changes later. Symbol only — amounts
+ * are entered in that currency, never converted.
+ */
+export type PayCurrency = "USD" | "PHP";
+export const PAY_CURRENCIES: PayCurrency[] = ["USD", "PHP"];
+
+/** Anything unset or unrecognized is USD — every row before this setting existed. */
+export function normalizePayCurrency(currency?: string | null): PayCurrency {
+  return currency === "PHP" ? "PHP" : "USD";
+}
+
+/** "$" or "₱" — for input prefixes and labels. */
+export function payCurrencySymbol(currency?: string | null): string {
+  return normalizePayCurrency(currency) === "PHP" ? "₱" : "$";
+}
+
+/** "$1,234.50" or "₱1,234.50" */
+export function formatPayMoney(amount: number, currency?: string | null): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
+    currency: normalizePayCurrency(currency),
   }).format(amount);
+}
+
+/**
+ * A total across VAs paid in different currencies — pesos and dollars can't be
+ * added together, so each currency is summed on its own: "$120.00 + ₱8,500.00".
+ */
+export function formatPayTotals(items: { amount: number; currency?: string | null }[]): string {
+  const totals = new Map<PayCurrency, number>();
+  for (const { amount, currency } of items) {
+    const c = normalizePayCurrency(currency);
+    totals.set(c, (totals.get(c) ?? 0) + amount);
+  }
+  if (totals.size === 0) return formatPayMoney(0);
+  return [...totals].map(([c, n]) => formatPayMoney(n, c)).join(" + ");
 }

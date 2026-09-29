@@ -10,6 +10,7 @@ import BudgetWidget from "@/components/BudgetWidget";
 import VaAccountAssignments from "@/components/VaAccountAssignments";
 import AccountBudgetAllocation from "@/components/AccountBudgetAllocation";
 import { vaBudgetType } from "@/lib/budget";
+import { formatPayMoney } from "@/lib/payroll";
 import { displayRole, formatTenure } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -162,8 +163,7 @@ export default function VAProfileTab({
 function BudgetAndRateSection({ profile }: { profile: Profile }) {
   const isOutputBased = vaBudgetType(profile) === "output_based";
 
-  const money = (v: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
+  const money = (v: number) => formatPayMoney(v, profile.pay_currency);
 
   // Output Based work is priced per project, not per hour, so say that rather
   // than dividing a per-task price into an hourly figure that means nothing.

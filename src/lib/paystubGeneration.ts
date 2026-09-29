@@ -6,11 +6,12 @@
 
 import { computePaystubData } from "@/lib/paystub";
 import { notifyAdmin } from "@/lib/notify";
+import { formatPayMoney, formatPayTotals, type PayCurrency } from "@/lib/payroll";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
-function fmtMoney(n: number) { return n.toLocaleString("en-US", { style: "currency", currency: "USD" }); }
+function fmtMoney(n: number, currency?: PayCurrency) { return formatPayMoney(n, currency); }
 function fmtDateShort(iso: string) {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
@@ -18,7 +19,7 @@ function fmtDateShort(iso: string) {
 export interface PaystubGenResult {
   generated: number;
   period: { periodStart: string; periodEnd: string; label: string };
-  drafts: { name: string; hours: number; gross: number }[];
+  drafts: { name: string; hours: number; gross: number; currency: PayCurrency }[];
   skipped: { name: string; reason: string }[];
 }
 
@@ -34,7 +35,7 @@ export async function runPaystubDraftGeneration(
     .select("id, full_name, is_active, role")
     .eq("is_active", true);
 
-  const drafts: { user_id: string; name: string; hours: number; gross: number; snapshot_id: string }[] = [];
+  const drafts: { user_id: string; name: string; hours: number; gross: number; currency: PayCurrency; snapshot_id: string }[] = [];
   const skipped: { name: string; reason: string }[] = [];
 
   for (const va of (vas ?? []) as { id: string; full_name: string; role: string | null }[]) {
@@ -66,13 +67,14 @@ export async function runPaystubDraftGeneration(
         by_date: calc.byDateWithRates,
         company_name: orgName || "MinuteFlow",
         status: "draft",
+        currency: calc.currency,
       })
       .select("id")
       .single();
 
     if (snapError || !snap) { skipped.push({ name: va.full_name, reason: `insert failed: ${snapError?.message}` }); continue; }
 
-    drafts.push({ user_id: va.id, name: va.full_name, hours: calc.totalHours, gross: calc.totalGrossPay, snapshot_id: snap.id as string });
+    drafts.push({ user_id: va.id, name: va.full_name, hours: calc.totalHours, gross: calc.totalGrossPay, currency: calc.currency, snapshot_id: snap.id as string });
   }
 
   if (notifyEmail && drafts.length > 0) {
@@ -80,14 +82,14 @@ export async function runPaystubDraftGeneration(
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#3d2b1f;">${d.name}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#6b5e52;text-align:right;">${d.hours.toFixed(2)}h</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#3d2b1f;text-align:right;font-weight:600;">${fmtMoney(d.gross)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#3d2b1f;text-align:right;font-weight:600;">${fmtMoney(d.gross, d.currency)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;text-align:right;"><a href="https://minuteflow.click/admin/paystub-review/${d.snapshot_id}" style="font-size:12px;color:#2d3a4a;font-weight:600;">Review →</a></td>
       </tr>`).join("");
-    const totalGross = drafts.reduce((s, d) => s + d.gross, 0);
+    const totalGrossLabel = formatPayTotals(drafts.map((d) => ({ amount: d.gross, currency: d.currency })));
     await notifyAdmin({
       to: notifyEmail,
       fromName: orgName || "MinuteFlow",
-      subject: `Paystub drafts for ${periodLabel} — ${drafts.length} VAs, ${fmtMoney(totalGross)}`,
+      subject: `Paystub drafts for ${periodLabel} — ${drafts.length} VAs, ${totalGrossLabel}`,
       text: `${drafts.length} paystub drafts for ${periodLabel}. Review + approve each in MinuteFlow.`,
       html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;padding:24px;">
         <div style="font-size:16px;font-weight:800;color:#2d1a00;margin-bottom:4px;">Paystub drafts ready for review</div>
@@ -109,7 +111,7 @@ export async function runPaystubDraftGeneration(
   return {
     generated: drafts.length,
     period: { periodStart, periodEnd, label: periodLabel },
-    drafts: drafts.map((d) => ({ name: d.name, hours: d.hours, gross: d.gross })),
+    drafts: drafts.map((d) => ({ name: d.name, hours: d.hours, gross: d.gross, currency: d.currency })),
     skipped,
   };
 }

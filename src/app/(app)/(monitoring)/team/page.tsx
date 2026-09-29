@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
 import { isPayrollEligible, sumPayrollMs } from "@/lib/payrollHours";
+import { formatPayMoney, formatPayTotals } from "@/lib/payroll";
 import { computeTransitionMs } from "@/lib/transitionTime";
 import AddRateModal from "@/components/AddRateModal";
 import {
@@ -164,18 +165,13 @@ const OUTPUT_STATUS_LABEL: Record<string, string> = {
   paid: "Paid",
 };
 
-function formatCurrency(amount: number): string {
-  return amount.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+function formatCurrency(amount: number, currency?: string | null): string {
+  return formatPayMoney(amount, currency);
 }
 
 /** One row in the Output-Based Items list — shared between the current-period
  *  and carried-over groups so the two never drift in how a row looks. */
-function OutputItemRow({ item, isAdmin, timezone }: { item: OutputItem; isAdmin: boolean; timezone?: string }) {
+function OutputItemRow({ item, isAdmin, timezone, currency }: { item: OutputItem; isAdmin: boolean; timezone?: string; currency?: string | null }) {
   return (
     <div className="flex items-center justify-between gap-2 rounded-lg bg-parchment/40 px-3 py-2">
       <div className="min-w-0 flex-1">
@@ -193,7 +189,7 @@ function OutputItemRow({ item, isAdmin, timezone }: { item: OutputItem; isAdmin:
         {OUTPUT_STATUS_LABEL[item.status] ?? item.status}
       </span>
       {isAdmin && item.rate != null && (
-        <span className="shrink-0 text-[12px] font-bold text-espresso w-14 text-right">{formatCurrency(item.rate)}</span>
+        <span className="shrink-0 text-[12px] font-bold text-espresso w-14 text-right">{formatCurrency(item.rate, currency)}</span>
       )}
     </div>
   );
@@ -689,7 +685,7 @@ export default function TeamPage() {
 
   // Financial summary (admin only)
   const financialSummary = useMemo(() => {
-    let totalPayable = 0;
+    const payables: { amount: number; currency: string | null }[] = [];
     let totalBillableHoursMs = 0;
 
     members.forEach((m) => {
@@ -698,10 +694,12 @@ export default function TeamPage() {
         m.profile.pay_rate || 0,
         m.profile.pay_rate_type || "hourly"
       );
-      totalPayable += payable;
+      payables.push({ amount: payable, currency: m.profile.pay_currency });
       totalBillableHoursMs += m.taskMs;
     });
 
+    // VAs can be paid in different currencies — summed per currency, not blended.
+    const totalPayable = formatPayTotals(payables);
     return {
       totalPayable,
       totalBillableHoursMs,
@@ -938,7 +936,7 @@ export default function TeamPage() {
         <StatCard value={onBreakCount} label="On Break" color="gold" />
         {isAdmin && (
           <StatCard
-            value={formatCurrency(financialSummary.totalPayable)}
+            value={financialSummary.totalPayable}
             label={`Est. Payable ${isToday ? "Today" : ""}`}
             color="terra"
           />
@@ -954,7 +952,7 @@ export default function TeamPage() {
           <div className="grid grid-cols-3 divide-x divide-parchment">
             <div className="p-5 text-center">
               <div className="font-serif text-xl font-bold text-sage">
-                {formatCurrency(financialSummary.totalPayable)}
+                {financialSummary.totalPayable}
               </div>
               <div className="mt-1 text-[11px] font-semibold text-bark">
                 Total Payable
@@ -970,7 +968,7 @@ export default function TeamPage() {
             </div>
             <div className="p-5 text-center">
               <div className="font-serif text-xl font-bold text-espresso">
-                {formatCurrency(financialSummary.totalInternalCost)}
+                {financialSummary.totalInternalCost}
               </div>
               <div className="mt-1 text-[11px] font-semibold text-bark">
                 Internal Cost
@@ -1270,7 +1268,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-bark">
               {profile.pay_rate > 0
-                ? `${formatCurrency(profile.pay_rate)}/${profile.pay_rate_type || "hourly"}`
+                ? `${formatCurrency(profile.pay_rate, profile.pay_currency)}/${profile.pay_rate_type || "hourly"}`
                 : "No rate set"}
             </span>
             <button
@@ -1282,7 +1280,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           </div>
           {profile.pay_rate > 0 && (
             <span className="text-[11px] font-semibold text-sage">
-              {formatCurrency(payable)} {isToday ? "today" : ""}
+              {formatCurrency(payable, profile.pay_currency)} {isToday ? "today" : ""}
             </span>
           )}
         </div>
@@ -1294,6 +1292,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           userName={profile.full_name}
           currentRate={profile.pay_rate || 0}
           currentRateType={profile.pay_rate_type || "hourly"}
+          currentCurrency={profile.pay_currency}
           onClose={() => setShowRateModal(false)}
           onSaved={() => onRateSaved?.()}
         />
@@ -1889,7 +1888,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
           </div>
           {isAdmin && profile.pay_rate > 0 && (
             <div className="rounded-lg bg-parchment/50 p-3 text-center">
-              <div className="text-lg font-bold text-sage">{formatCurrency(payable)}</div>
+              <div className="text-lg font-bold text-sage">{formatCurrency(payable, profile.pay_currency)}</div>
               <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Payable</div>
             </div>
           )}
@@ -2063,7 +2062,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                         <span className="text-[12px] font-bold text-espresso">{formatDuration(ms)}</span>
                         {isAdmin && profile.pay_rate > 0 && (
                           <span className="text-[10px] text-sage ml-2">
-                            {formatCurrency(computePayable(ms, profile.pay_rate || 0, profile.pay_rate_type || "hourly"))}
+                            {formatCurrency(computePayable(ms, profile.pay_rate || 0, profile.pay_rate_type || "hourly"), profile.pay_currency)}
                           </span>
                         )}
                       </div>
@@ -2124,7 +2123,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
           <div className="mt-4 space-y-2">
             {isAdmin && submittedCountOf(currentPeriodOutputItems) > 0 && (
               <div className="text-[11px] font-semibold text-amber">
-                Projected (pending review): {formatCurrency(submittedTotal(currentPeriodOutputItems))} across{" "}
+                Projected (pending review): {formatCurrency(submittedTotal(currentPeriodOutputItems), profile.pay_currency)} across{" "}
                 {submittedCountOf(currentPeriodOutputItems)} — see Daily Breakdown below
               </div>
             )}
@@ -2153,7 +2152,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                     </div>
                     <div className="space-y-1.5">
                       {carriedOverOutputItems.map((item) => (
-                        <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
+                        <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} currency={profile.pay_currency} />
                       ))}
                     </div>
                   </>
@@ -2271,7 +2270,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                         >
                           <span className="w-1.5 h-1.5 rounded-full bg-terracotta" />
                           {day.outputItems.length} output
-                          {isAdmin && ` · ${formatCurrency(day.dayOutputTotal)}`}
+                          {isAdmin && ` · ${formatCurrency(day.dayOutputTotal, profile.pay_currency)}`}
                         </span>
                       )}
                       <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
@@ -2282,7 +2281,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                         <span className="text-clay-rose font-semibold">Personal: {formatDuration(day.personalMs)}</span>
                       </span>
                       {isAdmin && profile.pay_rate > 0 && (
-                        <span className="text-[12px] font-semibold text-sage">{formatCurrency(day.dayPayable)}</span>
+                        <span className="text-[12px] font-semibold text-sage">{formatCurrency(day.dayPayable, profile.pay_currency)}</span>
                       )}
                     </div>
                   </button>
@@ -2304,7 +2303,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                           </div>
                           <div className="space-y-1.5">
                             {day.outputItems.map((item) => (
-                              <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
+                              <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} currency={profile.pay_currency} />
                             ))}
                           </div>
                         </div>
@@ -2358,7 +2357,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
                       {[...currentPeriodOutputItems]
                         .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime())
                         .map((item) => (
-                          <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} />
+                          <OutputItemRow key={item.id} item={item} isAdmin={isAdmin} timezone={timezone} currency={profile.pay_currency} />
                         ))}
                     </div>
                   </div>

@@ -55,6 +55,7 @@ import {
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
+import { formatPayMoney } from "@/lib/payroll";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -2609,7 +2610,7 @@ function TeamManagementTab({
       role: u(profiles.map((p) => p.role)),
       department: u(profiles.map((p) => p.department)),
       position: u(profiles.map((p) => normalizePosition(p.position))),
-      payRate: isFullAdmin ? u(profiles.map((p) => `$${(p.pay_rate || 0).toFixed(2)}`), true) : [],
+      payRate: isFullAdmin ? u(profiles.map((p) => formatPayMoney(p.pay_rate || 0, p.pay_currency)), true) : [],
       rateType: isFullAdmin ? u(profiles.map((p) => p.pay_rate_type || "hourly")) : [],
       assignments: u(profiles.map((p) => p.assignments_label)),
       availTasks: ["On", "Off", "—"],
@@ -2955,7 +2956,7 @@ function TeamManagementTab({
     if (!check("role", p.role || "va")) return false;
     if (!check("department", p.department || "—")) return false;
     if (!check("position", normalizePosition(p.position) || "—")) return false;
-    if (!check("payRate", `$${(p.pay_rate || 0).toFixed(2)}`)) return false;
+    if (!check("payRate", formatPayMoney(p.pay_rate || 0, p.pay_currency))) return false;
     if (!check("rateType", p.pay_rate_type || "hourly")) return false;
     if (!check("assignments", p.assignments_label || "—")) return false;
     if ("availTasks" in colFilters) {
@@ -2979,6 +2980,7 @@ function TeamManagementTab({
           userName={rateModalUser.full_name}
           currentRate={rateModalUser.pay_rate || 0}
           currentRateType={rateModalUser.pay_rate_type || "hourly"}
+          currentCurrency={rateModalUser.pay_currency}
           onClose={() => setRateModalUser(null)}
           onSaved={fetchData}
         />
@@ -3645,7 +3647,7 @@ function TeamManagementTab({
                         title="Add New Rate / view rate history"
                         className="cursor-pointer font-semibold text-espresso hover:text-terracotta transition-colors"
                       >
-                        ${(p.pay_rate || 0).toFixed(2)}
+                        {formatPayMoney(p.pay_rate || 0, p.pay_currency)}
                       </button>
                     ) : (
                       <span title="Hidden" className="text-stone">🔒</span>
@@ -3835,7 +3837,7 @@ function TeamManagementTab({
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
-                              <p className="mt-0.5 text-espresso font-medium">{isFullAdmin ? `$${(p.pay_rate || 0).toFixed(2)} / ${p.pay_rate_type || "hourly"}` : "🔒 Hidden"}</p>
+                              <p className="mt-0.5 text-espresso font-medium">{isFullAdmin ? `${formatPayMoney(p.pay_rate || 0, p.pay_currency)} / ${p.pay_rate_type || "hourly"}` : "🔒 Hidden"}</p>
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
