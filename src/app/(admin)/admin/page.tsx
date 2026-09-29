@@ -55,6 +55,7 @@ import {
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
+import { formatPayMoney } from "@/lib/payroll";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -2609,7 +2610,7 @@ function TeamManagementTab({
       role: u(profiles.map((p) => p.role)),
       department: u(profiles.map((p) => p.department)),
       position: u(profiles.map((p) => normalizePosition(p.position))),
-      payRate: isFullAdmin ? u(profiles.map((p) => `$${(p.pay_rate || 0).toFixed(2)}`), true) : [],
+      payRate: isFullAdmin ? u(profiles.map((p) => formatPayMoney(p.pay_rate || 0, p.pay_currency)), true) : [],
       rateType: isFullAdmin ? u(profiles.map((p) => p.pay_rate_type || "hourly")) : [],
       assignments: u(profiles.map((p) => p.assignments_label)),
       availTasks: ["On", "Off", "—"],
@@ -2955,7 +2956,7 @@ function TeamManagementTab({
     if (!check("role", p.role || "va")) return false;
     if (!check("department", p.department || "—")) return false;
     if (!check("position", normalizePosition(p.position) || "—")) return false;
-    if (!check("payRate", `$${(p.pay_rate || 0).toFixed(2)}`)) return false;
+    if (!check("payRate", formatPayMoney(p.pay_rate || 0, p.pay_currency))) return false;
     if (!check("rateType", p.pay_rate_type || "hourly")) return false;
     if (!check("assignments", p.assignments_label || "—")) return false;
     if ("availTasks" in colFilters) {
@@ -2979,6 +2980,7 @@ function TeamManagementTab({
           userName={rateModalUser.full_name}
           currentRate={rateModalUser.pay_rate || 0}
           currentRateType={rateModalUser.pay_rate_type || "hourly"}
+          currentCurrency={rateModalUser.pay_currency}
           onClose={() => setRateModalUser(null)}
           onSaved={fetchData}
         />
@@ -3645,7 +3647,7 @@ function TeamManagementTab({
                         title="Add New Rate / view rate history"
                         className="cursor-pointer font-semibold text-espresso hover:text-terracotta transition-colors"
                       >
-                        ${(p.pay_rate || 0).toFixed(2)}
+                        {formatPayMoney(p.pay_rate || 0, p.pay_currency)}
                       </button>
                     ) : (
                       <span title="Hidden" className="text-stone">🔒</span>
@@ -3835,7 +3837,7 @@ function TeamManagementTab({
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
-                              <p className="mt-0.5 text-espresso font-medium">{isFullAdmin ? `$${(p.pay_rate || 0).toFixed(2)} / ${p.pay_rate_type || "hourly"}` : "🔒 Hidden"}</p>
+                              <p className="mt-0.5 text-espresso font-medium">{isFullAdmin ? `${formatPayMoney(p.pay_rate || 0, p.pay_currency)} / ${p.pay_rate_type || "hourly"}` : "🔒 Hidden"}</p>
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
@@ -7653,6 +7655,13 @@ interface LineItemDraft {
 function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezone: string }) {
   const [view, setView] = useState<InvoiceView>("list");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  // Every real payment, independent of which invoice they're on or that
+  // invoice's issue date — "Paid" is computed from these by payment_date so
+  // it means the same thing here as it does on Financial Summary: real cash
+  // in that month, not "invoices issued this month that happen to be fully
+  // paid now" (which misses partial payments and money that arrived in a
+  // different month).
+  const [allInvoicePayments, setAllInvoicePayments] = useState<{ invoice_id: number; amount: number; payment_date: string }[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -8032,14 +8041,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const fetchInvoices = useCallback(async () => {
     const sb = createClient();
-    const [invRes, clientsRes, orgRes, accRes, tagsRes] = await Promise.all([
+    const [invRes, clientsRes, orgRes, accRes, tagsRes, invoicePayRes] = await Promise.all([
       sb.from("invoices").select("*").order("created_at", { ascending: false }),
       sb.from("clients").select("*").eq("active", true).order("name"),
       sb.from("organization_settings").select("*").limit(1).single(),
       fetch("/api/accounts"),
       sb.from("project_tags").select("project_name").eq("is_active", true).order("sort_order"),
+      sb.from("invoice_payments").select("invoice_id, amount, payment_date"),
     ]);
     setInvoices((invRes.data ?? []) as Invoice[]);
+    setAllInvoicePayments((invoicePayRes.data ?? []) as { invoice_id: number; amount: number; payment_date: string }[]);
     setClients((clientsRes.data ?? []) as Client[]);
     if (orgRes.data) {
       setOrgSettings(orgRes.data as OrganizationSettings);
@@ -8133,7 +8144,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const summaryStats = useMemo(() => {
     let totalInvoiced = 0;
     let outstanding = 0;
-    let paid = 0;
     let overdue = 0;
     let draftTotal = 0;
     periodFilteredInvoices.forEach((inv) => {
@@ -8148,11 +8158,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       // there, not here — counting both would bill the same money twice.
       const carriedAway = inv.carried_into_invoice_id != null;
       if (!carriedAway && (inv.status === "sent" || inv.status === "partially_paid")) outstanding += amountOwed(inv);
-      if (inv.status === "paid" || inv.status === "archived") paid += Number(inv.total);
       if (!carriedAway && inv.status === "overdue") overdue += amountOwed(inv);
     });
+
+    // "Paid" = real cash collected in the selected period, by payment_date —
+    // matches Financial Summary's "Collected from Clients", and counts partial
+    // payments. Matched on the date string's prefix (same as the invoice period
+    // filter) so no timezone conversion can shift a month-end payment.
+    const isFullYear = periodFilter.endsWith("-full");
+    const periodPrefix = isFullYear ? periodFilter.slice(0, 4) : periodFilter;
+    const paid = allInvoicePayments
+      .filter((p) => p.payment_date?.startsWith(periodPrefix))
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+
     return { totalInvoiced, outstanding, paid, overdue, draftTotal };
-  }, [periodFilteredInvoices]);
+  }, [periodFilteredInvoices, allInvoicePayments, periodFilter]);
 
   const selectedClient = useMemo(() => {
     return clients.find((c) => c.id === selectedClientId) ?? null;
