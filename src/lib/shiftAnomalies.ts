@@ -1,6 +1,7 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 import { entryDurationMs } from "@/lib/shiftSummary";
+import { getDayBoundsInTimezone } from "@/lib/utils";
 
 // The three checks from the manual August time review — a Break entry that
 // somehow ended up billable, a "Clock In" placeholder that never got handed
@@ -59,6 +60,10 @@ export interface ShiftAnomalyResult {
   findings: ShiftAnomalyFinding[];
   /** The whole day, in order — what the context lines in the alert come from. */
   logs: ShiftLogRow[];
+  /** Work actually handed in that day — task_submissions rows, not entries.
+   *  Toni asked for this alongside the entry count: entries say how the day
+   *  was logged, submissions say what actually left the VA's hands. */
+  submissionCount: number;
 }
 
 /**
@@ -89,6 +94,24 @@ export async function checkShiftAnomalies(
     .eq("session_date", sessionDate)
     .is("deleted_at", null)
     .order("start_time", { ascending: true });
+
+  // task_submissions has no session_date column — it's keyed on created_at,
+  // so the same org-local calendar day has to be converted to a UTC range
+  // to query it. Not thread-aware (a resubmission after a revision is its
+  // own submission row) and not review-outcome-aware — this counts what was
+  // handed in that day, not what was approved.
+  const { start: dayStart, end: dayEnd } = getDayBoundsInTimezone(
+    new Date(`${sessionDate}T12:00:00Z`),
+    ORG_TIMEZONE
+  );
+  const { count: submissionCount } = await supabase
+    .from("task_submissions")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("message_type", "submission")
+    .is("deleted_at", null)
+    .gte("created_at", dayStart)
+    .lte("created_at", dayEnd);
 
   const rows = (logs ?? []) as unknown as ShiftLogRow[];
   const findings: ShiftAnomalyFinding[] = [];
@@ -231,7 +254,7 @@ export async function checkShiftAnomalies(
     });
   }
 
-  return { clean: findings.length === 0, findings, logs: rows };
+  return { clean: findings.length === 0, findings, logs: rows, submissionCount: submissionCount ?? 0 };
 }
 
 /** "9:04 AM" in org time. Used where a full, unambiguous time reads better. */

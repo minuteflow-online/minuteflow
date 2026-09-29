@@ -61,6 +61,7 @@ const logs = [
 const billedBreak: ShiftAnomalyResult = {
   clean: false,
   logs,
+  submissionCount: 2,
   findings: [
     {
       type: "billed_break",
@@ -118,7 +119,16 @@ describe("formatShiftMessage", () => {
   it("totals billable time by elapsed, not by duration_ms", () => {
     // 1m + 1h42m + 26m + 2m billable = 2h11m. The Personal 30m is excluded,
     // and the break's stored zero must not swallow its 26 minutes.
-    expect(message).toContain("Day: <b>2h11m</b> billable · 5 entries");
+    expect(message).toContain("Day: <b>2h11m</b> billable · 5 entries · 2 submissions");
+  });
+
+  it("singularizes one submission", () => {
+    const one = formatShiftMessage("Flordeliz Mandin", "2026-08-26", {
+      ...billedBreak,
+      submissionCount: 1,
+    });
+    expect(one).toContain("· 1 submission");
+    expect(one).not.toContain("· 1 submissions");
   });
 
   it("shows the flagged entry with one either side, not the whole day", () => {
@@ -168,6 +178,7 @@ describe("formatShiftMessage", () => {
     const overlap = formatShiftMessage("Flordeliz Mandin", "2026-08-26", {
       clean: false,
       logs,
+      submissionCount: 2,
       findings: [
         {
           type: "overlap",
@@ -201,9 +212,10 @@ describe("formatShiftMessage", () => {
       clean: true,
       findings: [],
       logs,
+      submissionCount: 3,
     });
     expect(clean).toContain("Shift looks clean.");
-    expect(clean).toContain("Day: <b>2h11m</b> billable · 5 entries");
+    expect(clean).toContain("Day: <b>2h11m</b> billable · 5 entries · 3 submissions");
     expect(clean).not.toContain("▸");
   });
 
