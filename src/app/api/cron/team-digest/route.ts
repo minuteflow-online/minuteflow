@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { buildTeamDigest, buildCelebrations, buildBirthdayHeadsUp, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue, buildUnclaimed } from "@/lib/teamDigest";
+import { buildTeamDigest, buildCelebrations, buildBirthdayHeadsUp, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue, buildUnclaimed, buildMyTasksMessages } from "@/lib/teamDigest";
 import { findProfileGaps, gapMessage } from "@/lib/profileGaps";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { sendTelegram, sendTelegramTo, sendTelegramSticker, telegramEnabled, esc } from "@/lib/telegram";
@@ -102,6 +102,32 @@ export async function GET(request: NextRequest) {
     }
 
     return Response.json({ ok: true, kind, dmSent, unlinked: unlinked.length });
+  }
+
+  // Each person's own due-today/overdue/due-tomorrow tasks, privately — see
+  // buildMyTasksMessages for why this exists and why it posts every day.
+  // Runs alongside kind=overdue, which keeps posting the team-wide version
+  // unchanged.
+  if (kind === "my-tasks-today" || kind === "my-tasks-tomorrow") {
+    const when = kind === "my-tasks-today" ? "today" : "tomorrow";
+    const messages = await buildMyTasksMessages(when);
+
+    let dmSent = 0;
+    for (const m of messages) {
+      const result = await sendTelegramTo(m.chatId, m.message, "va");
+      if (result.ok) dmSent++;
+    }
+
+    // One summary rather than a log line per person — same reasoning as the
+    // meeting reminder above.
+    if (telegramEnabled("ops")) {
+      await sendTelegram(
+        "ops",
+        `📨 Task reminder DMs (${when}) sent to <b>${dmSent}</b> of ${messages.length} people.`
+      );
+    }
+
+    return Response.json({ ok: true, kind, dmSent, total: messages.length });
   }
 
   // Each person hears only about their own profile, privately. A list of

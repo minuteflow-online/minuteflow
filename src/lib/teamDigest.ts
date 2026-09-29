@@ -613,6 +613,146 @@ export async function buildOverdue(): Promise<string | null> {
   return lines.join("\n");
 }
 
+type MyTaskRow = {
+  id: number;
+  task_name: string | null;
+  due_date: string;
+  due_time: string | null;
+  account: string | null;
+  project: string | null;
+  status: string | null;
+};
+
+/**
+ * Each VA's own due-today, overdue, and due-tomorrow tasks, sent as a private
+ * Telegram DM rather than posted to the team chat — Flordeliz asked for this:
+ * her own reminders were getting lost in the team chat's other traffic.
+ *
+ * Two runs, same split the team digest already uses for its own due-date
+ * posts: "today" carries what's due today plus anything still overdue (the
+ * same OVERDUE_HORIZON_DAYS window as buildOverdue, so the two never
+ * disagree about what counts as too old to chase); "tomorrow" is the
+ * evening-before heads-up, due tomorrow only.
+ *
+ * Deliberately NOT silent when there's nothing due — every other digest in
+ * this file skips posting on a quiet day; Toni asked for this one to go out
+ * daily regardless, so it doubles as a standing reminder rather than
+ * something that only ever interrupts with bad news.
+ *
+ * The team-wide overdue post (buildOverdue) is unchanged and keeps running
+ * alongside this — Toni asked to keep both, not replace one with the other.
+ */
+export async function buildMyTasksMessages(
+  when: "today" | "tomorrow"
+): Promise<Array<{ vaId: string; name: string; chatId: number; message: string }>> {
+  const supabase = service();
+  const todayDate = orgDate(0);
+  const tomorrowDate = orgDate(1);
+  const horizon = orgDate(-OVERDUE_HORIZON_DAYS);
+
+  const { data: people } = await supabase
+    .from("profiles")
+    .select("id, full_name, username, telegram_chat_id")
+    .eq("is_active", true)
+    .not("telegram_chat_id", "is", null);
+  const recipients = (people ?? []).filter((p) => p.telegram_chat_id);
+  if (recipients.length === 0) return [];
+
+  // One query covering everything either run could need — overdue back to
+  // the horizon, through tomorrow — then split per person below by due_date.
+  const { data: rows } = await supabase
+    .from("assigned_tasks")
+    .select("id, task_name, due_date, due_time, account, project, status")
+    .gte("due_date", horizon)
+    .lte("due_date", tomorrowDate)
+    .is("deleted_at", null)
+    .is("archived_at", null);
+  const open = ((rows ?? []) as MyTaskRow[]).filter(
+    (t) => !DUE_DATE_FINISHED_STATUSES.has(String(t.status ?? ""))
+  );
+  if (open.length === 0) {
+    // Still a message for everyone — see the doc comment above.
+    return recipients.map((p) => ({
+      vaId: p.id as string,
+      name: (p.full_name as string) || (p.username as string) || "there",
+      chatId: p.telegram_chat_id as number,
+      message: myTasksMessage(when, [], [], []),
+    }));
+  }
+
+  const { data: assignees } = await supabase
+    .from("assigned_task_assignees")
+    .select("assigned_task_id, va_id")
+    .in("assigned_task_id", open.map((t) => t.id));
+
+  const byTaskId = new Map(open.map((t) => [t.id, t]));
+  const tasksByVa = new Map<string, MyTaskRow[]>();
+  for (const a of assignees ?? []) {
+    const task = byTaskId.get(a.assigned_task_id as number);
+    if (!task) continue;
+    const list = tasksByVa.get(a.va_id as string) ?? [];
+    list.push(task);
+    tasksByVa.set(a.va_id as string, list);
+  }
+
+  return recipients.map((p) => {
+    const vaId = p.id as string;
+    const tasks = tasksByVa.get(vaId) ?? [];
+    const overdue = tasks.filter((t) => t.due_date < todayDate);
+    const dueToday = tasks.filter((t) => t.due_date === todayDate);
+    const dueTomorrow = tasks.filter((t) => t.due_date === tomorrowDate);
+    return {
+      vaId,
+      name: (p.full_name as string) || (p.username as string) || "there",
+      chatId: p.telegram_chat_id as number,
+      message: myTasksMessage(when, overdue, dueToday, dueTomorrow),
+    };
+  });
+}
+
+/** One line per task: name, due time (if set), and where it lives. */
+function myTaskLine(t: MyTaskRow): string {
+  const where = [t.account, t.project].filter(Boolean).join(" / ");
+  const at = t.due_time ? ` at ${esc(meetingClock(t.due_time))}` : "";
+  return `• ${esc(t.task_name ?? "a task")}${at}${where ? ` — ${esc(where)}` : ""}`;
+}
+
+function myTasksMessage(
+  when: "today" | "tomorrow",
+  overdue: MyTaskRow[],
+  dueToday: MyTaskRow[],
+  dueTomorrow: MyTaskRow[]
+): string {
+  const lines: string[] = [
+    when === "today" ? `🗒️ <b>Your tasks today</b>` : `🌙 <b>Your tasks tomorrow</b> — ${longDate(orgDate(1))}`,
+  ];
+
+  if (when === "today") {
+    if (overdue.length > 0) {
+      lines.push("", "⏰ <b>Overdue</b>");
+      overdue.slice(0, 10).forEach((t) => lines.push(myTaskLine(t)));
+      if (overdue.length > 10) lines.push(`…and ${overdue.length - 10} more`);
+    }
+    if (dueToday.length > 0) {
+      lines.push("", "<b>Due today</b>");
+      dueToday.slice(0, 10).forEach((t) => lines.push(myTaskLine(t)));
+      if (dueToday.length > 10) lines.push(`…and ${dueToday.length - 10} more`);
+    }
+    if (overdue.length === 0 && dueToday.length === 0) {
+      lines.push("", "Nothing due today, and nothing overdue. You're all caught up. 🙌");
+    }
+  } else {
+    if (dueTomorrow.length > 0) {
+      dueTomorrow.slice(0, 10).forEach((t) => lines.push(myTaskLine(t)));
+      if (dueTomorrow.length > 10) lines.push(`…and ${dueTomorrow.length - 10} more`);
+    } else {
+      lines.push("", "Nothing on the calendar yet. A quiet day ahead. 🌤️");
+    }
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Work sitting unclaimed, so it does not quietly wait for someone to notice it.
  *
