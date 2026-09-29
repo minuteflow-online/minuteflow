@@ -23,6 +23,11 @@ export interface Conversation {
   last_message: { body: string; created_at: string; mine: boolean } | null;
   unread: number;
   updated_at: string;
+  /** Per-viewer — hides it from your own list without touching anyone
+   *  else's. Reported straight from the data (not inferred client-side), so
+   *  it's right whether this conversation came from the active list, the
+   *  archived list, or a freshly started chat. */
+  archived: boolean;
 }
 
 export interface DirectMessage {
@@ -56,6 +61,21 @@ export async function fetchConversations(): Promise<Conversation[]> {
   if (!headers) return [];
   try {
     const res = await fetch(`${API_BASE}/api/conversations`, { headers });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.conversations ?? []) as Conversation[];
+  } catch {
+    return [];
+  }
+}
+
+/** Conversations you've archived — hidden from fetchConversations, still
+ *  readable here. Same endpoint, `?archived=1`. */
+export async function fetchArchivedConversations(): Promise<Conversation[]> {
+  const headers = await authHeaders();
+  if (!headers) return [];
+  try {
+    const res = await fetch(`${API_BASE}/api/conversations?archived=1`, { headers });
     if (!res.ok) return [];
     const data = await res.json();
     return (data.conversations ?? []) as Conversation[];
@@ -122,6 +142,54 @@ export async function editMessage(conversationId: string, messageId: number, bod
     return (data.message ?? null) as DirectMessage | null;
   } catch {
     return null;
+  }
+}
+
+/** Deletes one of your own DMs (soft delete, sender-only, enforced server-side). */
+export async function deleteMessage(conversationId: string, messageId: number): Promise<boolean> {
+  const headers = await authHeaders();
+  if (!headers) return false;
+  try {
+    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages?messageId=${messageId}`, {
+      method: "DELETE",
+      headers,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Archives (or unarchives) a conversation — per-viewer, hides it from your
+ *  own list only. */
+export async function setConversationArchived(conversationId: string, archived: boolean): Promise<boolean> {
+  const headers = await authHeaders();
+  if (!headers) return false;
+  try {
+    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ archived }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Deletes the whole conversation for every member — any member may do
+ *  this, there's no single "owner" the way a General topic has an author. */
+export async function deleteConversation(conversationId: string): Promise<boolean> {
+  const headers = await authHeaders();
+  if (!headers) return false;
+  try {
+    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+      method: "DELETE",
+      headers,
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 
