@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { REQUIRED_CORRECTION_FIELDS } from "@/lib/applyCorrection";
 import type { TimeLog } from "@/types/database";
 
 const CORRECTABLE_FIELDS = [
@@ -199,6 +200,19 @@ export default function CorrectionRequestModal({
           setError("The end time must be after the start time. Please fix your correction before submitting.");
           return;
         }
+      }
+    }
+
+    // Some fields can't go through blank — task_name is NOT NULL on time_logs,
+    // so a request that reaches this point empty (e.g. "Custom name..." picked
+    // and never typed) would sit unapprovable until whoever reviews it notices
+    // and edits it by hand. Catching it here means the person who knows what
+    // it should say fixes it, not the reviewer guessing.
+    for (const key of selectedFields) {
+      if (REQUIRED_CORRECTION_FIELDS.has(key) && !(fieldValues[key] || "").trim()) {
+        const label = CORRECTABLE_FIELDS.find((f) => f.key === key)?.label ?? key;
+        setError(`${label} can't be left blank. Pick one from the list, or type a name.`);
+        return;
       }
     }
 
