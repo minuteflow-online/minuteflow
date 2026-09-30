@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types/database";
 import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 import VAProfileTab from "@/components/VAProfileTab";
-import { normalizeByDateValue, isFixedPeriodRate, type ByDateValue } from "@/lib/payroll";
+import { normalizeByDateValue, isFixedPeriodRate, formatPayMoney, type ByDateValue } from "@/lib/payroll";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { hasModerationAccess, canReviewBugReports } from "@/lib/financialAccess";
 import ReportIssueModal, {
@@ -1609,6 +1609,7 @@ interface PaystubRecord {
   payment_date: string | null;
   personal_message: string | null;
   by_date: Record<string, ByDateValue> | null;
+  currency: string | null;
 }
 
 interface PerTaskEarning {
@@ -1641,14 +1642,15 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
   const [perTaskEarnings, setPerTaskEarnings] = useState<PerTaskEarning[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [payCurrency, setPayCurrency] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const [paystubRes, perTaskRes] = await Promise.all([
+        const [paystubRes, perTaskRes, profileRes] = await Promise.all([
           supabase
             .from("paystub_snapshots")
-            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, pay_rate_type, confirmation_number, payment_date, personal_message, by_date")
+            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, pay_rate_type, confirmation_number, payment_date, personal_message, by_date, currency")
             .eq("user_id", currentUserId)
             .order("sent_at", { ascending: false }),
           supabase
@@ -1660,9 +1662,11 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
             .eq("billing_type", "fixed")
             .in("status", ["approved", "completed", "paid"])
             .order("assigned_at", { ascending: false }),
+          supabase.from("profiles").select("pay_currency").eq("id", currentUserId).single(),
         ]);
         setPaystubs((paystubRes.data as PaystubRecord[]) || []);
         setPerTaskEarnings(((perTaskRes.data ?? []) as unknown) as PerTaskEarning[]);
+        setPayCurrency((profileRes.data?.pay_currency as string | null) ?? null);
       } catch {
         // non-fatal
       } finally {
@@ -1694,7 +1698,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
           <h3 className="text-sm font-bold text-espresso">Per-Task Earnings</h3>
           {pendingPayout > 0 && (
             <span className="text-xs font-semibold text-sage bg-sage-soft px-3 py-1 rounded-full">
-              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(pendingPayout)} pending payout
+              {formatPayMoney(pendingPayout, payCurrency)} pending payout
             </span>
           )}
         </div>
@@ -1732,7 +1736,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                       </td>
                       <td className="px-4 py-3 text-sm font-semibold text-sage text-right">
                         {e.rate != null
-                          ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(e.rate)
+                          ? formatPayMoney(e.rate, payCurrency)
                           : "—"}
                       </td>
                       <td className="px-4 py-3">
@@ -1751,9 +1755,9 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
 
       {/* ── Paystubs ── */}
       {(() => {
-        const fmtCurrency = (v: number | null | undefined) =>
+        const fmtCurrency = (v: number | null | undefined, currency: string | null) =>
           v != null
-            ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v)
+            ? formatPayMoney(v, currency)
             : "—";
         const fmtDate = (d: string | null) =>
           d
@@ -1875,22 +1879,22 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                                       <p className="text-[13px] text-espresso">
                                         {isFixedPeriod
                                           ? p.pay_rate != null
-                                            ? `${fmtCurrency(p.pay_rate)}/mo (salary)`
+                                            ? `${fmtCurrency(p.pay_rate, p.currency)}/mo (salary)`
                                             : "—"
                                           : distinctRates.length > 1
-                                            ? distinctRates.map((r) => `${fmtCurrency(r)}/hr`).join(" → ")
+                                            ? distinctRates.map((r) => `${fmtCurrency(r, p.currency)}/hr`).join(" → ")
                                             : p.pay_rate != null
-                                              ? `${fmtCurrency(p.pay_rate)}/hr`
+                                              ? `${fmtCurrency(p.pay_rate, p.currency)}/hr`
                                               : "—"}
                                       </p>
                                     </div>
                                     <div>
                                       <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Gross Pay</p>
-                                      <p className="text-[13px] text-espresso">{fmtCurrency(p.gross_pay)}</p>
+                                      <p className="text-[13px] text-espresso">{fmtCurrency(p.gross_pay, p.currency)}</p>
                                     </div>
                                     <div>
                                       <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Amount Paid</p>
-                                      <p className="text-[13px] font-semibold text-espresso">{fmtCurrency(p.amount_paid)}</p>
+                                      <p className="text-[13px] font-semibold text-espresso">{fmtCurrency(p.amount_paid, p.currency)}</p>
                                     </div>
                                     <div>
                                       <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Confirmation #</p>
@@ -1939,7 +1943,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                                                 <td className="py-1.5 pr-4 text-right text-stone">{hrs.toFixed(2)}h</td>
                                                 <td className="py-1.5 text-right text-espresso font-medium">
                                                   {amt != null
-                                                    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amt)
+                                                    ? formatPayMoney(amt, p.currency)
                                                     : "—"}
                                                 </td>
                                               </tr>

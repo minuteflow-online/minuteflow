@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { shiftHoursFromProfile, computeBudgetStatus, vaBudgetType, isWorkDay, type BudgetStatus } from "@/lib/budget";
 import { orgDateOf } from "@/lib/taskSchedule";
 import type { BudgetRequest } from "@/types/database";
+import { formatPayMoney } from "@/lib/payroll";
 
 type BudgetProfile = {
   work_days: number[] | null;
@@ -16,6 +17,7 @@ type BudgetProfile = {
   daily_budget_limit: number | null;
   weekly_budget_limit: number | null;
   monthly_budget_limit: number | null;
+  pay_currency: string | null;
 };
 
 function startOfTodayISO(): string {
@@ -36,8 +38,8 @@ function startOfMonthISO(): string {
   return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString();
 }
 
-function formatAmount(value: number, unit: "hours" | "dollars"): string {
-  return unit === "dollars" ? `$${value.toFixed(2)}` : `${value.toFixed(2)}h`;
+function formatAmount(value: number, unit: "hours" | "dollars", currency?: string | null): string {
+  return unit === "dollars" ? formatPayMoney(value, currency) : `${value.toFixed(2)}h`;
 }
 
 // `alwaysAllowRequest` keeps the request form reachable even when nothing is
@@ -75,7 +77,7 @@ export default function BudgetWidget({
       const [{ data: prof }, { data: logs }, reqRes] = await Promise.all([
         supabase
           .from("profiles")
-          .select("position, pay_rate_type, work_days, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit")
+          .select("position, pay_rate_type, work_days, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit, pay_currency")
           .eq("id", currentUserId)
           .single(),
         // Pull from whichever is earlier, week-start or month-start (a week
@@ -240,16 +242,16 @@ export default function BudgetWidget({
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">{label}</p>
-          <span className="text-[11px] font-semibold text-walnut">{formatAmount(status.remaining, status.unit)} left</span>
+          <span className="text-[11px] font-semibold text-walnut">{formatAmount(status.remaining, status.unit, profile?.pay_currency)} left</span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
           <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
         </div>
         <div className="flex items-center justify-between text-[10px] text-stone">
-          <span>{formatAmount(status.used, status.unit)} used</span>
+          <span>{formatAmount(status.used, status.unit, profile?.pay_currency)} used</span>
           <span>
-            {formatAmount(status.limit, status.unit)} limit
-            {approvedExtra > 0 ? ` (+${formatAmount(approvedExtra, status.unit)} ${approvedWhen})` : ""}
+            {formatAmount(status.limit, status.unit, profile?.pay_currency)} limit
+            {approvedExtra > 0 ? ` (+${formatAmount(approvedExtra, status.unit, profile?.pay_currency)} ${approvedWhen})` : ""}
           </span>
         </div>
         {status.over ? (
@@ -287,7 +289,7 @@ export default function BudgetWidget({
 
           {(pendingRequest ? (
             <p className="rounded-lg bg-amber-soft/60 px-2.5 py-1.5 text-[11px] text-walnut">
-              Request for {formatAmount(pendingRequest.amount, pendingRequest.unit)} more ({pendingRequest.period === "day" ? "today" : pendingRequest.period === "week" ? "this week" : "this month"}) is pending admin approval.
+              Request for {formatAmount(pendingRequest.amount, pendingRequest.unit, profile?.pay_currency)} more ({pendingRequest.period === "day" ? "today" : pendingRequest.period === "week" ? "this week" : "this month"}) is pending admin approval.
             </p>
           ) : showRequest ? (
             <div className="space-y-2 rounded-lg border border-sand bg-parchment/30 p-2.5">

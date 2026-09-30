@@ -61,6 +61,8 @@ export interface Profile {
   role: UserRole;
   pay_rate: number;
   pay_rate_type: 'hourly' | 'daily' | 'monthly' | 'per_task';
+  // Currency the VA is paid in — symbol only, amounts are entered in it. See lib/payroll.ts.
+  pay_currency: 'USD' | 'PHP';
   is_active: boolean;
   can_see_available_tasks: boolean;
   visible_for_collaboration: boolean;

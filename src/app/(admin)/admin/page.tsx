@@ -1335,9 +1335,13 @@ export default function AdminPage() {
     });
 
     if (!result.ok) {
-      return result.code === "end_before_start"
-        ? `${result.error} Please edit the date/time above before approving.`
-        : result.error;
+      if (result.code === "end_before_start") {
+        return `${result.error} Please edit the date/time above before approving.`;
+      }
+      if (result.code === "blank_required_field") {
+        return `${result.error} Edit the value above before approving, or deny the request.`;
+      }
+      return result.error;
     }
 
     fetchData();
@@ -6410,15 +6414,18 @@ function CorrectionsTab({
                       </div>
                     </div>
                   )}
-                  {/* Requested changes with before/after comparison — time fields are editable */}
+                  {/* Requested changes with before/after comparison — every field is editable,
+                      so a request that came in blank (task_name can't be, see applyCorrection's
+                      REQUIRED_FIELDS) can be fixed here instead of just denied. */}
                   <div className="mt-2 rounded-lg bg-parchment px-3 py-2">
                     <div className="text-[10px] font-semibold text-bark mb-1">
-                      Requested Changes: <span className="font-normal text-stone">(edit time fields if the date looks wrong)</span>
+                      Requested Changes: <span className="font-normal text-stone">(edit any value below before approving)</span>
                     </div>
                     {Object.entries(changes).map(([field, value]) => {
                       const originalValue = reqLog ? (reqLog as unknown as Record<string, unknown>)[field] : undefined;
                       const isTimeField = field === "start_time" || field === "end_time";
                       const editedVal = editedChanges[req.id]?.[field] ?? value;
+                      const isBlank = !editedVal.trim();
                       return (
                         <div key={field} className="text-[11px] text-espresso mb-1">
                           <span className="font-medium">{field}:</span>{" "}
@@ -6436,7 +6443,20 @@ function CorrectionsTab({
                               className="rounded border border-terracotta px-1.5 py-0.5 text-[11px] text-terracotta font-medium outline-none focus:ring-1 focus:ring-terracotta bg-white"
                             />
                           ) : (
-                            <span className="text-terracotta font-medium">{value || "(empty)"}</span>
+                            <input
+                              type="text"
+                              value={editedVal}
+                              onChange={(e) => setEditedChanges(prev => ({
+                                ...prev,
+                                [req.id]: { ...(prev[req.id] || {}), [field]: e.target.value }
+                              }))}
+                              placeholder={field === "task_name" ? "Task name can't be blank" : "(empty)"}
+                              className={`rounded border px-1.5 py-0.5 text-[11px] font-medium outline-none focus:ring-1 bg-white ${
+                                isBlank && field === "task_name"
+                                  ? "border-red-400 text-red-500 focus:ring-red-400"
+                                  : "border-terracotta text-terracotta focus:ring-terracotta"
+                              }`}
+                            />
                           )}
                         </div>
                       );

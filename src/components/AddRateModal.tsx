@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { PayRateHistory } from "@/types/database";
+import { formatPayMoney, normalizePayCurrency, PAY_CURRENCIES, type PayCurrency } from "@/lib/payroll";
 
 interface AddRateModalProps {
   userId: string;
   userName: string;
   currentRate: number;
   currentRateType: string;
+  currentCurrency?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -34,6 +36,7 @@ export default function AddRateModal({
   userName,
   currentRate,
   currentRateType,
+  currentCurrency,
   onClose,
   onSaved,
 }: AddRateModalProps) {
@@ -44,6 +47,8 @@ export default function AddRateModal({
   const [effectiveDate, setEffectiveDate] = useState(todayInput());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [currency, setCurrency] = useState<PayCurrency>(normalizePayCurrency(currentCurrency));
+  const [currencySaving, setCurrencySaving] = useState(false);
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -97,6 +102,34 @@ export default function AddRateModal({
     setSaving(false);
   };
 
+  // Currency is a standing setting on the VA, separate from adding a rate —
+  // switching it saves straight away and doesn't touch rate history.
+  const handleCurrencyChange = async (next: PayCurrency) => {
+    if (next === currency || currencySaving) return;
+    const previous = currency;
+    setError("");
+    setCurrency(next);
+    setCurrencySaving(true);
+    try {
+      const res = await fetch("/api/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, pay_currency: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCurrency(previous);
+        setError(data.error || "Failed to save currency.");
+      } else {
+        onSaved();
+      }
+    } catch {
+      setCurrency(previous);
+      setError("Network error. Please try again.");
+    }
+    setCurrencySaving(false);
+  };
+
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
@@ -121,8 +154,30 @@ export default function AddRateModal({
           <div className="rounded-lg bg-parchment px-3 py-3 flex items-center justify-between">
             <span className="text-[11px] text-bark">Current Rate</span>
             <span className="text-xs font-bold text-espresso">
-              ${(currentRate || 0).toFixed(2)} / {currentRateType || "hourly"}
+              {formatPayMoney(currentRate || 0, currency)} / {currentRateType || "hourly"}
             </span>
+          </div>
+
+          {/* Pay currency */}
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Currency</p>
+              <p className="text-[10px] text-stone">Shown on this VA&apos;s rate and paystubs. Amounts aren&apos;t converted.</p>
+            </div>
+            <div className="flex gap-1">
+              {PAY_CURRENCIES.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => handleCurrencyChange(c)}
+                  disabled={currencySaving}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                    currency === c ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+                  }`}
+                >
+                  {c === "PHP" ? "₱ PHP" : "$ USD"}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Add New Rate form */}
@@ -132,7 +187,7 @@ export default function AddRateModal({
             </p>
             <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="text-[10px] text-bark">Amount</label>
+                <label className="text-[10px] text-bark">Amount ({currency})</label>
                 <input
                   type="number"
                   step="0.01"
@@ -201,7 +256,7 @@ export default function AddRateModal({
                   >
                     <div>
                       <span className="text-[12px] font-semibold text-espresso">
-                        ${Number(h.rate_amount).toFixed(2)} / {h.rate_type}
+                        {formatPayMoney(Number(h.rate_amount), currency)} / {h.rate_type}
                       </span>
                       <div className="text-[10px] text-stone">
                         {formatHistoryDate(h.effective_date)} — {formatHistoryDate(h.end_date)}

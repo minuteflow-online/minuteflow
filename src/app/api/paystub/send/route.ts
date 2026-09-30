@@ -3,7 +3,10 @@ import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import {
   computeGrossForRateType,
+  formatPayMoney,
   formatRateSegments,
+  normalizePayCurrency,
+  type PayCurrency,
   type PayRateHistoryRow,
   type RateSegment,
 } from "@/lib/payroll";
@@ -110,7 +113,7 @@ export async function POST(request: Request) {
   // Fetch VA profile (include payment_accounts for display on paystub)
   const { data: vaProfile, error: profileError } = await adminClient
     .from("profiles")
-    .select("full_name, pay_rate, pay_rate_type, payment_accounts, position, work_days")
+    .select("full_name, pay_rate, pay_rate_type, pay_currency, payment_accounts, position, work_days")
     .eq("id", user_id)
     .single();
 
@@ -173,6 +176,7 @@ export async function POST(request: Request) {
     .map(([task, t]) => ({ task, ms: t.ms, entries: t.entries, firstDate: t.firstDate }))
     .sort((a, b) => b.ms - a.ms || a.firstDate.localeCompare(b.firstDate));
   const payRate = Number(vaProfile.pay_rate) || 0;
+  const currency = normalizePayCurrency(vaProfile.pay_currency);
 
   // Rate-history-aware gross: each day is paid at the rate in effect that day.
   const { data: rateHistoryRaw } = await adminClient
@@ -347,6 +351,7 @@ export async function POST(request: Request) {
       totalHours,
       payRate,
       payRateType: vaProfile.pay_rate_type ?? null,
+      currency,
       isFixedPeriod,
       periodWeekdays,
       monthWeekdays,
@@ -493,6 +498,7 @@ export async function POST(request: Request) {
       customLineItems,
       customLineItemsTotal,
       fee: feeAmount,
+      currency,
     });
 
     const resendRes = await sendResendEmail({
@@ -559,6 +565,7 @@ export async function POST(request: Request) {
       resend_message_id: paystubResendMessageId,
       custom_line_items: customLineItems,
       fee: feeAmount,
+      currency,
     }).select("id").single();
     snapshotId = snapData?.id ?? null;
   } catch (snapErr) {
@@ -611,13 +618,6 @@ function formatDate(iso: string): string {
 function formatHours(ms: number): string {
   const h = ms / 3_600_000;
   return h.toFixed(2) + " hrs";
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(amount);
 }
 
 function formatDateLabel(iso: string): string {
@@ -692,6 +692,7 @@ interface PaystubData {
   customLineItems: { label: string; rate: number; quantity: number; amount: number }[];
   customLineItemsTotal: number;
   fee: number;
+  currency: PayCurrency;
 }
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -702,7 +703,8 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, taskBreakdown, paidOutputItems, paidOutputTotal, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, taskBreakdown, paidOutputItems, paidOutputTotal, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee, currency } = data;
+  const formatCurrency = (amount: number) => formatPayMoney(amount, currency);
 
   // A salaried day has no per-day $ amount — hours are shown, the dollar
   // column is not, rather than misrepresenting the salary as an hourly price.
@@ -900,7 +902,7 @@ function buildPaystubEmail(data: PaystubData): string {
               ? attendance
                 ? `${attendance.baseLabel} · ${attendance.paidDays} of ${attendance.expectedDays} work days${attendance.excusedDays > 0 ? ` (${attendance.excusedDays} excused)` : ""}`
                 : `Prorated Pay (${periodWeekdays} of ${monthWeekdays} weekdays)`
-              : `Time-based Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}`}</td>
+              : `Time-based Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments, currency)})` : ""}`}</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(grossPay)}</td>
           </tr>
           ${fixedTotal > 0 ? `<tr>

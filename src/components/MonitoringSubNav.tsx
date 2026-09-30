@@ -14,9 +14,8 @@ export default function MonitoringSubNav({ showTeam }: Props) {
   const reportTab = searchParams.get("tab");
 
   const tabs = [
-    { label: "Report", href: "/reports", isActive: pathname === "/reports" && reportTab !== "progress" && reportTab !== "ontime" },
+    { label: "Report", href: "/reports", isActive: pathname === "/reports" && reportTab !== "progress" },
     { label: "Progress", href: "/reports?tab=progress", isActive: pathname === "/reports" && reportTab === "progress" },
-    { label: "On-Time", href: "/reports?tab=ontime", isActive: pathname === "/reports" && reportTab === "ontime" },
     { label: "Time Log", href: "/timelog", isActive: pathname.startsWith("/timelog") },
     ...(showTeam ? [{ label: "Team", href: "/team", isActive: pathname.startsWith("/team") }] : []),
   ];

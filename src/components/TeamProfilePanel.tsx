@@ -7,6 +7,7 @@ import AccountBudgetAllocation from "@/components/AccountBudgetAllocation";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentAccountDetails } from "@/types/database";
 import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
+import { formatPayMoney, normalizePayCurrency, payCurrencySymbol } from "@/lib/payroll";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ export type ExtendedProfile = {
   payment_accounts: PaymentAccountDetails | null;
   pay_rate: number | null;
   pay_rate_type: string | null;
+  pay_currency: string | null;
   work_days: number[] | null;
   shift_hours: number | null;
   shift_start: string | null;
@@ -102,7 +104,7 @@ export default function TeamProfilePanel({ userId, isAdmin }: { userId: string; 
       supabase.auth.getUser(),
       supabase
         .from("profiles")
-        .select("id,full_name,username,department,position,phone,address,emergency_contact_name,emergency_contact_phone,birthday,date_started,payment_accounts,pay_rate,pay_rate_type,work_days,shift_hours,shift_start,shift_end,daily_budget_unit,daily_budget_limit,weekly_budget_limit,monthly_budget_limit")
+        .select("id,full_name,username,department,position,phone,address,emergency_contact_name,emergency_contact_phone,birthday,date_started,payment_accounts,pay_rate,pay_rate_type,pay_currency,work_days,shift_hours,shift_start,shift_end,daily_budget_unit,daily_budget_limit,weekly_budget_limit,monthly_budget_limit")
         .eq("id", userId)
         .single(),
       supabase.from("profile_milestones").select("*").eq("user_id", userId).order("milestone_date", { ascending: false }),
@@ -657,6 +659,7 @@ export type ShiftBudgetProfile = Pick<
   | "position"
   | "pay_rate"
   | "pay_rate_type"
+  | "pay_currency"
   | "work_days"
   | "shift_hours"
   | "shift_start"
@@ -805,11 +808,12 @@ export function ShiftBudgetSection({
   const displayWeekly = profile?.weekly_budget_limit ?? null;
   const displayMonthly = profile?.monthly_budget_limit ?? null;
 
+  const currencySymbol = payCurrencySymbol(profile?.pay_currency);
   const formatLimit = (v: number) =>
     unit === "dollars"
-      ? `$${v.toFixed(2)}`
+      ? formatPayMoney(v, profile?.pay_currency)
       : hourlyRate != null
-        ? `${v.toFixed(2)}h ($${(v * hourlyRate).toFixed(2)})`
+        ? `${v.toFixed(2)}h (${formatPayMoney(v * hourlyRate, profile?.pay_currency)})`
         : `${v.toFixed(2)}h`;
 
   return (
@@ -869,7 +873,7 @@ export function ShiftBudgetSection({
                       onClick={() => switchInputUnit("dollars")}
                       className={`rounded-md px-3 py-1 transition-colors ${inputUnit === "dollars" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                     >
-                      Dollars
+                      {normalizePayCurrency(profile?.pay_currency) === "PHP" ? "Pesos" : "Dollars"}
                     </button>
                   </div>
                 </div>
@@ -878,7 +882,7 @@ export function ShiftBudgetSection({
               {mode === "hours" ? (
                 <div className="max-w-[180px]">
                   <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">
-                    Daily Limit ({inputUnit === "dollars" ? "$" : "hours"})
+                    Daily Limit ({inputUnit === "dollars" ? currencySymbol : "hours"})
                   </p>
                   <input
                     type="number"
@@ -907,7 +911,7 @@ export function ShiftBudgetSection({
 
           {isOutputBased && (
             <div className="max-w-[180px]">
-              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Daily Limit ($)</p>
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Daily Limit ({currencySymbol})</p>
               <input
                 type="number"
                 min="0"
@@ -923,7 +927,7 @@ export function ShiftBudgetSection({
 
           <div className="max-w-[180px]">
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">
-              Weekly Limit ({effectiveUnit === "dollars" ? "$" : "hours"})
+              Weekly Limit ({effectiveUnit === "dollars" ? currencySymbol : "hours"})
             </p>
             <input
               type="number"
@@ -938,7 +942,7 @@ export function ShiftBudgetSection({
 
           <div className="max-w-[180px]">
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">
-              Monthly Budget ({effectiveUnit === "dollars" ? "$" : "hours"})
+              Monthly Budget ({effectiveUnit === "dollars" ? currencySymbol : "hours"})
             </p>
             <input
               type="number"

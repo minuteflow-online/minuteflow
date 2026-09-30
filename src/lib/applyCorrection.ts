@@ -21,6 +21,16 @@ const BOOLEAN_FIELDS = new Set(["billable"]);
 /** Fields holding an instant. Values may be datetime-local or a full ISO string. */
 const TIME_FIELDS = new Set(["start_time", "end_time", "deleted_at"]);
 
+/**
+ * Fields time_logs won't accept blank — task_name is NOT NULL in the schema.
+ * A blank value here used to fall through to `newValue || null` below and hit
+ * Postgres's constraint violation directly, which is what happened approving
+ * Flordeliz's 9/22 correction: her request carried task_name: "" (picked
+ * "Custom name..." in the request form and left it untyped — see
+ * CorrectionRequestModal, which now blocks that at submission).
+ */
+export const REQUIRED_CORRECTION_FIELDS = new Set(["task_name"]);
+
 export interface ApplyCorrectionInput {
   requestId: number;
   logId: number;
@@ -29,7 +39,7 @@ export interface ApplyCorrectionInput {
   reviewNotes?: string | null;
 }
 
-export type ApplyCorrectionFailure = "end_before_start" | "missing_log" | "write_failed";
+export type ApplyCorrectionFailure = "end_before_start" | "missing_log" | "blank_required_field" | "write_failed";
 
 export type ApplyCorrectionResult =
   | { ok: true }
@@ -81,6 +91,14 @@ export async function applyCorrection(
   };
 
   for (const [field, newValue] of Object.entries(changes)) {
+    if (REQUIRED_CORRECTION_FIELDS.has(field) && !newValue.trim()) {
+      return {
+        ok: false,
+        error: `${field.replace(/_/g, " ")} can't be blank.`,
+        code: "blank_required_field",
+      };
+    }
+
     let valueToStore: unknown;
     if (BOOLEAN_FIELDS.has(field)) {
       valueToStore = newValue === "true";
