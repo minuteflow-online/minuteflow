@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { fetchPaidOutputByLabel } from "@/lib/paystub";
 
 export const dynamic = "force-dynamic";
 
@@ -70,11 +71,22 @@ export async function GET(request: Request) {
     paidByPeriod.set(key, (paidByPeriod.get(key) ?? 0) + Number(payment.amount || 0));
   }
 
+  const outputByLabel = await fetchPaidOutputByLabel(
+    adminClient,
+    userId,
+    snapshots.map((snap) => snap.pay_period_label as string)
+  );
+
   return Response.json(
     snapshots.map((snap) => {
       const total = paidByPeriod.get(`${snap.period_start}|${snap.period_end}`);
+      const outputItems = outputByLabel.get(snap.pay_period_label as string) ?? [];
       return {
         ...snap,
+        // gross_pay on the snapshot is the time-based part only; these are
+        // the Output Based Tasks this paystub settled.
+        output_items: outputItems,
+        output_total: outputItems.reduce((sum, t) => sum + t.amount, 0),
         // Falls back to the snapshot's own figure when a period has no payment
         // rows at all, so older paystubs read exactly as they did before.
         total_paid: total ?? Number(snap.amount_paid || 0),

@@ -85,6 +85,9 @@ type StoredFixedPayFilters = {
   filterStartDates?: string[];
   filterDueDates?: string[];
   filterClaimStates?: string[];
+  filterPaidStates?: string[];
+  filterCreatedFrom?: string;
+  filterCreatedTo?: string;
   filterCreators?: string[];
   filterAssignedBy?: string[];
   filterVas?: string[];
@@ -164,6 +167,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [filterStartDates, setFilterStartDates] = useState<string[]>([]);
   const [filterDueDates, setFilterDueDates] = useState<string[]>([]);
   const [filterClaimStates, setFilterClaimStates] = useState<string[]>([]);
+  const [filterPaidStates, setFilterPaidStates] = useState<string[]>([]);
+  const [filterCreatedFrom, setFilterCreatedFrom] = useState("");
+  const [filterCreatedTo, setFilterCreatedTo] = useState("");
   const [filterCreators, setFilterCreators] = useState<string[]>([]);
   const [filterAssignedBy, setFilterAssignedBy] = useState<string[]>([]);
   const [filterVas, setFilterVas] = useState<string[]>([]);
@@ -206,6 +212,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       if (storedFilters.filterStartDates !== undefined) setFilterStartDates(storedFilters.filterStartDates);
       if (storedFilters.filterDueDates !== undefined) setFilterDueDates(storedFilters.filterDueDates);
       if (storedFilters.filterClaimStates !== undefined) setFilterClaimStates(storedFilters.filterClaimStates);
+      if (storedFilters.filterPaidStates !== undefined) setFilterPaidStates(storedFilters.filterPaidStates);
+      if (storedFilters.filterCreatedFrom !== undefined) setFilterCreatedFrom(storedFilters.filterCreatedFrom);
+      if (storedFilters.filterCreatedTo !== undefined) setFilterCreatedTo(storedFilters.filterCreatedTo);
       if (storedFilters.filterCreators !== undefined) setFilterCreators(storedFilters.filterCreators);
       if (storedFilters.filterAssignedBy !== undefined) setFilterAssignedBy(storedFilters.filterAssignedBy);
       if (storedFilters.filterVas !== undefined) setFilterVas(storedFilters.filterVas);
@@ -217,11 +226,11 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     if (!filterPrefsReady || !filterPrefsAppliedRef.current) return;
     persistFilters({
       activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses, filterRates,
-      filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterVas, filterProjects,
+      filterStartDates, filterDueDates, filterClaimStates, filterPaidStates, filterCreatedFrom, filterCreatedTo, filterCreators, filterAssignedBy, filterVas, filterProjects,
     });
   }, [
     filterPrefsReady, activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses, filterRates,
-    filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterVas, filterProjects, persistFilters,
+    filterStartDates, filterDueDates, filterClaimStates, filterPaidStates, filterCreatedFrom, filterCreatedTo, filterCreators, filterAssignedBy, filterVas, filterProjects, persistFilters,
   ]);
 
   // Same eligibility as the fixed-pay-tasks POST route: Output Based VAs, or hourly VAs
@@ -393,6 +402,15 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
         const state = !task.claimed_by ? "unclaimed" : mine ? "mine" : "others";
         if (!filterClaimStates.includes(state)) return false;
       }
+      if (filterPaidStates.length > 0 && !filterPaidStates.includes(task.paid_at ? "paid" : "unpaid")) return false;
+      if (filterCreatedFrom || filterCreatedTo) {
+        // Compare on the local calendar day, the same day the row displays.
+        const created = task.created_at ? new Date(task.created_at) : null;
+        if (!created) return false;
+        const day = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
+        if (filterCreatedFrom && day < filterCreatedFrom) return false;
+        if (filterCreatedTo && day > filterCreatedTo) return false;
+      }
       if (filterCreators.length > 0) {
         const creator = task.created_by_profile?.full_name || task.created_by_profile?.username || "";
         if (!filterCreators.includes(creator)) return false;
@@ -408,7 +426,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       if (filterProjects.length > 0 && !filterProjects.includes(task.projects?.name ?? "")) return false;
       return true;
     });
-  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterVas, filterProjects, currentUserId]);
+  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterPaidStates, filterCreatedFrom, filterCreatedTo, filterCreators, filterAssignedBy, filterVas, filterProjects, currentUserId]);
 
   // 10 per page, same pattern as VAProjectsTab's subtask list — the table's
   // own scrollbar (see the wrapping div below) handles a page's worth just
@@ -844,7 +862,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
             <div className="flex items-center gap-2">
-              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || filterClaimStates.length > 0 || filterCreators.length > 0 || filterAssignedBy.length > 0 || filterVas.length > 0 || filterProjects.length > 0 || activeFilter !== "all") && (
+              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || filterClaimStates.length > 0 || filterPaidStates.length > 0 || filterCreatedFrom || filterCreatedTo || filterCreators.length > 0 || filterAssignedBy.length > 0 || filterVas.length > 0 || filterProjects.length > 0 || activeFilter !== "all") && (
                 <button
                   type="button"
                   onClick={() => {
@@ -857,6 +875,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     setFilterStartDates([]);
                     setFilterDueDates([]);
                     setFilterClaimStates([]);
+                    setFilterPaidStates([]);
+                    setFilterCreatedFrom("");
+                    setFilterCreatedTo("");
                     setFilterCreators([]);
                     setFilterAssignedBy([]);
                     setFilterVas([]);
@@ -1041,16 +1062,76 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         label="Created"
                         width={columnWidths.created}
                         onResize={(w) => setColumnWidth("created", w)}
-                        filterOptions={creatorFilterOptions.map((name) => ({ value: name, label: name }))}
-                        selected={filterCreators}
-                        onFilterChange={setFilterCreators}
+                        isFiltered={Boolean(filterCreatedFrom || filterCreatedTo || filterCreators.length > 0)}
+                        customFilter={(close) => (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
+                              <input
+                                type="date"
+                                value={filterCreatedFrom}
+                                onChange={(e) => setFilterCreatedFrom(e.target.value)}
+                                className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
+                              <input
+                                type="date"
+                                value={filterCreatedTo}
+                                onChange={(e) => setFilterCreatedTo(e.target.value)}
+                                className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                              />
+                            </div>
+                            <div className="border-t border-sand pt-2">
+                              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Created by</label>
+                              <div className="max-h-48 overflow-y-auto">
+                                {creatorFilterOptions.map((name) => (
+                                  <label key={name} className="flex cursor-pointer items-center gap-2 py-1.5 font-normal normal-case hover:bg-parchment">
+                                    <input
+                                      type="checkbox"
+                                      checked={filterCreators.includes(name)}
+                                      onChange={(e) =>
+                                        setFilterCreators(e.target.checked ? [...filterCreators, name] : filterCreators.filter((v) => v !== name))
+                                      }
+                                      className="accent-terracotta"
+                                    />
+                                    <span className="text-[13px] text-espresso">{name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between border-t border-sand pt-2">
+                              <button
+                                type="button"
+                                onClick={() => { setFilterCreatedFrom(""); setFilterCreatedTo(""); setFilterCreators([]); }}
+                                className="cursor-pointer text-[11px] text-stone hover:underline"
+                              >
+                                Clear
+                              </button>
+                              <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
+                                Done
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       />
                     )}
                     {!hiddenColumns.has("active") && (
                       <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
                     )}
                     {!hiddenColumns.has("paid") && (
-                      <ColumnHeader label="Paid" width={columnWidths.paid} onResize={(w) => setColumnWidth("paid", w)} />
+                      <ColumnHeader
+                        label="Paid"
+                        width={columnWidths.paid}
+                        onResize={(w) => setColumnWidth("paid", w)}
+                        filterOptions={[
+                          { value: "paid", label: "Paid" },
+                          { value: "unpaid", label: "Unpaid" },
+                        ]}
+                        selected={filterPaidStates}
+                        onFilterChange={setFilterPaidStates}
+                      />
                     )}
                     <th className="px-3 py-2.5 w-32"></th>
                   </tr>

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { normalizeByDateValue, isFixedPeriodRate, formatPayMoney, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { fetchPaidOutputByLabel } from "@/lib/paystub";
 
 export const dynamic = "force-dynamic";
 
@@ -64,7 +65,14 @@ export async function GET(request: Request) {
   const byDateRaw = (snap.by_date ?? {}) as Record<string, ByDateValue>;
   const totalHours = (snap.total_hours_ms as number) / 3_600_000;
   const payRate = snap.pay_rate as number;
-  const grossPay = snap.gross_pay as number;
+  const timeGross = snap.gross_pay as number;
+  // The snapshot's gross is time-based only; the Output Based Tasks this
+  // paystub settled are looked up by the period label the send stamped on them.
+  const outputItems =
+    (await fetchPaidOutputByLabel(adminClient, snap.user_id as string, [snap.pay_period_label as string]))
+      .get(snap.pay_period_label as string) ?? [];
+  const outputTotal = outputItems.reduce((sum, t) => sum + t.amount, 0);
+  const grossPay = timeGross + outputTotal;
   // Everything paid for this period, not just what this send paid out — a
   // period part-settled by an advance otherwise printed $145.00 against
   // $196.50 actually received, and showed a balance still owing when the VA
@@ -399,6 +407,32 @@ export async function GET(request: Request) {
       </table>
     </div>
 
+    ${outputItems.length > 0 ? `
+    <div class="breakdown-section">
+      <div class="section-label">Output Based Work</div>
+      <table class="breakdown">
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Account</th>
+            <th class="text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${outputItems.map((t) => `
+          <tr>
+            <td>${escapeHtml(t.task_name)}</td>
+            <td>${escapeHtml(t.account)}</td>
+            <td class="text-right">${formatCurrency(t.amount)}</td>
+          </tr>`).join("")}
+          <tr>
+            <td colspan="2" style="font-weight:600;">Total Output Work</td>
+            <td class="text-right" style="font-weight:600;">${formatCurrency(outputTotal)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>` : ""}
+
     <div class="totals-section">
       <table class="totals">
         <tr>
@@ -419,6 +453,14 @@ export async function GET(request: Request) {
           <td>Time-based Rate</td>
           <td>${formatCurrency(payRate)}</td>
         </tr>`}
+        ${outputTotal > 0 ? `<tr>
+          <td>Time-based Pay</td>
+          <td>${formatCurrency(timeGross)}</td>
+        </tr>
+        <tr>
+          <td>Output Based Work</td>
+          <td>${formatCurrency(outputTotal)}</td>
+        </tr>` : ""}
         <tr class="total-row">
           <td>Gross Pay</td>
           <td>${formatCurrency(grossPay)}</td>
@@ -482,4 +524,8 @@ function formatDateLabel(iso: string): string {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", {
     weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
   });
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

@@ -126,3 +126,45 @@ export async function computePaystubData(
     currency: normalizePayCurrency(vaProfile.pay_currency),
   };
 }
+
+export interface PaidOutputItem {
+  id: number;
+  task_name: string;
+  account: string;
+  amount: number;
+}
+
+/**
+ * Output Based Tasks (fixed_pay_tasks) settled by each sent paystub, keyed by
+ * pay period label. The send route stamps paid_period_label on exactly the
+ * items that were checked in, and the snapshot itself doesn't store them —
+ * so this is how history, print and resend show what the money was for.
+ */
+export async function fetchPaidOutputByLabel(
+  admin: AnySupabase,
+  userId: string,
+  labels: string[]
+): Promise<Map<string, PaidOutputItem[]>> {
+  const byLabel = new Map<string, PaidOutputItem[]>();
+  const wanted = [...new Set(labels.filter(Boolean))];
+  if (wanted.length === 0) return byLabel;
+  const { data } = await admin
+    .from("fixed_pay_tasks")
+    .select("id, task_name, account, rate, paid_period_label")
+    .eq("claimed_by", userId)
+    .in("paid_period_label", wanted)
+    .not("paid_at", "is", null)
+    .is("deleted_at", null)
+    .order("id");
+  for (const t of (data ?? []) as Array<{ id: number; task_name: string | null; account: string | null; rate: number | string | null; paid_period_label: string }>) {
+    const list = byLabel.get(t.paid_period_label) ?? [];
+    list.push({
+      id: t.id,
+      task_name: t.task_name ?? "Output Based Task",
+      account: t.account ?? "",
+      amount: Number(t.rate) || 0,
+    });
+    byLabel.set(t.paid_period_label, list);
+  }
+  return byLabel;
+}
