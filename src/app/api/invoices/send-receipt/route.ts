@@ -83,7 +83,7 @@ export async function POST(request: Request) {
   const currency = invoice.currency || "USD";
   const currencyLabel = currency !== "USD" ? ` ${currency}` : "";
 
-  const fmt = (n: number) => `$${n.toFixed(2)}`;
+  const fmt = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const html = `<!DOCTYPE html>
 <html>
@@ -98,8 +98,12 @@ export async function POST(request: Request) {
       <div style="padding:32px;">
         <p style="margin:0 0 24px;font-size:15px;color:#374151;">Hi ${invoice.to_name ?? "there"},</p>
         <p style="margin:0 0 24px;font-size:15px;color:#374151;">
-          We have received your payment of <strong>${fmt(Number(amountPaid))}${currencyLabel}</strong> for Invoice <strong>${invoice.invoice_number}</strong>.
-          ${isPaid ? "This invoice is now <strong>paid in full</strong>. Thank you!" : `Your remaining balance is <strong>${fmt(balanceRemaining)}${currencyLabel}</strong>.`}
+          ${isPaid
+            ? `Your payment of <strong>${fmt(Number(amountPaid))}${currencyLabel}</strong> has been received, and Invoice <strong>${invoice.invoice_number}</strong> is now <strong>paid in full</strong>.`
+            : `Your payment of <strong>${fmt(Number(amountPaid))}${currencyLabel}</strong> for Invoice <strong>${invoice.invoice_number}</strong> has been received. Your remaining balance is <strong>${fmt(balanceRemaining)}${currencyLabel}</strong>, which you can view and pay anytime using the link below.`}
+        </p>
+        <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+          ${isPaid ? "Thank you for your payment and for your business!" : "Thank you for your payment!"}
         </p>
         <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
           <table style="width:100%;border-collapse:collapse;">
