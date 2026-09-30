@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAuthClient } from "@/lib/supabase/server";
 import { hasFinancialAccess } from "@/lib/financialAccess";
-import { amountOwed } from "@/lib/invoiceBalance";
+import { amountOwed, grandTotal } from "@/lib/invoiceBalance";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +85,18 @@ export async function POST(request: Request) {
 
   const fmt = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+  // Break the balance down so the summary adds up on its face: a balance
+  // carried in from an earlier invoice, or payments recorded before this one,
+  // otherwise make "Balance Remaining" look wrong next to "Invoice Total".
+  const previousBalance = Number(invoice.previous_balance || 0);
+  const totalDue = grandTotal({ total: invoice.total, previous_balance: invoice.previous_balance });
+  const thisPayment = Number(amountPaid || 0);
+  const paidEarlier = Math.round((paid - thisPayment) * 100) / 100;
+  const row = (label: string, value: string, bold = false) => `<tr>
+              <td style="padding:6px 0;font-size:14px;color:#6b7280;${bold ? "font-weight:600;" : ""}">${label}</td>
+              <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;${bold ? "font-weight:600;" : ""}">${value}${currencyLabel}</td>
+            </tr>`;
+
   const html = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -111,14 +123,12 @@ export async function POST(request: Request) {
               <td style="padding:6px 0;font-size:14px;color:#6b7280;">Invoice</td>
               <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;">${invoice.invoice_number}</td>
             </tr>
-            <tr>
-              <td style="padding:6px 0;font-size:14px;color:#6b7280;">Payment Amount</td>
-              <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;">${fmt(Number(amountPaid))}${currencyLabel}</td>
-            </tr>
-            <tr>
-              <td style="padding:6px 0;font-size:14px;color:#6b7280;">Invoice Total</td>
-              <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;">${fmt(total)}${currencyLabel}</td>
-            </tr>
+            ${row(previousBalance !== 0 ? "This Invoice" : "Invoice Total", fmt(total))}
+            ${previousBalance > 0 ? row("Previous Balance", fmt(previousBalance)) : ""}
+            ${previousBalance < 0 ? row("Credit Applied", `− ${fmt(-previousBalance)}`) : ""}
+            ${previousBalance !== 0 ? row("Total Due", fmt(totalDue), true) : ""}
+            ${paidEarlier > 0 ? row("Paid Earlier", `− ${fmt(paidEarlier)}`) : ""}
+            ${row("This Payment", `− ${fmt(thisPayment)}`)}
             ${!isPaid ? `<tr>
               <td style="padding:6px 0;font-size:14px;color:#6b7280;">Balance Remaining</td>
               <td style="padding:6px 0;font-size:14px;color:#d97706;font-weight:600;text-align:right;">${fmt(balanceRemaining)}${currencyLabel}</td>
