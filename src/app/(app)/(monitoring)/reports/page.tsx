@@ -2247,7 +2247,7 @@ export default function ReportsPage() {
           </div>
 
           {/* Screenshot Count */}
-          <div className="rounded-xl border border-sand bg-white px-5 py-4">
+          <div className="mb-6 rounded-xl border border-sand bg-white px-5 py-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Screenshots</div>
             {filteredScreenshotTotal === 0 ? (
               <span className="text-[13px] text-bark">No screenshots in this period</span>
