@@ -5,9 +5,10 @@ import TasksPanel from "./components/TasksPanel";
 import TodoPanel from "./components/TodoPanel";
 import MessageBoardPanel from "./components/MessageBoardPanel";
 import NotificationBell from "./components/NotificationBell";
+import SubmitWorkModal from "./components/SubmitWorkModal";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
-import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, type VAAssignedTask } from "./lib/tasks";
+import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, type VAAssignedTask, type AssignedTaskStatus } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 
@@ -33,6 +34,7 @@ export default function App() {
   const [selectedTask, setSelectedTask] = useState<VAAssignedTask | null>(null);
   const [startingId, setStartingId] = useState<number | null>(null);
   const [reworkingId, setReworkingId] = useState<number | null>(null);
+  const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -229,6 +231,32 @@ export default function App() {
     [userId, reworkingId, loadTasks]
   );
 
+  // Submit: mirrors AssignedTasksWidget's SubmitWorkModal wiring. The server
+  // decides the resulting status (submitted, or auto-completed/approved for
+  // logged categories / tasks that skip review) — the modal just reports it
+  // back. No task-switch wizard here (same simplification as startTask.ts),
+  // but if the submitted task is the one actively being clocked, its open log
+  // still needs closing — otherwise time keeps ticking against a task
+  // that's already turned in, the exact "submit to task" gap that wizard
+  // exists to prevent on web.
+  const handleSubmitted = useCallback(
+    async (task: VAAssignedTask, status: AssignedTaskStatus) => {
+      setSubmitTarget(null);
+      await setAssignedTaskStatus({
+        assignedTaskId: task.assigned_tasks.id,
+        status,
+        vaId: task.va_id,
+      });
+      if (userId && sessionRow?.active_task?.assignedTaskId === task.assigned_tasks.id) {
+        await clock.closeOpenLogs(userId, new Date().toISOString(), orgTimezone);
+        const s = await clock.fetchSession(userId);
+        setSessionRow(s);
+      }
+      if (userId) await loadTasks(userId);
+    },
+    [userId, sessionRow, orgTimezone, loadTasks]
+  );
+
   // Drag-to-reorder — mirrors AssignedTasksWidget's handleDrop/persistOrder.
   // App owns `tasks`, so the splice + optimistic update happens here; the
   // drag gesture itself (draggedId/dragOverId) is local UI state in
@@ -361,6 +389,7 @@ export default function App() {
             onStart={handleStart}
             reworkingId={reworkingId}
             onRework={handleRework}
+            onSubmit={setSubmitTarget}
             onReorder={handleReorder}
           />
         </div>
@@ -395,6 +424,17 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {submitTarget && (
+        <SubmitWorkModal
+          taskId={submitTarget.assigned_tasks.id}
+          taskName={submitTarget.assigned_tasks.task_name}
+          instructions={submitTarget.assigned_tasks.instructions}
+          reviewRequired={submitTarget.assigned_tasks.review_required}
+          onClose={() => setSubmitTarget(null)}
+          onSubmitted={(status) => void handleSubmitted(submitTarget, status)}
+        />
+      )}
     </div>
   );
 }

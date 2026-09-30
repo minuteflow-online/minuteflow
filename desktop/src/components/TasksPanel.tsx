@@ -20,6 +20,7 @@ interface TasksPanelProps {
   onStart: (task: VAAssignedTask) => void;
   reworkingId: number | null;
   onRework: (task: VAAssignedTask) => void;
+  onSubmit: (task: VAAssignedTask) => void;
   onReorder: (source: VAAssignedTask, target: VAAssignedTask) => void;
 }
 
@@ -57,6 +58,7 @@ export default function TasksPanel({
   onStart,
   reworkingId,
   onRework,
+  onSubmit,
   onReorder,
 }: TasksPanelProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
@@ -204,6 +206,17 @@ export default function TasksPanel({
                             <polygon points="5,3 19,12 5,21" />
                           </svg>
                           {isStarting ? "Starting..." : "Start"}
+                        </button>
+                      </div>
+                    )}
+
+                    {task.status === "in_progress" && (
+                      <div className="mt-1.5">
+                        <button
+                          onClick={() => onSubmit(task)}
+                          className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sky-500 text-white hover:bg-sky-600 cursor-pointer transition-colors"
+                        >
+                          Submit
                         </button>
                       </div>
                     )}

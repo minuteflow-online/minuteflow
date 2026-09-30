@@ -30,9 +30,23 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   disabled for them — their web flow is a different instant one-shot log with
   no timer). **Drag-to-reorder** within a status group, same as the web
   widget (grip handle, same `/api/assigned-tasks/reorder` endpoint) — see
-  `src/lib/tasks.ts`'s `compareTasks`/`reorderAssignedTasks`. No task-switch
-  wizard (no memo prompt for whatever was running before), no Accept/Submit,
-  no to-do editing yet.
+  `src/lib/tasks.ts`'s `compareTasks`/`reorderAssignedTasks`. **Submit** on an
+  `in_progress` task opens the same checklist + word-count-bar modal as web's
+  `SubmitWorkModal.tsx` (attach files, a message, a link, or any combination —
+  see `src/lib/submissions.ts`'s `submissionMeetsBar`), and files upload
+  straight to Supabase Storage via a signed slot exactly like web does, so a
+  multi-file submission never rides through the API route's body (Vercel's
+  4.5MB cap). No `@supabase/supabase-js` here though — see
+  `desktop/src/lib/submissions.ts`'s comment for why that upload is a raw
+  `fetch` instead of the SDK call web uses. The server decides the resulting
+  status (`submitted`, or auto-`completed`/`approved` for logged categories or
+  tasks that skip review) the same way it does for web; if the submitted task
+  was the one actively being clocked, its open log is closed the same way
+  Start/clock-out already do (no task-switch wizard here, same simplification
+  as Break — see `src/contexts/SessionContext.tsx`'s comment on the
+  dashboard's memo-collection wizard this skips). No task-switch wizard, no
+  Accept (a `pending` task doesn't show here yet — only `on_queue`/
+  `in_progress`/`revision_needed` do), no to-do editing yet.
 - **Capture Now** — grabs the entire primary display via Electron's
   `desktopCapturer` + `getUserMedia` (main process → preload → renderer) and
   uploads it to `/api/upload-screenshot`. **Screenshots go to Google Drive
