@@ -309,6 +309,8 @@ export async function POST(request: Request, { params }: RouteContext) {
     "approval",
     "approval_reversed",
     "revision_reversed",
+    "rejection",
+    "rejection_reversed",
     "flag",
     "flag_cleared",
   ];
@@ -601,6 +603,33 @@ export async function POST(request: Request, { params }: RouteContext) {
         senderId: user.id,
         content: `${reviewer} requested a revision on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
         telegram: `🔁 <b>${esc(reviewer)}</b> requested a revision on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
+        topic: "submissions",
+        assignedTaskId: Number(id),
+        submissionId: submission.id as number,
+      });
+    }
+  }
+
+  // A rejection notifies whoever did the work — the task will not come back
+  // for another round, so unlike a revision request this is the end of the
+  // line rather than a request to keep going. Same audience and shape as the
+  // revision notification above.
+  if (messageType === "rejection") {
+    const { data: jProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
+    const rejector = jProf?.full_name || jProf?.username || "A reviewer";
+    const { data: assignees } = await admin
+      .from("assigned_task_assignees")
+      .select("va_id")
+      .eq("assigned_task_id", id);
+    const targets = new Set<string>();
+    for (const a of assignees ?? []) if (a.va_id && a.va_id !== user.id) targets.add(a.va_id as string);
+    const snippet = message && message.length > 160 ? `${message.slice(0, 160)}…` : (message || "");
+    for (const target of targets) {
+      await notifyOne(admin, {
+        targetUserId: target,
+        senderId: user.id,
+        content: `${rejector} rejected “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
+        telegram: `🚫 <b>${esc(rejector)}</b> rejected <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
         topic: "submissions",
         assignedTaskId: Number(id),
         submissionId: submission.id as number,

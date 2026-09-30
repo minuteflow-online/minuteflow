@@ -98,26 +98,40 @@ const OWNER_MODES: Array<{ value: OwnerMode; label: string }> = [
   { value: "to_me", label: "Submitted to me" },
 ];
 
-/** The three review outcomes a reviewer can append to a thread. */
-type ReviewOutcome = "approval" | "revision" | "approval_reversed" | "revision_reversed";
+/** The review outcomes a reviewer can append to a thread. */
+type ReviewOutcome =
+  | "approval"
+  | "revision"
+  | "rejection"
+  | "approval_reversed"
+  | "revision_reversed"
+  | "rejection_reversed";
 
 const REVIEW_DEFAULT_NOTE: Record<ReviewOutcome, string> = {
   approval: "Approved",
   revision: "Revision requested",
+  rejection: "Rejected",
   approval_reversed: "Approval reversed",
   revision_reversed: "Revision request reversed",
+  rejection_reversed: "Rejection reversed",
 };
 
 /**
- * Where the task lands after each outcome. Reversing an approval or a
- * revision request puts it back in front of the reviewer rather than back on
- * the VA — nothing about the work changed, only the decision did.
+ * Where the task lands after each outcome. Reversing an approval, a revision
+ * request, or a rejection puts it back in front of the reviewer rather than
+ * back on the VA — nothing about the work changed, only the decision did.
+ * Rejection reuses "cancelled" — the same terminal status a task gets when
+ * it's called off for any other reason — rather than a new status of its
+ * own, so it inherits how the rest of the app already treats a task that's
+ * not going anywhere (budgets, dashboards, filters) for free.
  */
 const REVIEW_STATUS: Record<ReviewOutcome, AssignedTaskStatus> = {
   approval: "approved",
   revision: "revision_needed",
+  rejection: "cancelled",
   approval_reversed: "submitted",
   revision_reversed: "submitted",
+  rejection_reversed: "submitted",
 };
 
 /**
@@ -127,6 +141,7 @@ const REVIEW_STATUS: Record<ReviewOutcome, AssignedTaskStatus> = {
 const STATUS_OPTIONS = [
   { value: "awaiting", label: "Review" },
   { value: "revision_requested", label: "Revision" },
+  { value: "rejected", label: "Rejected" },
   { value: "approved", label: "Approved" },
   { value: "auto_approved", label: "Auto approved" },
   { value: "completed", label: "Completed" },
@@ -190,6 +205,9 @@ const REVIEW_STATE_PILL: Record<string, { label: string; className: string }> = 
     label: "Revision requested",
     className: "bg-terracotta-soft text-terracotta border-terracotta/20",
   },
+  // Matches the assigned_tasks "cancelled" badge — rejection reuses that
+  // status, so the pill reuses its color too.
+  rejected: { label: "Rejected", className: "bg-red-50 text-red-500 border-red-200" },
   approved: { label: "Approved", className: "bg-emerald-50 text-emerald-600 border-emerald-200" },
   // Distinct from a human Approved: this task was flagged review_required =
   // false, so nobody looked at it. Worth being able to tell apart at a glance.
@@ -2741,6 +2759,17 @@ function ThreadCard({
                 disabled={busy}
                 className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
                 title="Undo this revision request"
+              >
+                Undo
+              </button>
+            )}
+            {/* Same escape hatch for a rejection made by mistake. */}
+            {canReview && latest.task && state === "rejected" && (
+              <button
+                onClick={() => onReview(latest, "rejection_reversed")}
+                disabled={busy}
+                className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                title="Undo this rejection"
               >
                 Undo
               </button>
