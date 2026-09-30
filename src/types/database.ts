@@ -306,6 +306,9 @@ export interface OrganizationSettings {
   registered_business_name: string | null;
   dba: string | null;
   tax_id: string | null;
+  // Default pesos per 1 USD, pre-filled on payments to PHP-paid VAs so
+  // Financials can report them in dollars. See lib/payroll.ts toUsd().
+  php_per_usd: number | null;
   created_at: string;
   updated_at: string;
 }

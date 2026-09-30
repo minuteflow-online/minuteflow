@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { createClient } from "@/lib/supabase/client";
 import CSVUploadModal from "@/components/CSVUploadModal";
-import { computeHourlyGross, type PayRateHistoryRow } from "@/lib/payroll";
+import { computeHourlyGross, formatPayMoney, normalizePayCurrency, parsePhpPerUsd, toUsd, type PayRateHistoryRow } from "@/lib/payroll";
 import { isPayrollEligible } from "@/lib/payrollHours";
 import { grandTotal } from "@/lib/invoiceBalance";
 import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
@@ -29,6 +29,9 @@ interface ProfileRow {
   full_name: string;
   pay_rate: number;
   pay_rate_type: "hourly" | "daily" | "monthly" | "per_task";
+  // Pay amounts on this row are converted to USD at load (see fetchData);
+  // pay_currency says what they were stored in.
+  pay_currency: string | null;
   role: string;
   is_active: boolean;
   position?: string;
@@ -86,6 +89,13 @@ interface VaPaymentRow {
   period_start: string | null;
   period_end: string | null;
   notes: string | null;
+  /** The VA's pay currency when this was paid; amount is in it. */
+  currency: string | null;
+  /** Pesos per $1 this payment was made at (PHP only). */
+  exchange_rate: number | null;
+  /** amount in dollars — what every Financials total uses. 0 when a peso
+   *  payment has no usable rate (flagged, not guessed). */
+  amount_usd: number;
 }
 
 interface ClientPaymentRow {
@@ -343,6 +353,10 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   // has no fixed-rate task-list assignments for the period
   const [customPaystubByVa, setCustomPaystubByVa] = useState<Record<string, CustomPaystubItem[]>>({});
   const [rateHistories, setRateHistories] = useState<Record<string, (PayRateHistoryRow & { rate_type?: string })[]>>({});
+  // Org default pesos per $1, and the PHP-paid VAs whose amounts couldn't be
+  // converted for lack of one — shown as a warning, never counted as dollars.
+  const [phpPerUsd, setPhpPerUsd] = useState<number | null>(null);
+  const [unconvertedVaNames, setUnconvertedVaNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Expand/collapse state
@@ -408,11 +422,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, invoicePayRes, invoiceRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, invoicePayRes, invoiceRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes, orgRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
-        .select("id, full_name, pay_rate, pay_rate_type, role, is_active, position, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit"),
+        .select("id, full_name, pay_rate, pay_rate_type, pay_currency, role, is_active, position, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit"),
       supabase
         .from("time_logs")
         .select(
@@ -425,7 +439,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .gt("duration_ms", 0),
       supabase
         .from("va_payments")
-        .select("id, va_id, amount, payment_date, payment_method, confirmation_number, period_start, period_end, notes")
+        .select("id, va_id, amount, payment_date, payment_method, confirmation_number, period_start, period_end, notes, currency, exchange_rate")
         .gte("payment_date", startDate)
         .lte("payment_date", endDate)
         .order("payment_date", { ascending: false }),
@@ -488,7 +502,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       // Custom paystub line items sent for pay periods overlapping the range
       supabase
         .from("paystub_snapshots")
-        .select("user_id, custom_line_items")
+        .select("user_id, custom_line_items, currency, exchange_rate")
         .not("custom_line_items", "is", null)
         .lte("period_start", endDate)
         .gte("period_end", startDate),
@@ -497,12 +511,45 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .from("projected_expenses")
         .select("id, description, amount, quantity, category, account, frequency, start_date, end_date, notes")
         .order("start_date", { ascending: true }),
+      supabase.from("organization_settings").select("php_per_usd").limit(1).maybeSingle(),
     ]);
 
     const accData = await accRes.json();
     setAccounts(accData.accounts ?? []);
     setMappings(accData.mappings ?? []);
-    const profileRows = (profileRes.data as ProfileRow[]) ?? [];
+    // ── Everything in Financials is dollars ──
+    // A VA paid in pesos has every pay amount — rate, rate history, task
+    // prices, paystub items, payments — converted to USD right here, once, so
+    // no calculation below ever sees a peso. Payments use the rate saved on
+    // them; everything else the org default. No usable rate means the amount
+    // is left out and the VA is named in a warning, never counted as dollars.
+    const defaultRate = parsePhpPerUsd(orgRes.data?.php_per_usd);
+    setPhpPerUsd(defaultRate);
+    const rawProfiles = (profileRes.data as ProfileRow[]) ?? [];
+    const currencyByVa: Record<string, string | null> = Object.fromEntries(rawProfiles.map((p) => [p.id, p.pay_currency]));
+    const unconverted = new Set<string>();
+    const usdFactor = (vaId: string, currency = currencyByVa[vaId], rate = defaultRate): number => {
+      const factor = toUsd(1, currency, rate);
+      if (factor == null) { unconverted.add(vaId); return 0; }
+      return factor;
+    };
+    const profileRows = rawProfiles.map((p) => {
+      const f = usdFactor(p.id);
+      if (f === 1) return p;
+      // Output-based budget limits are money; time-based ones are hours.
+      const scale = (v: number | null) => (v == null ? v : v * f);
+      return {
+        ...p,
+        pay_rate: (Number(p.pay_rate) || 0) * f,
+        ...(vaBudgetType(p) === "output_based"
+          ? {
+              daily_budget_limit: scale(p.daily_budget_limit),
+              weekly_budget_limit: scale(p.weekly_budget_limit),
+              monthly_budget_limit: scale(p.monthly_budget_limit),
+            }
+          : {}),
+      };
+    });
     setProfiles(profileRows);
 
     // Per-user rate history via the admin pay-rates API — pay_rate_history RLS
@@ -519,9 +566,19 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         }
       })
     );
-    setRateHistories(Object.fromEntries(historyEntries));
-    setLogs((logRes.data as LogRow[]) ?? []);
-    setVaPayments((vaPayRes.data as VaPaymentRow[]) ?? []);
+    setRateHistories(Object.fromEntries(historyEntries.map(([id, rows]): [string, (PayRateHistoryRow & { rate_type?: string })[]] => {
+      const f = usdFactor(id);
+      return [id, rows.map((h) => (f === 1 ? h : { ...h, rate_amount: Number(h.rate_amount) * f }))];
+    })));
+    setLogs(((logRes.data as LogRow[]) ?? []).map((l) => {
+      const f = usdFactor(l.user_id);
+      return f === 1 || l.task_rate == null ? l : { ...l, task_rate: Number(l.task_rate) * f };
+    }));
+    setVaPayments(((vaPayRes.data ?? []) as Omit<VaPaymentRow, "amount_usd">[]).map((p) => {
+      const usd = toUsd(Number(p.amount), p.currency, p.exchange_rate ?? defaultRate);
+      if (usd == null) unconverted.add(p.va_id);
+      return { ...p, amount_usd: usd ?? 0 };
+    }));
     // Legacy mirror rows (notes start "Invoice #...") were auto-inserted
     // alongside a real invoice_payments row by a since-removed sync step —
     // keeping them here too would double-count that same payment now that
@@ -580,7 +637,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       task_name: row.task_name ?? "Unknown Task",
       account: row.account ?? null,
       project_name: row.project ?? null,
-      rate: Number(row.rate),
+      rate: Number(row.rate) * usdFactor(row.assigned_to),
       task_library_id: 0,
       // A paid task counts as earned regardless of its review status — real
       // money already went out for it, whether or not it was formally
@@ -597,7 +654,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         task_name: lib?.task_name ?? "Unknown Task",
         account: proj?.account ?? null,
         project_name: proj?.project_name ?? null,
-        rate: Number(row.rate),
+        rate: Number(row.rate) * usdFactor(row.va_id),
         task_library_id: lib?.id ?? 0,
         status: row.status ?? "not_started",
       };
@@ -611,6 +668,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const customByVa: Record<string, CustomPaystubItem[]> = {};
     snapRows.forEach((snap) => {
       const items = Array.isArray(snap.custom_line_items) ? snap.custom_line_items : [];
+      // A stub's items are in the currency it was sent in, at its own rate.
+      const f = usdFactor(snap.user_id, snap.currency, parsePhpPerUsd(snap.exchange_rate) ?? defaultRate);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       items.forEach((item: any) => {
         const hasRate = item?.rate != null;
@@ -619,10 +678,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         const amount = item?.amount != null ? Number(item.amount) || 0 : rate * quantity;
         if (!item?.label && !amount) return;
         if (!customByVa[snap.user_id]) customByVa[snap.user_id] = [];
-        customByVa[snap.user_id].push({ label: String(item?.label ?? ""), rate, quantity, amount });
+        customByVa[snap.user_id].push({ label: String(item?.label ?? ""), rate: rate * f, quantity, amount: amount * f });
       });
     });
     setCustomPaystubByVa(customByVa);
+    setUnconvertedVaNames(rawProfiles.filter((p) => unconverted.has(p.id)).map((p) => p.full_name));
 
     // Projected expenses — coerce numerics and null → "" for the form fields
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -970,7 +1030,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
         // Payments made to this VA
         const payments = vaPaymentsByUser[userId] ?? [];
-        const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+        const totalPaid = payments.reduce((s, p) => s + p.amount_usd, 0);
 
         // Build category breakdown string
         const breakdown = Object.entries(data.categoryMs)
@@ -1292,6 +1352,17 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       return <span className="text-bark/40">—</span>;
     }
 
+    // A peso-paid VA's money limits are shown here converted to dollars, so
+    // editing them in place would save dollars over pesos. Hours are fine.
+    const pesoMoneyCell = row.unit === "dollars" && normalizePayCurrency(profiles.find((p) => p.id === row.userId)?.pay_currency) === "PHP";
+    if (pesoMoneyCell) {
+      return (
+        <span className="text-bark" title="Paid in pesos — shown here in dollars. Edit it in Team Management.">
+          {fmtLimit(value, row.unit)}
+        </span>
+      );
+    }
+
     if (!isEditing) {
       return (
         <button
@@ -1379,10 +1450,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     amount: string; payment_date: string; payment_method: string;
     confirmation_number: string; notes: string;
     period_start: string; period_end: string;
+    exchange_rate?: string;
   }) => {
+    const currency = normalizePayCurrency(profiles.find((p) => p.id === vaId)?.pay_currency);
     const { error } = await supabase.from("va_payments").insert({
       va_id: vaId,
       amount: parseFloat(form.amount),
+      currency,
+      exchange_rate: currency === "PHP" ? parsePhpPerUsd(form.exchange_rate) : null,
       payment_date: form.payment_date,
       payment_method: form.payment_method,
       confirmation_number: form.confirmation_number || null,
@@ -1457,9 +1532,12 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     amount: string; payment_date: string; payment_method: string;
     confirmation_number: string; notes: string;
     period_start: string; period_end: string;
+    exchange_rate?: string;
   }) => {
+    const existing = vaPayments.find((p) => p.id === paymentId);
     const { error } = await supabase.from("va_payments").update({
       amount: parseFloat(form.amount),
+      ...(normalizePayCurrency(existing?.currency) === "PHP" ? { exchange_rate: parsePhpPerUsd(form.exchange_rate) } : {}),
       payment_date: form.payment_date,
       payment_method: form.payment_method,
       confirmation_number: form.confirmation_number || null,
@@ -1523,6 +1601,13 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
   return (
     <div className="space-y-6">
+      {unconvertedVaNames.length > 0 && (
+        <div className="rounded-lg bg-terracotta-soft px-4 py-3 text-[13px] text-terracotta">
+          Paid in pesos with no exchange rate, so left out of these dollar totals: {unconvertedVaNames.join(", ")}.
+          Set a Peso Rate (₱ per $1) in Settings.
+        </div>
+      )}
+
       {/* ── Filters ──────────────────────────────────────── */}
       <div className="rounded-xl border border-sand bg-white p-5">
         <div className="flex flex-wrap items-end gap-4">
@@ -2368,7 +2453,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                             <td className="py-1.5 text-bark/80 font-medium">{fmtPeriodRange(p.period_start, p.period_end, timezone)}</td>
                                             <td className="py-1.5 text-bark">{methodLabel(p.payment_method)}</td>
                                             <td className="py-1.5 text-bark">{p.confirmation_number || "—"}</td>
-                                            <td className="py-1.5 text-right font-semibold text-emerald-600">{fmtMoney(Number(p.amount))}</td>
+                                            <td className="py-1.5 text-right font-semibold text-emerald-600">
+                                              {fmtMoney(p.amount_usd)}
+                                              {normalizePayCurrency(p.currency) === "PHP" && (
+                                                <div className="text-[9px] font-normal text-bark/50">
+                                                  {formatPayMoney(Number(p.amount), "PHP")} @ ₱{p.exchange_rate ?? phpPerUsd ?? "?"}/$1
+                                                </div>
+                                              )}
+                                            </td>
                                             <td className="py-1.5">
                                               <div className="flex items-center gap-1.5">
                                                 <button
@@ -2714,6 +2806,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         <PaymentModal
           title={`Record Payment to ${vaProfiles.find((p) => p.id === showVaPaymentModal)?.full_name || "VA"}`}
           defaultDate={new Date().toISOString().slice(0, 10)}
+          currency={profiles.find((p) => p.id === showVaPaymentModal)?.pay_currency}
+          defaultRate={phpPerUsd}
           onClose={() => setShowVaPaymentModal(null)}
           onSave={(form) => saveVaPayment(showVaPaymentModal, form)}
         />
@@ -2724,6 +2818,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         <PaymentModal
           title="Edit Payment"
           defaultDate={editingVaPayment.payment_date}
+          currency={editingVaPayment.currency}
+          defaultRate={editingVaPayment.exchange_rate ?? phpPerUsd}
           onClose={() => setEditingVaPayment(null)}
           onSave={(form) => updateVaPayment(editingVaPayment.id, form)}
           initialValues={{
@@ -2890,6 +2986,8 @@ function PaymentModal({
   onClose,
   onSave,
   initialValues,
+  currency,
+  defaultRate,
 }: {
   title: string;
   defaultDate: string;
@@ -2898,7 +2996,12 @@ function PaymentModal({
     amount: string; payment_date: string; payment_method: string;
     confirmation_number: string; notes: string;
     period_start: string; period_end: string;
+    exchange_rate: string;
   }) => void;
+  /** The VA's pay currency — the amount is typed in it. */
+  currency?: string | null;
+  /** Pesos per $1 to pre-fill for a peso payment. */
+  defaultRate?: number | null;
   initialValues?: {
     amount: string; payment_date: string; payment_method: string;
     confirmation_number: string; notes: string;
@@ -2914,11 +3017,15 @@ function PaymentModal({
   const [periodEnd, setPeriodEnd] = useState(initialValues?.period_end ?? "");
   const [saving, setSaving] = useState(false);
   const isEdit = !!initialValues;
+  const isPeso = normalizePayCurrency(currency) === "PHP";
+  const [rate, setRate] = useState(defaultRate != null ? String(defaultRate) : "");
+  const usdPreview = isPeso ? toUsd(parseFloat(amount) || 0, "PHP", parsePhpPerUsd(rate)) : null;
 
   const handleSave = async () => {
     if (!amount || parseFloat(amount) <= 0) { alert("Please enter a valid amount."); return; }
+    if (isPeso && parsePhpPerUsd(rate) == null) { alert("This VA is paid in pesos — enter the exchange rate (₱ per $1)."); return; }
     setSaving(true);
-    await onSave({ amount, payment_date: paymentDate, payment_method: method, confirmation_number: confirmation, notes, period_start: periodStart, period_end: periodEnd });
+    await onSave({ amount, payment_date: paymentDate, payment_method: method, confirmation_number: confirmation, notes, period_start: periodStart, period_end: periodEnd, exchange_rate: rate });
     setSaving(false);
   };
 
@@ -2928,10 +3035,18 @@ function PaymentModal({
         <h3 className="text-sm font-bold text-espresso mb-4">{title}</h3>
         <div className="space-y-3">
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Amount</label>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Amount{isPeso ? " (₱)" : ""}</label>
             <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
               className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="0.00" />
           </div>
+          {isPeso && (
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Exchange Rate (₱ per $1)</label>
+              <input type="number" step="0.01" min="0" value={rate} onChange={(e) => setRate(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="e.g. 58.50" />
+              {usdPreview != null && <p className="mt-1 text-[11px] text-stone">≈ {formatPayMoney(usdPreview, "USD")} in Financials</p>}
+            </div>
+          )}
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Payment Date</label>
             <input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)}

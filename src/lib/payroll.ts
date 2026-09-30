@@ -248,3 +248,29 @@ export function formatPayTotals(items: { amount: number; currency?: string | nul
   if (totals.size === 0) return formatPayMoney(0);
   return [...totals].map(([c, n]) => formatPayMoney(n, c)).join(" + ");
 }
+
+/**
+ * Financials are always in dollars. An amount in a VA's pay currency becomes
+ * USD by dividing pesos by the pesos-per-dollar rate — the rate saved on that
+ * payment when there is one (va_payments.exchange_rate), otherwise the org
+ * default (organization_settings.php_per_usd). A peso amount with no usable
+ * rate returns null: it can't be counted in dollars, and guessing would be
+ * worse than saying so.
+ */
+export function toUsd(amount: number, currency?: string | null, phpPerUsd?: number | null): number | null {
+  if (normalizePayCurrency(currency) === "USD") return amount;
+  const rate = Number(phpPerUsd);
+  return Number.isFinite(rate) && rate > 0 ? amount / rate : null;
+}
+
+/** " (₱150.00 @ ₱58.5/$1)" for a peso processing fee's expense description, "" otherwise. */
+export function processingFeePesoNote(fee: number, currency?: string | null, phpPerUsd?: number | null): string {
+  if (normalizePayCurrency(currency) !== "PHP" || !phpPerUsd) return "";
+  return ` (${formatPayMoney(fee, "PHP")} @ ₱${phpPerUsd}/$1)`;
+}
+
+/** A positive pesos-per-dollar rate, or null. */
+export function parsePhpPerUsd(value: unknown): number | null {
+  const n = Number(value);
+  return value !== null && value !== "" && Number.isFinite(n) && n > 0 ? n : null;
+}
