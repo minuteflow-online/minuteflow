@@ -233,7 +233,7 @@ export default function ReportsPage() {
   const [summaryTab, setSummaryTab] = useState<"account" | "project" | "task" | "team">("account");
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   const [submissionPage, setSubmissionPage] = useState<Record<string, number>>({});
-  const [reportTab] = useUrlTab<"overview" | "progress" | "ontime">("tab", "overview", ["overview", "progress", "ontime"]);
+  const [reportTab] = useUrlTab<"overview" | "progress">("tab", "overview", ["overview", "progress"]);
   const [compLogs, setCompLogs] = useState<TimeLog[]>([]);
 
   /* ── Fetch org timezone on mount ────────────────────────── */
@@ -1538,149 +1538,6 @@ export default function ReportsPage() {
             />
           ))}
         </div>
-      ) : reportTab === "ontime" ? (
-        /* ── On-Time Report Tab ─────────────────────────────────── */
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-4">
-            <BigStat
-              value={
-                onTimeByVa.totals.judged > 0
-                  ? `${((onTimeByVa.totals.onTime / onTimeByVa.totals.judged) * 100).toFixed(0)}%`
-                  : "—"
-              }
-              label="On time, overall"
-              color={
-                onTimeByVa.totals.judged === 0
-                  ? "default"
-                  : onTimeByVa.totals.onTime / onTimeByVa.totals.judged >= 0.9
-                    ? "green"
-                    : onTimeByVa.totals.onTime / onTimeByVa.totals.judged >= 0.7
-                      ? "gold"
-                      : "terra"
-              }
-            />
-            <BigStat value={onTimeByVa.totals.onTime} label="Submitted on time" color="green" />
-            <BigStat value={onTimeByVa.totals.late} label="Submitted late" color="terra" />
-            <BigStat
-              value={onTimeByVa.totals.noDeadline}
-              label="No due date to judge"
-              color="walnut"
-            />
-          </div>
-
-          <div className="rounded-xl border border-sand bg-white">
-            <div className="border-b border-parchment px-5 py-3">
-              <h3 className="text-[13px] font-bold text-espresso">On-Time, by VA</h3>
-              <p className="mt-0.5 text-[11px] text-bark">
-                Submitted vs. the internal due date — or the most recent revision deadline, when one
-                was issued. A task with no due date isn&apos;t counted either way.
-              </p>
-            </div>
-            {onTimeByVa.rows.length === 0 ? (
-              <div className="px-5 py-10 text-center">
-                <p className="text-[13px] text-bark">No submissions with a due date in this period.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr className="border-b border-parchment text-left text-[10px] font-semibold uppercase tracking-wider text-bark">
-                      <th className="px-5 py-2">VA</th>
-                      <th className="px-3 py-2 text-right">On time</th>
-                      <th className="px-3 py-2 text-right">Late</th>
-                      <th className="px-3 py-2 text-right">Judged</th>
-                      <th className="px-3 py-2 text-right">On-time %</th>
-                      <th className="px-3 py-2 text-right">No due date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {onTimeByVa.rows.map((r) => (
-                      <tr key={r.userId} className="border-b border-parchment last:border-0">
-                        <td className="px-5 py-2.5 font-semibold text-espresso">{r.name}</td>
-                        <td className="px-3 py-2.5 text-right text-sage">{r.onTime}</td>
-                        <td className="px-3 py-2.5 text-right text-terracotta">{r.late}</td>
-                        <td className="px-3 py-2.5 text-right text-bark">{r.judged}</td>
-                        <td className="px-3 py-2.5 text-right font-semibold">
-                          {r.onTimePct !== null ? (
-                            <span
-                              className={
-                                r.onTimePct >= 90
-                                  ? "text-sage"
-                                  : r.onTimePct >= 70
-                                    ? "text-amber"
-                                    : "text-terracotta"
-                              }
-                            >
-                              {r.onTimePct.toFixed(0)}%
-                            </span>
-                          ) : (
-                            <span className="text-stone">—</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5 text-right text-stone">{r.noDeadline}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-sand bg-white">
-            <div className="border-b border-parchment px-5 py-3">
-              <h3 className="text-[13px] font-bold text-espresso">Planning Time, by VA</h3>
-              <p className="mt-0.5 text-[11px] text-bark">
-                Time logged as Planning, against a 5% ceiling of the weekly shift — a VA with no
-                schedule set, and no Planning time logged, isn&apos;t shown. Doesn&apos;t yet include
-                whether the plan itself was submitted on time.
-              </p>
-            </div>
-            {planningTimeByVa.length === 0 ? (
-              <div className="px-5 py-10 text-center">
-                <p className="text-[13px] text-bark">No planning time or schedule data for this period.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr className="border-b border-parchment text-left text-[10px] font-semibold uppercase tracking-wider text-bark">
-                      <th className="px-5 py-2">VA</th>
-                      <th className="px-3 py-2 text-right">Planning time</th>
-                      <th className="px-3 py-2 text-right">Scheduled hours</th>
-                      <th className="px-3 py-2 text-right">% of schedule</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {planningTimeByVa.map((r) => (
-                      <tr key={r.userId} className="border-b border-parchment last:border-0">
-                        <td className="px-5 py-2.5 font-semibold text-espresso">{r.name}</td>
-                        <td className="px-3 py-2.5 text-right text-bark">{formatDuration(r.planningMs)}</td>
-                        <td className="px-3 py-2.5 text-right text-bark">
-                          {r.scheduledMs != null ? formatDuration(r.scheduledMs) : (
-                            <span className="text-stone">No schedule</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-semibold">
-                          {r.pct !== null ? (
-                            <span
-                              className={
-                                r.pct > 10 ? "text-terracotta" : r.pct > 5 ? "text-amber" : "text-sage"
-                              }
-                            >
-                              {r.pct.toFixed(1)}%
-                            </span>
-                          ) : (
-                            <span className="text-stone">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
       ) : reportTab === "progress" ? (
         /* ── Progress Report Tab ────────────────────────────────── */
         <div className="space-y-4">
@@ -2416,6 +2273,154 @@ export default function ReportsPage() {
                 })()}
               </div>
             )}
+          </div>
+
+          {/* On-Time / Planning Time — folded into Report rather than a
+              separate top-level tab; Toni's call (2026-09-30), it read as
+              out of place sitting alongside Report/Progress/Time Log/Team. */}
+          <div>
+            <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-bark">On-Time</div>
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-4">
+                <BigStat
+                  value={
+                    onTimeByVa.totals.judged > 0
+                      ? `${((onTimeByVa.totals.onTime / onTimeByVa.totals.judged) * 100).toFixed(0)}%`
+                      : "—"
+                  }
+                  label="On time, overall"
+                  color={
+                    onTimeByVa.totals.judged === 0
+                      ? "default"
+                      : onTimeByVa.totals.onTime / onTimeByVa.totals.judged >= 0.9
+                        ? "green"
+                        : onTimeByVa.totals.onTime / onTimeByVa.totals.judged >= 0.7
+                          ? "gold"
+                          : "terra"
+                  }
+                />
+                <BigStat value={onTimeByVa.totals.onTime} label="Submitted on time" color="green" />
+                <BigStat value={onTimeByVa.totals.late} label="Submitted late" color="terra" />
+                <BigStat
+                  value={onTimeByVa.totals.noDeadline}
+                  label="No due date to judge"
+                  color="walnut"
+                />
+              </div>
+
+              <div className="rounded-xl border border-sand bg-white">
+                <div className="border-b border-parchment px-5 py-3">
+                  <h3 className="text-[13px] font-bold text-espresso">On-Time, by VA</h3>
+                  <p className="mt-0.5 text-[11px] text-bark">
+                    Submitted vs. the internal due date — or the most recent revision deadline, when one
+                    was issued. A task with no due date isn&apos;t counted either way.
+                  </p>
+                </div>
+                {onTimeByVa.rows.length === 0 ? (
+                  <div className="px-5 py-10 text-center">
+                    <p className="text-[13px] text-bark">No submissions with a due date in this period.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[13px]">
+                      <thead>
+                        <tr className="border-b border-parchment text-left text-[10px] font-semibold uppercase tracking-wider text-bark">
+                          <th className="px-5 py-2">VA</th>
+                          <th className="px-3 py-2 text-right">On time</th>
+                          <th className="px-3 py-2 text-right">Late</th>
+                          <th className="px-3 py-2 text-right">Judged</th>
+                          <th className="px-3 py-2 text-right">On-time %</th>
+                          <th className="px-3 py-2 text-right">No due date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {onTimeByVa.rows.map((r) => (
+                          <tr key={r.userId} className="border-b border-parchment last:border-0">
+                            <td className="px-5 py-2.5 font-semibold text-espresso">{r.name}</td>
+                            <td className="px-3 py-2.5 text-right text-sage">{r.onTime}</td>
+                            <td className="px-3 py-2.5 text-right text-terracotta">{r.late}</td>
+                            <td className="px-3 py-2.5 text-right text-bark">{r.judged}</td>
+                            <td className="px-3 py-2.5 text-right font-semibold">
+                              {r.onTimePct !== null ? (
+                                <span
+                                  className={
+                                    r.onTimePct >= 90
+                                      ? "text-sage"
+                                      : r.onTimePct >= 70
+                                        ? "text-amber"
+                                        : "text-terracotta"
+                                  }
+                                >
+                                  {r.onTimePct.toFixed(0)}%
+                                </span>
+                              ) : (
+                                <span className="text-stone">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5 text-right text-stone">{r.noDeadline}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-sand bg-white">
+                <div className="border-b border-parchment px-5 py-3">
+                  <h3 className="text-[13px] font-bold text-espresso">Planning Time, by VA</h3>
+                  <p className="mt-0.5 text-[11px] text-bark">
+                    Time logged as Planning, against a 5% ceiling of the weekly shift — a VA with no
+                    schedule set, and no Planning time logged, isn&apos;t shown. Doesn&apos;t yet include
+                    whether the plan itself was submitted on time.
+                  </p>
+                </div>
+                {planningTimeByVa.length === 0 ? (
+                  <div className="px-5 py-10 text-center">
+                    <p className="text-[13px] text-bark">No planning time or schedule data for this period.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[13px]">
+                      <thead>
+                        <tr className="border-b border-parchment text-left text-[10px] font-semibold uppercase tracking-wider text-bark">
+                          <th className="px-5 py-2">VA</th>
+                          <th className="px-3 py-2 text-right">Planning time</th>
+                          <th className="px-3 py-2 text-right">Scheduled hours</th>
+                          <th className="px-3 py-2 text-right">% of schedule</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {planningTimeByVa.map((r) => (
+                          <tr key={r.userId} className="border-b border-parchment last:border-0">
+                            <td className="px-5 py-2.5 font-semibold text-espresso">{r.name}</td>
+                            <td className="px-3 py-2.5 text-right text-bark">{formatDuration(r.planningMs)}</td>
+                            <td className="px-3 py-2.5 text-right text-bark">
+                              {r.scheduledMs != null ? formatDuration(r.scheduledMs) : (
+                                <span className="text-stone">No schedule</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-semibold">
+                              {r.pct !== null ? (
+                                <span
+                                  className={
+                                    r.pct > 10 ? "text-terracotta" : r.pct > 5 ? "text-amber" : "text-sage"
+                                  }
+                                >
+                                  {r.pct.toFixed(1)}%
+                                </span>
+                              ) : (
+                                <span className="text-stone">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </>
       )}
