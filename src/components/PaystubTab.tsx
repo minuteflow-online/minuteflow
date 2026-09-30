@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
-import { formatPayMoney, formatPayRate, payCurrencySymbol, normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { formatPayMoney, formatPayRate, payCurrencySymbol, parsePhpPerUsd, processingFeePesoNote, toUsd, normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { statusBadgeClasses, statusLabel } from "@/lib/taskSchedule";
 import { computeAttendancePay, type DayDecision } from "@/lib/salaryProration";
 
@@ -75,6 +75,8 @@ interface PreviewData {
   previousTotal: number;
   /** The VA's pay currency (profiles.pay_currency) — symbol only. */
   currency?: string | null;
+  /** Org default pesos per $1 (organization_settings.php_per_usd), pre-fills the rate box. */
+  defaultExchangeRate?: number | null;
 }
 
 interface PaystubSnapshot {
@@ -102,6 +104,8 @@ interface PaystubSnapshot {
   paystub_link: string | null;
   fee?: number | null;
   currency?: string | null;
+  /** Pesos per $1 this stub was paid at (PHP stubs only). */
+  exchange_rate?: number | null;
 }
 
 /** One Output Based Task row: checkbox (locked on for Completed items),
@@ -334,6 +338,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const todayIso = new Date().toLocaleDateString("en-CA");
   const [customAmount, setCustomAmount] = useState<string>("");
   const [paymentMethod, setPaymentMethod] = useState<string>("gcash");
+  // Pesos per $1 for a PHP-paid VA — saved on the payment so Financials can
+  // report it in dollars. Pre-filled from the org default on each calculate.
+  const [exchangeRate, setExchangeRate] = useState<string>("");
   const [personalMessage, setPersonalMessage] = useState<string>("");
   const [confirmationNumber, setConfirmationNumber] = useState<string>("");
   const [paymentDate, setPaymentDate] = useState<string>(todayIso);
@@ -497,6 +504,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to calculate.");
       setPreview(data);
+      setExchangeRate(data.defaultExchangeRate != null ? String(data.defaultExchangeRate) : "");
       // Default amount = total gross pay (hourly + fixed)
       const net = data.totalGrossPay || data.grossPay;
       setCustomAmount(net.toFixed(2));
@@ -633,6 +641,14 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     const range = getRange();
     if (!range) return;
 
+    const isPeso = preview.currency === "PHP";
+    const rate = isPeso ? parsePhpPerUsd(exchangeRate) : null;
+    if (isPeso && rate == null) {
+      setError("This VA is paid in pesos — enter the exchange rate (₱ per $1) under Payment Details.");
+      setSending(false);
+      return;
+    }
+
     try {
       // Log an advance / previously-sent amount as a prior payment first, so the
       // paystub shows it as already paid and the remaining settles correctly.
@@ -648,6 +664,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           period_start: range.start,
           period_end: range.end,
           notes: "Advance / previously sent",
+          currency: preview.currency ?? "USD",
+          exchange_rate: rate,
         });
       }
 
@@ -699,6 +717,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             })),
           fee: fee !== "" ? parseFloat(fee) || 0 : 0,
           company_name: companyName.trim() || "MinuteFlow",
+          exchange_rate: rate,
         }),
       });
       const data = await res.json();
@@ -727,7 +746,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds, dayDecisions, grossOverride]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds, dayDecisions, grossOverride, exchangeRate]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -795,8 +814,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       if (feeVal > 0) {
         const expenseDate = values.payment_date || snap.payment_date || new Date().toISOString().split("T")[0];
         await supabase.from("financial_expenses").insert({
-          description: `Processing Fee - ${snap.full_name}`,
-          amount: feeVal,
+          description: `Processing Fee - ${snap.full_name}${processingFeePesoNote(feeVal, snap.currency, snap.exchange_rate)}`,
+          // Expenses are in dollars; a peso stub's fee converts at the stub's rate.
+          amount: Math.round((toUsd(feeVal, snap.currency, snap.exchange_rate) ?? feeVal) * 100) / 100,
           expense_date: expenseDate,
           category: "Processing Fee",
           account: "Virtual Concierge",
@@ -1782,6 +1802,35 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     />
                   </div>
                 </div>
+                {preview.currency === "PHP" && (() => {
+                  // What Financials will count this payment as. Same total the
+                  // Send button sends, converted at the rate typed here.
+                  const total = (customAmount !== "" ? parseFloat(customAmount) : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0) + lineItemsTotal;
+                  const usd = toUsd(total, "PHP", parsePhpPerUsd(exchangeRate));
+                  return (
+                    <div>
+                      <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                        Exchange Rate <span className="normal-case font-normal text-bark/40">(₱ per $1 — for Financials only, the VA sees pesos)</span>
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={exchangeRate}
+                          onChange={(e) => setExchangeRate(e.target.value)}
+                          placeholder="e.g. 58.50"
+                          className="w-32 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                        />
+                        <span className="text-xs text-bark/60">
+                          {usd != null
+                            ? <>{previewMoney(total)} ≈ <span className="font-semibold text-bark">{formatPayMoney(usd, "USD")}</span> in Financials</>
+                            : "Enter a rate — no default Peso Rate is set in Settings."}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Personal Message */}
