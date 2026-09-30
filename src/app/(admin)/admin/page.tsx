@@ -7675,12 +7675,8 @@ interface LineItemDraft {
 function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezone: string }) {
   const [view, setView] = useState<InvoiceView>("list");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  // Every real payment, independent of which invoice they're on or that
-  // invoice's issue date — "Paid" is computed from these by payment_date so
-  // it means the same thing here as it does on Financial Summary: real cash
-  // in that month, not "invoices issued this month that happen to be fully
-  // paid now" (which misses partial payments and money that arrived in a
-  // different month).
+  // Every real payment row — "Paid" sums the ones belonging to the invoices in
+  // the selected period, so partial payments count (status alone missed them).
   const [allInvoicePayments, setAllInvoicePayments] = useState<{ invoice_id: number; amount: number; payment_date: string }[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
@@ -8181,18 +8177,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       if (!carriedAway && inv.status === "overdue") overdue += amountOwed(inv);
     });
 
-    // "Paid" = real cash collected in the selected period, by payment_date —
-    // matches Financial Summary's "Collected from Clients", and counts partial
-    // payments. Matched on the date string's prefix (same as the invoice period
-    // filter) so no timezone conversion can shift a month-end payment.
-    const isFullYear = periodFilter.endsWith("-full");
-    const periodPrefix = isFullYear ? periodFilter.slice(0, 4) : periodFilter;
+    // "Paid" = every payment recorded against the invoices issued in the
+    // selected period, partial payments included, whenever the money arrived.
+    // Payments on invoices from other periods stay with those invoices.
+    const periodInvoiceIds = new Set(
+      periodFilteredInvoices.filter((inv) => inv.status !== "trash").map((inv) => inv.id)
+    );
     const paid = allInvoicePayments
-      .filter((p) => p.payment_date?.startsWith(periodPrefix))
+      .filter((p) => periodInvoiceIds.has(p.invoice_id))
       .reduce((sum, p) => sum + Number(p.amount), 0);
 
     return { totalInvoiced, outstanding, paid, overdue, draftTotal };
-  }, [periodFilteredInvoices, allInvoicePayments, periodFilter]);
+  }, [periodFilteredInvoices, allInvoicePayments]);
 
   const selectedClient = useMemo(() => {
     return clients.find((c) => c.id === selectedClientId) ?? null;
