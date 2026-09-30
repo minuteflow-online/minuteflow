@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAuthClient } from "@/lib/supabase/server";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { amountOwed } from "@/lib/invoiceBalance";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
 
   const { data: invoice, error } = await serviceClient
     .from("invoices")
-    .select("invoice_number, to_name, to_email, total, currency, from_name, dba")
+    .select("invoice_number, to_name, to_email, total, previous_balance, currency, from_name, dba, share_token")
     .eq("id", invoiceId)
     .single();
 
@@ -72,8 +73,13 @@ export async function POST(request: Request) {
 
   const total = Number(invoice.total);
   const paid = Number(newAmountPaid ?? amountPaid ?? 0);
-  const balanceRemaining = Math.max(0, total - paid);
-  const isPaid = (newStatus === "paid") || paid >= total - 0.01;
+  // Includes any balance carried in from an earlier invoice — the same number
+  // the client sees as "Balance Due" on the invoice page.
+  const balanceRemaining = amountOwed({ total: invoice.total, previous_balance: invoice.previous_balance, amount_paid: paid });
+  const isPaid = (newStatus === "paid") || balanceRemaining === 0;
+  const invoiceLink = invoice.share_token
+    ? `https://minuteflow.click/invoice/view/${invoice.share_token}`
+    : null;
   const currency = invoice.currency || "USD";
   const currencyLabel = currency !== "USD" ? ` ${currency}` : "";
 
@@ -118,6 +124,9 @@ export async function POST(request: Request) {
             </tr>`}
           </table>
         </div>
+        ${invoiceLink ? `<div style="text-align:center;margin-bottom:24px;">
+          <a href="${invoiceLink}" style="display:inline-block;background:#2d3a4a;color:#ffffff;font-size:13px;font-weight:700;padding:12px 28px;border-radius:8px;text-decoration:none;">${isPaid ? "View Invoice →" : "View Invoice &amp; Pay Remaining Balance →"}</a>
+        </div>` : ""}
         <p style="margin:0;font-size:13px;color:#9ca3af;text-align:center;">Questions? Reply to this email or contact your account manager.</p>
       </div>
     </div>
