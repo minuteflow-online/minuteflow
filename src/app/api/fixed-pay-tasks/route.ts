@@ -3,6 +3,7 @@ import { createClient as createAdminClient, type SupabaseClient } from "@supabas
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import { normalizePosition } from "@/types/database";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { filterAccessibleProjectIds } from "@/lib/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -142,7 +143,20 @@ export async function GET(request: Request) {
   // Comma-separated for a whole branch (this objective + its sub-objectives) —
   // a single id is just a one-element list, so every existing caller keeps
   // working unchanged.
-  const projectIdList = projectId ? projectId.split(",").map((s) => s.trim()).filter(Boolean) : null;
+  const requestedProjectIds = projectId ? projectId.split(",").map((s) => s.trim()).filter(Boolean) : null;
+  // Keep only the ids this caller actually has a reason to see (owns the
+  // project, or was granted access via project_va_access) — same rule as
+  // Message Board/Docs & Files. Without it, any project id here fell
+  // straight into the admin-client branch below, rate included.
+  const projectIdList = requestedProjectIds && requestedProjectIds.length > 0
+    ? await filterAccessibleProjectIds(makeAdminClient(), { role: auth.role }, userId, requestedProjectIds)
+    : null;
+  // Ids were supplied but none survived the access check — say so plainly
+  // rather than falling through to the no-project-id path below, which would
+  // otherwise quietly answer with this caller's own unrelated task pool.
+  if (requestedProjectIds && requestedProjectIds.length > 0 && projectIdList!.length === 0) {
+    return Response.json({ tasks: [] });
+  }
 
   // A request scoped to a project (the Output Based section of an
   // Operation/Objective's Subtasks Checklist, in VAProjectsTab.tsx) is asking
