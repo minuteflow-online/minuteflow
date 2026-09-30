@@ -3,6 +3,7 @@ import { notifyTaskAssigned } from "@/lib/taskAssigned";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { filterAccessibleProjectIds } from "@/lib/projectAccess";
 import { weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
 
 export const dynamic = "force-dynamic";
@@ -231,10 +232,17 @@ export async function GET(request: Request) {
   // The default VA path queries assigned_task_assignees (a different structure) and
   // ignores projectIdParam entirely — this special case bypasses that.
   if (!isPermitted && !selfOnly && projectIdList && projectIdList.length > 0) {
+    // Keep only the ids this VA actually has a reason to see (owns the
+    // project, or was granted access via project_va_access) — the same rule
+    // Message Board and Docs & Files already apply. Without it, any project
+    // id here returned that project's tasks in full, rate included.
+    const accessibleIds = await filterAccessibleProjectIds(serviceRoleClient, profile, user.id, projectIdList);
+    if (accessibleIds.length === 0) return Response.json({ tasks: [] });
+
     const { data, error } = await serviceRoleClient
       .from("assigned_tasks")
       .select(taskSelect)
-      .in("project_id", projectIdList)
+      .in("project_id", accessibleIds)
       .order("created_at", { ascending: false });
     if (error) return Response.json({ error: error.message }, { status: 500 });
     const result = await formatAdminTaskRows(data ?? []);

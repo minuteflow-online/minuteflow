@@ -38,6 +38,27 @@ export async function canAccessProject(
   return Boolean(access);
 }
 
+/**
+ * Same rule as canAccessProject, applied to a list of ids at once — the shape
+ * every "give me this whole branch's tasks" caller actually has (an
+ * Objective/Operation plus its descendants). Admins keep the full list
+ * unchanged; everyone else keeps only the ids they can actually see, so a
+ * caller who supplies an id they have no business with silently gets nothing
+ * back for it instead of it being trusted at face value.
+ */
+export async function filterAccessibleProjectIds(
+  serviceClient: SupabaseClient,
+  profile: { role?: string | null } | null | undefined,
+  userId: string,
+  projectIds: string[]
+): Promise<string[]> {
+  if (hasBroadAdminAccess(profile)) return projectIds;
+  const checked = await Promise.all(
+    projectIds.map(async (id) => ((await canAccessProject(serviceClient, profile, userId, id)) ? id : null))
+  );
+  return checked.filter((id): id is string => id !== null);
+}
+
 export function serviceClient() {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
