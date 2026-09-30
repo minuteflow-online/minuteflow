@@ -218,10 +218,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
  * going through that one path (see src/lib/assignedTaskStatus.ts).
  */
 export async function POST(request: Request, { params }: RouteContext) {
-  const supabase = await createClient();
+  // Bearer-token fallback for the desktop app — see project-messages/route.ts's
+  // identical comment and PR #167. Only this handler needs it: GET/PATCH/DELETE
+  // below are admin-only surfaces the desktop app doesn't call.
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data: profile } = await supabase

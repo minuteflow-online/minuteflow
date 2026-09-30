@@ -38,6 +38,10 @@ export interface AssignedTaskDetail {
   task_detail: string | null;
   task_notes: string | null;
   instructions: string | null;
+  /** false means nobody reviews this task's submission — the evidence bar
+   *  relaxes accordingly (see submissions.ts's submissionMeetsBar). Absent
+   *  (null/undefined) is treated as true, same as web. */
+  review_required: boolean | null;
   due_date: string | null;
   archived_at: string | null;
   deleted_at: string | null;
@@ -71,7 +75,7 @@ export interface VAAssignedTask {
 
 const VA_SELECT =
   "id,va_id,status,log_id,notes,assigned_at,updated_at,sort_order," +
-  "assigned_tasks(id,account,project,task_name,task_detail,task_notes,instructions,due_date,archived_at,deleted_at,fixed_pay_task_id,revision_count,fixed_pay_tasks(rate),task_todos(id,text,sort_order))";
+  "assigned_tasks(id,account,project,task_name,task_detail,task_notes,instructions,review_required,due_date,archived_at,deleted_at,fixed_pay_task_id,revision_count,fixed_pay_tasks(rate),task_todos(id,text,sort_order))";
 
 // revision_needed has to stay in this list: the tasks panel is the only place
 // a VA can Rework -> Start -> Submit again. Without it a sent-back task just

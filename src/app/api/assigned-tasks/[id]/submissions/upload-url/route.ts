@@ -29,10 +29,13 @@ type RouteContext = { params: Promise<{ id: string }> };
  * it is being written to.
  */
 export async function POST(request: Request, { params }: RouteContext) {
-  const supabase = await createClient();
+  // Bearer-token fallback for the desktop app — see project-messages/route.ts's
+  // identical comment and PR #167.
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
