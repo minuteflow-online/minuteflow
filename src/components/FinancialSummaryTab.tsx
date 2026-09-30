@@ -32,6 +32,8 @@ interface ProfileRow {
   // Pay amounts on this row are converted to USD at load (see fetchData);
   // pay_currency says what they were stored in.
   pay_currency: string | null;
+  /** pay_rate before conversion, in pay_currency — set only on converted rows. */
+  native_pay_rate?: number;
   role: string;
   is_active: boolean;
   position?: string;
@@ -357,6 +359,10 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   // converted for lack of one — shown as a warning, never counted as dollars.
   const [phpPerUsd, setPhpPerUsd] = useState<number | null>(null);
   const [unconvertedVaNames, setUnconvertedVaNames] = useState<string[]>([]);
+  // Sent peso paystubs per VA — the rate each was paid at. Work a sent stub
+  // covers is costed at that stub's rate, so changing the default later never
+  // moves a period that's already paid.
+  const [pesoStubsByVa, setPesoStubsByVa] = useState<Record<string, { start: string; end: string; label: string | null; rate: number }[]>>({});
   const [loading, setLoading] = useState(true);
 
   // Expand/collapse state
@@ -422,7 +428,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, invoicePayRes, invoiceRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes, orgRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, invoicePayRes, invoiceRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes, orgRes, pesoStubRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
@@ -494,7 +500,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       // owed on those, not even a "pending" figure.
       supabase
         .from("fixed_pay_tasks")
-        .select("assigned_to, task_name, account, project, rate, status, paid_at")
+        .select("assigned_to, task_name, account, project, rate, status, paid_at, paid_period_label")
         .not("assigned_to", "is", null)
         .gt("rate", 0)
         .is("deleted_at", null)
@@ -512,6 +518,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .select("id, description, amount, quantity, category, account, frequency, start_date, end_date, notes")
         .order("start_date", { ascending: true }),
       supabase.from("organization_settings").select("php_per_usd").limit(1).maybeSingle(),
+      // Every sent peso paystub and its locked rate — not range-filtered, since
+      // an output task paid on an older stub still needs that stub's rate.
+      supabase
+        .from("paystub_snapshots")
+        .select("user_id, period_start, period_end, pay_period_label, exchange_rate")
+        .eq("status", "sent")
+        .eq("currency", "PHP")
+        .not("exchange_rate", "is", null),
     ]);
 
     const accData = await accRes.json();
@@ -528,6 +542,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rawProfiles = (profileRes.data as ProfileRow[]) ?? [];
     const currencyByVa: Record<string, string | null> = Object.fromEntries(rawProfiles.map((p) => [p.id, p.pay_currency]));
     const unconverted = new Set<string>();
+    const pesoStubs: Record<string, { start: string; end: string; label: string | null; rate: number }[]> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const s of (pesoStubRes.data ?? []) as any[]) {
+      const rate = parsePhpPerUsd(s.exchange_rate);
+      if (rate == null) continue;
+      (pesoStubs[s.user_id] ??= []).push({ start: s.period_start, end: s.period_end, label: s.pay_period_label ?? null, rate });
+    }
+    setPesoStubsByVa(pesoStubs);
     const usdFactor = (vaId: string, currency = currencyByVa[vaId], rate = defaultRate): number => {
       const factor = toUsd(1, currency, rate);
       if (factor == null) { unconverted.add(vaId); return 0; }
@@ -541,6 +563,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       return {
         ...p,
         pay_rate: (Number(p.pay_rate) || 0) * f,
+        native_pay_rate: Number(p.pay_rate) || 0,
         ...(vaBudgetType(p) === "output_based"
           ? {
               daily_budget_limit: scale(p.daily_budget_limit),
@@ -566,10 +589,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         }
       })
     );
-    setRateHistories(Object.fromEntries(historyEntries.map(([id, rows]): [string, (PayRateHistoryRow & { rate_type?: string })[]] => {
-      const f = usdFactor(id);
-      return [id, rows.map((h) => (f === 1 ? h : { ...h, rate_amount: Number(h.rate_amount) * f }))];
-    })));
+    // Kept in the VA's own currency: the gross-pay calc converts each day at
+    // the rate of the stub that paid it (see dayUsdFactor below).
+    setRateHistories(Object.fromEntries(historyEntries.map(([id, rows]): [string, (PayRateHistoryRow & { rate_type?: string })[]] => [id, [...rows]])));
     setLogs(((logRes.data as LogRow[]) ?? []).map((l) => {
       const f = usdFactor(l.user_id);
       return f === 1 || l.task_rate == null ? l : { ...l, task_rate: Number(l.task_rate) * f };
@@ -637,7 +659,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       task_name: row.task_name ?? "Unknown Task",
       account: row.account ?? null,
       project_name: row.project ?? null,
-      rate: Number(row.rate) * usdFactor(row.assigned_to),
+      // Paid on a peso stub → that stub's locked rate; otherwise the default.
+      rate: Number(row.rate) * (() => {
+        const stub = row.paid_period_label ? (pesoStubs[row.assigned_to] ?? []).find((s) => s.label === row.paid_period_label) : undefined;
+        return stub ? 1 / stub.rate : usdFactor(row.assigned_to);
+      })(),
       task_library_id: 0,
       // A paid task counts as earned regardless of its review status — real
       // money already went out for it, whether or not it was formally
@@ -989,12 +1015,41 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         // Fixed monthly salary (Toni, Neil, etc.) — cost is the flat monthly
         // amount from Team Management, NOT hours × rate. Full amount per month.
         const isMonthlyFixed = profile.pay_rate_type === "monthly";
-        const monthlyFixedPay = isMonthlyFixed ? Number(profile.pay_rate) || 0 : 0;
 
-        // Calculate hourly rate (used for hourly/daily VAs)
-        let hourlyRate = profile.pay_rate;
-        if (profile.pay_rate_type === "daily") hourlyRate = profile.pay_rate / 8;
-        if (profile.pay_rate_type === "monthly") hourlyRate = profile.pay_rate / 160;
+        // Pay is worked out in the VA's own currency, then each day converted
+        // to dollars at the rate of the sent paystub covering it — so a paid
+        // period stays locked at the rate it was paid at — or, for work not
+        // yet paid, today's default rate. Dollar VAs: every factor is 1.
+        const isPeso = normalizePayCurrency(profile.pay_currency) === "PHP";
+        const defaultFactor = isPeso ? toUsd(1, "PHP", phpPerUsd) ?? 0 : 1;
+        const dayUsdFactor = (date: string): number => {
+          if (!isPeso) return 1;
+          const stub = (pesoStubsByVa[userId] ?? []).find((s) => s.start <= date && date <= s.end);
+          return stub ? 1 / stub.rate : defaultFactor;
+        };
+        const nativePayRate = profile.native_pay_rate ?? profile.pay_rate;
+
+        // A monthly salary is a flat amount per month, so it takes the average
+        // rate across the days in range (half the month may be on a paid stub,
+        // half not yet).
+        let salaryFactor = defaultFactor;
+        if (isMonthlyFixed && isPeso) {
+          let sum = 0;
+          let count = 0;
+          for (let d = new Date(`${startDate}T12:00:00Z`); d <= new Date(`${endDate}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+            sum += dayUsdFactor(d.toISOString().slice(0, 10));
+            count++;
+          }
+          salaryFactor = count > 0 ? sum / count : defaultFactor;
+        }
+        const monthlyFixedPay = isMonthlyFixed ? (Number(nativePayRate) || 0) * salaryFactor : 0;
+
+        // Hourly rate in the VA's own currency (used for hourly/daily VAs)
+        let nativeHourlyRate = nativePayRate;
+        if (profile.pay_rate_type === "daily") nativeHourlyRate = nativePayRate / 8;
+        if (profile.pay_rate_type === "monthly") nativeHourlyRate = nativePayRate / 160;
+        // Shown as "$X/hr" — today's rate, for reference only.
+        const hourlyRate = nativeHourlyRate * defaultFactor;
 
         // Rate-history-aware hourly pay: each day is paid at the rate in
         // effect that day (history converted to hourly equivalents).
@@ -1009,11 +1064,15 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         Object.entries(data.dayBreakdown).forEach(([d, v]) => {
           paidMsByDay[d] = v.paidMs;
         });
-        const { grossPay: hourlyPay, rateByDate } = computeHourlyGross(
+        const { rateByDate } = computeHourlyGross(
           paidMsByDay,
           history,
-          hourlyRate
+          nativeHourlyRate
         );
+        // Each day's pay in dollars, at that day's rate (see dayUsdFactor).
+        const dayUsd = (date: string, paidMs: number) =>
+          msToHours(paidMs) * (rateByDate[date] ?? nativeHourlyRate) * dayUsdFactor(date);
+        const hourlyPay = Object.entries(paidMsByDay).reduce((s, [date, ms]) => s + dayUsd(date, ms), 0);
 
         // Fixed tasks come from assignments, not time_logs
         const fixedTasks = assignmentsByVa[userId] ?? [];
@@ -1045,7 +1104,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
             date,
             ms: d.ms,
             paidMs: d.paidMs,
-            amount: msToHours(d.paidMs) * (rateByDate[date] ?? hourlyRate),
+            amount: dayUsd(date, d.paidMs),
           }));
 
         return {
@@ -1099,7 +1158,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const totalVaPaid = rows.reduce((s, r) => s + r.totalPaid, 0);
 
     return { rows, totalCost, totalPaidMs, totalVaPaid };
-  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser, vaFixedAssignments, rateHistories, customPaystubByVa]);
+  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser, vaFixedAssignments, rateHistories, customPaystubByVa, pesoStubsByVa, phpPerUsd, startDate, endDate]);
 
   /* ── Category Breakdown ──────────────────────────────── */
 
