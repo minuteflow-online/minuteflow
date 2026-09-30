@@ -6,6 +6,9 @@ import {
   formatPayMoney,
   formatRateSegments,
   normalizePayCurrency,
+  parsePhpPerUsd,
+  processingFeePesoNote,
+  toUsd,
   type PayCurrency,
   type PayRateHistoryRow,
   type RateSegment,
@@ -74,6 +77,9 @@ export async function POST(request: Request) {
     // another cycle settled here. The calculation is a suggestion; this is the
     // decision. Absent or null means take the computed figure.
     gross_override,
+    // Pesos per 1 USD this payment was actually made at, for a PHP-paid VA.
+    // Absent means the org default (organization_settings.php_per_usd).
+    exchange_rate,
   } = body;
   const includedOutputItemIds = new Set<number>(
     Array.isArray(included_output_item_ids) ? included_output_item_ids.map((id: number) => Number(id)) : []
@@ -177,6 +183,15 @@ export async function POST(request: Request) {
     .sort((a, b) => b.ms - a.ms || a.firstDate.localeCompare(b.firstDate));
   const payRate = Number(vaProfile.pay_rate) || 0;
   const currency = normalizePayCurrency(vaProfile.pay_currency);
+  // Financials are kept in dollars, so a peso payment carries the rate it was
+  // made at. Dollar payments need none.
+  const { data: orgSettings } = await adminClient
+    .from("organization_settings")
+    .select("php_per_usd")
+    .limit(1)
+    .maybeSingle();
+  const defaultExchangeRate = parsePhpPerUsd(orgSettings?.php_per_usd);
+  const exchangeRate = currency === "PHP" ? parsePhpPerUsd(exchange_rate) ?? defaultExchangeRate : null;
 
   // Rate-history-aware gross: each day is paid at the rate in effect that day.
   const { data: rateHistoryRaw } = await adminClient
@@ -352,6 +367,7 @@ export async function POST(request: Request) {
       payRate,
       payRateType: vaProfile.pay_rate_type ?? null,
       currency,
+      defaultExchangeRate,
       isFixedPeriod,
       periodWeekdays,
       monthWeekdays,
@@ -388,6 +404,15 @@ export async function POST(request: Request) {
   // Use custom_amount if provided (Toni overrode the calculated amount), otherwise use totalGrossPay
   const paymentAmount = custom_amount != null ? Number(custom_amount) : totalGrossPay;
 
+  // A peso payment with no rate can't be counted in dollars — stop before
+  // anything is written rather than record pesos Financials would read as $.
+  if (currency === "PHP" && (payment_method || feeAmount > 0) && exchangeRate == null) {
+    return Response.json(
+      { error: "This VA is paid in pesos. Enter the exchange rate (₱ per $1), or set a default Peso Rate in Settings." },
+      { status: 400 }
+    );
+  }
+
   let paymentRecorded = false;
   let paymentError: string | null = null;
   if (payment_method) {
@@ -402,6 +427,8 @@ export async function POST(request: Request) {
       notes: `Paystub for ${periodLabel}`,
       personal_message: personal_message ?? null,
       recorded_by: user.id,
+      currency,
+      exchange_rate: exchangeRate,
     });
     if (insertError) {
       console.error("va_payments insert error:", insertError.message);
@@ -566,6 +593,7 @@ export async function POST(request: Request) {
       custom_line_items: customLineItems,
       fee: feeAmount,
       currency,
+      exchange_rate: exchangeRate,
     }).select("id").single();
     snapshotId = snapData?.id ?? null;
   } catch (snapErr) {
@@ -576,9 +604,11 @@ export async function POST(request: Request) {
   // Step 4: Record processing fee as an expense
   if (feeAmount > 0) {
     try {
+      // Expenses are in dollars; a fee typed on a peso paystub is pesos.
+      const feeUsd = toUsd(feeAmount, currency, exchangeRate) ?? feeAmount;
       await adminClient.from("financial_expenses").insert({
-        description: `Processing Fee - ${vaProfile.full_name}`,
-        amount: feeAmount,
+        description: `Processing Fee - ${vaProfile.full_name}${processingFeePesoNote(feeAmount, currency, exchangeRate)}`,
+        amount: Math.round(feeUsd * 100) / 100,
         expense_date: payment_date || new Date().toISOString().split("T")[0],
         category: "Processing Fee",
         account: "Virtual Concierge",
