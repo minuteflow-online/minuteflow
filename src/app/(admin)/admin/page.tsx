@@ -8965,7 +8965,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         body: JSON.stringify({
           invoiceId: selectedInvoice.id,
           amountPaid: amt,
-          paymentDate,
           newAmountPaid: synced?.amount_paid ?? Number(selectedInvoice.amount_paid || 0) + amt,
           newStatus: synced?.status ?? selectedInvoice.status,
         }),
