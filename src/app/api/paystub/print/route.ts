@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { normalizeByDateValue, isFixedPeriodRate, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { normalizeByDateValue, isFixedPeriodRate, formatPayMoney, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
@@ -81,6 +81,7 @@ export async function GET(request: Request) {
     : (snap.amount_paid as number);
   const remainingBalance = grossPay - amountPaid;
   const isFixedPeriod = isFixedPeriodRate(snap.pay_rate_type as string | null);
+  const formatCurrency = (amount: number) => formatPayMoney(amount, snap.currency as string | null);
 
   // by_date values are legacy plain ms numbers or {ms, rate} with the
   // rate-history rate that applied that day. Normalize to one shape.
@@ -475,10 +476,6 @@ function formatDate(iso: string): string {
 
 function formatHours(ms: number): string {
   return (ms / 3_600_000).toFixed(2) + " hrs";
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
 function formatDateLabel(iso: string): string {

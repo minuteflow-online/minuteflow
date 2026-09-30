@@ -3,7 +3,7 @@
 // the money math ad-hoc. The send route stays authoritative at approval time;
 // this drives the DRAFT that Toni reviews.
 
-import { computeGrossForRateType, type PayRateHistoryRow } from "@/lib/payroll";
+import { computeGrossForRateType, normalizePayCurrency, type PayCurrency, type PayRateHistoryRow } from "@/lib/payroll";
 import { isPayrollEligible } from "@/lib/payrollHours";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
@@ -23,6 +23,7 @@ export interface PaystubComputation {
   /** True for a flat monthly salary — grossPay is prorated by weekdays, not hours × rate. */
   isFixedPeriod: boolean;
   payRateType: string | null;
+  currency: PayCurrency;
 }
 
 /** Compute a VA's paystub numbers for [startDate, endDate] (inclusive, session_date). */
@@ -34,7 +35,7 @@ export async function computePaystubData(
 ): Promise<PaystubComputation | null> {
   const { data: vaProfile } = await admin
     .from("profiles")
-    .select("pay_rate, pay_rate_type, position")
+    .select("pay_rate, pay_rate_type, pay_currency, position")
     .eq("id", userId)
     .single();
   if (!vaProfile) return null;
@@ -122,5 +123,6 @@ export async function computePaystubData(
     rateByDate,
     isFixedPeriod: Boolean(isFixedPeriod),
     payRateType: vaProfile.pay_rate_type ?? null,
+    currency: normalizePayCurrency(vaProfile.pay_currency),
   };
 }

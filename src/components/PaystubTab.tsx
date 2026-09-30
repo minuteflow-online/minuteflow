@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
-import { formatPayRate, normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { formatPayMoney, formatPayRate, payCurrencySymbol, normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { statusBadgeClasses, statusLabel } from "@/lib/taskSchedule";
 import { computeAttendancePay, type DayDecision } from "@/lib/salaryProration";
 
@@ -73,6 +73,8 @@ interface PreviewData {
   paymentAccounts?: Record<string, Record<string, string>>;
   previousPayments: PreviousPayment[];
   previousTotal: number;
+  /** The VA's pay currency (profiles.pay_currency) — symbol only. */
+  currency?: string | null;
 }
 
 interface PaystubSnapshot {
@@ -99,6 +101,7 @@ interface PaystubSnapshot {
   personal_message: string | null;
   paystub_link: string | null;
   fee?: number | null;
+  currency?: string | null;
 }
 
 /** One Output Based Task row: checkbox (locked on for Completed items),
@@ -109,12 +112,14 @@ function OutputTaskRow({
   onToggle,
   onApprove,
   approving,
+  currency,
 }: {
   item: FixedAssignment;
   checked: boolean;
   onToggle: () => void;
   onApprove: () => void;
   approving: boolean;
+  currency?: string | null;
 }) {
   const isCompleted = item.status === "completed";
   return (
@@ -138,7 +143,7 @@ function OutputTaskRow({
         </span>
       </td>
       <td className="py-1.5 text-bark/70">{item.date ? formatDateLabel(item.date.split("T")[0]) : "—"}</td>
-      <td className="py-1.5 text-right text-bark/70">{formatCurrency(item.amount)}</td>
+      <td className="py-1.5 text-right text-bark/70">{formatCurrency(item.amount, currency)}</td>
       <td className="py-1.5 text-right">
         {!isCompleted && (
           <button
@@ -261,8 +266,8 @@ function formatHours(ms: number): string {
   return (ms / 3_600_000).toFixed(2) + " hrs";
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
+function formatCurrency(amount: number, currency?: string | null): string {
+  return formatPayMoney(amount, currency);
 }
 
 function formatDateLabel(iso: string): string {
@@ -288,6 +293,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
   const [preview, setPreview] = useState<PreviewData | null>(null);
+  const previewMoney = (n: number) => formatCurrency(n, preview?.currency);
   // Per-day payroll decisions for a salaried VA: excused (no effect either
   // way) or unpaid (docked). Cleared whenever the VA or period changes.
   const [dayDecisions, setDayDecisions] = useState<Record<string, DayDecision>>({});
@@ -347,14 +353,14 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [resendSuccessId, setResendSuccessId] = useState<string | null>(null);
 
   // Pending auto-generated paystub drafts (awaiting review), across all VAs
-  const [drafts, setDrafts] = useState<Array<{ id: string; user_id: string; full_name: string; period_start: string; period_end: string; pay_period_label: string | null; total_hours_ms: number; gross_pay: number }>>([]);
+  const [drafts, setDrafts] = useState<Array<{ id: string; user_id: string; full_name: string; period_start: string; period_end: string; pay_period_label: string | null; total_hours_ms: number; gross_pay: number; currency?: string | null }>>([]);
   const [draftsLoading, setDraftsLoading] = useState(true);
   const loadDrafts = useCallback(async () => {
     setDraftsLoading(true);
     const supabase = createClient();
     const { data } = await supabase
       .from("paystub_snapshots")
-      .select("id, user_id, full_name, period_start, period_end, pay_period_label, total_hours_ms, gross_pay")
+      .select("id, user_id, full_name, period_start, period_end, pay_period_label, total_hours_ms, gross_pay, currency")
       .eq("status", "draft")
       .order("created_at", { ascending: false });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -374,15 +380,17 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         const p = await res.json();
         const freshGross = Number(p.totalGrossPay ?? p.grossPay) || 0;
         const freshMs = Math.round((Number(p.totalHours) || 0) * 3_600_000);
-        if (Math.abs(freshGross - Number(d.gross_pay)) > 0.005 || Math.abs(freshMs - Number(d.total_hours_ms)) > 1000) {
+        // A draft follows the VA's current currency setting until it's sent.
+        const freshCurrency = p.currency ?? d.currency ?? "USD";
+        if (Math.abs(freshGross - Number(d.gross_pay)) > 0.005 || Math.abs(freshMs - Number(d.total_hours_ms)) > 1000 || freshCurrency !== (d.currency ?? "USD")) {
           const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
           for (const [dt, ms] of Object.entries(p.byDate ?? {})) {
             byDateWithRates[dt] = { ms: Number(ms), rate: p.isFixedPeriod ? 0 : Number((p.rateByDate ?? {})[dt] ?? p.payRate) };
           }
           await supabase.from("paystub_snapshots").update({
-            gross_pay: freshGross, total_hours_ms: freshMs, by_date: byDateWithRates, pay_rate_type: p.payRateType ?? null,
+            gross_pay: freshGross, total_hours_ms: freshMs, by_date: byDateWithRates, pay_rate_type: p.payRateType ?? null, currency: freshCurrency,
           }).eq("id", d.id);
-          return { ...d, gross_pay: freshGross, total_hours_ms: freshMs };
+          return { ...d, gross_pay: freshGross, total_hours_ms: freshMs, currency: freshCurrency };
         }
       } catch { /* keep stored on any error */ }
       return d;
@@ -556,6 +564,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             .reduce((sum, a) => sum + a.amount, 0),
         by_date: byDateWithRates,
         company_name: companyName.trim() || "MinuteFlow",
+        currency: preview.currency ?? "USD",
       };
       // Re-saving for the same VA + period refreshes the existing draft
       // instead of piling up a duplicate row in the list.
@@ -970,7 +979,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
               <option value="">— Select VA —</option>
               {eligibleProfiles.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.full_name} ({p.pay_rate > 0 ? formatPayRate(Number(p.pay_rate), p.pay_rate_type) : "no rate set"})
+                  {p.full_name} ({p.pay_rate > 0 ? formatPayRate(Number(p.pay_rate), p.pay_rate_type, p.pay_currency) : "no rate set"})
                 </option>
               ))}
             </select>
@@ -1067,7 +1076,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <div className="text-sm font-semibold text-bark">Paystub sent!</div>
                   {preview && (
                     <div className="text-xs text-bark/60">
-                      Sent to {preview.vaEmail} · {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
+                      Sent to {preview.vaEmail} · {previewMoney((customAmount !== "" ? parseFloat(customAmount) : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
                     </div>
                   )}
                 </div>
@@ -1130,7 +1139,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                           />
                           <div className="flex items-center gap-1 w-28">
-                            <span className="text-sm font-semibold text-bark/50">$</span>
+                            <span className="text-sm font-semibold text-bark/50">{payCurrencySymbol(preview?.currency)}</span>
                             <input
                               type="number"
                               min="0"
@@ -1155,9 +1164,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           </div>
                           <span className="w-24 text-right text-xs text-bark/70 shrink-0">
                             <span className="block text-[10px] text-bark/40">
-                              {qty > 1 ? `${qty}× ${formatCurrency(rate)}` : formatCurrency(rate)}
+                              {qty > 1 ? `${qty}× ${previewMoney(rate)}` : previewMoney(rate)}
                             </span>
-                            <span className="font-semibold">{formatCurrency(lineItemAmount(item))}</span>
+                            <span className="font-semibold">{previewMoney(lineItemAmount(item))}</span>
                           </span>
                           <button
                             type="button"
@@ -1172,7 +1181,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     })}
                     <div className="flex justify-between items-center text-xs font-semibold text-bark/60 pt-1">
                       <span>Line Items Subtotal</span>
-                      <span>{formatCurrency(lineItemsTotal)}</span>
+                      <span>{previewMoney(lineItemsTotal)}</span>
                     </div>
                   </div>
                 )}
@@ -1202,7 +1211,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             <td className="py-1.5 text-right text-bark/70">
                               {preview.isFixedPeriod
                                 ? "—"
-                                : formatCurrency((ms / 3_600_000) * (preview.rateByDate?.[date] ?? preview.payRate))}
+                                : previewMoney((ms / 3_600_000) * (preview.rateByDate?.[date] ?? preview.payRate))}
                             </td>
                           </tr>
                         ))}
@@ -1245,7 +1254,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 <div className="px-5 py-3 border-t border-linen">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-semibold text-bark/50 uppercase tracking-wide">Output Based Work — Already Paid</span>
-                    <span className="text-xs font-semibold text-bark/70">{formatCurrency(preview.paidOutputTotal ?? 0)}</span>
+                    <span className="text-xs font-semibold text-bark/70">{previewMoney(preview.paidOutputTotal ?? 0)}</span>
                   </div>
                   <table className="w-full text-xs">
                     <tbody>
@@ -1253,7 +1262,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                         <tr key={t.id} className="border-b border-linen/50">
                           <td className="py-1.5 text-bark/70">{t.task_name}</td>
                           <td className="py-1.5 text-right text-bark/40 whitespace-nowrap">{t.settled_on ?? "—"}</td>
-                          <td className="py-1.5 text-right text-bark/70 w-20">{formatCurrency(t.amount)}</td>
+                          <td className="py-1.5 text-right text-bark/70 w-20">{previewMoney(t.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1287,9 +1296,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             {a.date ? formatDateLabel(a.date.split("T")[0]) : "—"}
                           </td>
                           <td className="py-1.5 text-right text-bark/70">
-                            {a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}
+                            {a.quantity > 1 ? `${a.quantity}× ${previewMoney(a.rate)}` : previewMoney(a.rate)}
                           </td>
-                          <td className="py-1.5 text-right text-bark/70">{formatCurrency(a.amount)}</td>
+                          <td className="py-1.5 text-right text-bark/70">{previewMoney(a.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1319,6 +1328,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                       <tbody>
                         {currentPeriodOutputItems.map((item) => (
                           <OutputTaskRow
+                            currency={preview.currency}
                             key={item.id}
                             item={item}
                             checked={isOutputItemChecked(item)}
@@ -1369,6 +1379,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             <tbody>
                               {carriedOverOutputItems.map((item) => (
                                 <OutputTaskRow
+                                  currency={preview.currency}
                                   key={item.id}
                                   item={item}
                                   checked={isOutputItemChecked(item)}
@@ -1469,19 +1480,19 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 {preview.isFixedPeriod ? (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                     <span>Monthly Salary</span>
-                    <span>{formatCurrency(preview.payRate)}/mo</span>
+                    <span>{previewMoney(preview.payRate)}/mo</span>
                   </div>
                 ) : preview.rateSegments && preview.rateSegments.length > 1 ? (
                   preview.rateSegments.map((s) => (
                     <div key={s.rate} className="flex justify-between items-center text-xs text-bark/60 mb-1">
-                      <span>{s.hours.toFixed(2)}h @ {formatCurrency(s.rate)}/hr</span>
-                      <span>{formatCurrency(s.amount)}</span>
+                      <span>{s.hours.toFixed(2)}h @ {previewMoney(s.rate)}/hr</span>
+                      <span>{previewMoney(s.amount)}</span>
                     </div>
                   ))
                 ) : (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                     <span>Rate</span>
-                    <span>{formatPayRate(preview.payRate, preview.payRateType)}</span>
+                    <span>{formatPayRate(preview.payRate, preview.payRateType, preview.currency)}</span>
                   </div>
                 )}
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
@@ -1493,7 +1504,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                         : "Time-based Pay"}
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="text-bark/40">$</span>
+                    <span className="text-bark/40">{payCurrencySymbol(preview?.currency)}</span>
                     <input
                       type="number"
                       step="0.01"
@@ -1512,7 +1523,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <div className="flex justify-between items-center text-[10px] text-bark/40 mb-1">
                     <span>calculated from logged time</span>
                     <span className="flex items-center gap-2">
-                      {formatCurrency(suggestedGross)}
+                      {previewMoney(suggestedGross)}
                       <button
                         onClick={() => setGrossOverride("")}
                         className="underline hover:text-terracotta cursor-pointer"
@@ -1525,23 +1536,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 {effectiveFixedTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                     <span>Output Based Assignments</span>
-                    <span>+ {formatCurrency(effectiveFixedTotal)}</span>
+                    <span>+ {previewMoney(effectiveFixedTotal)}</span>
                   </div>
                 )}
                 {lineItemsTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                     <span>Custom Line Items</span>
-                    <span>+ {formatCurrency(lineItemsTotal)}</span>
+                    <span>+ {previewMoney(lineItemsTotal)}</span>
                   </div>
                 )}
                 <div className="flex justify-between items-center font-semibold text-bark border-t border-linen pt-2 mt-1">
                   <span className="text-sm">Gross Pay</span>
-                  <span className="text-sm">{formatCurrency(effectiveTotalGrossPay + lineItemsTotal)}</span>
+                  <span className="text-sm">{previewMoney(effectiveTotalGrossPay + lineItemsTotal)}</span>
                 </div>
                 {preview.previousTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/50 mt-1">
                     <span>Previous Payments</span>
-                    <span>− {formatCurrency(preview.previousTotal)}</span>
+                    <span>− {previewMoney(preview.previousTotal)}</span>
                   </div>
                 )}
                 <div className="text-xs text-bark/40 mt-1">To: {preview.vaEmail}</div>
@@ -1560,7 +1571,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           <span className="capitalize">{p.payment_method.replace(/_/g, " ")}</span>
                           {p.notes ? <span className="text-bark/40"> · {p.notes}</span> : null}
                         </span>
-                        <span className="font-semibold text-bark/80">{formatCurrency(p.amount)}</span>
+                        <span className="font-semibold text-bark/80">{previewMoney(p.amount)}</span>
                       </div>
                     ))}
                   </div>
@@ -1574,7 +1585,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-bark/50">$</span>
+                    <span className="text-sm font-semibold text-bark/50">{payCurrencySymbol(preview?.currency)}</span>
                     <input
                       type="number" min="0" step="0.01"
                       value={advanceAmount}
@@ -1606,8 +1617,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   const remaining = gross - adv - now;
                   return (
                     <div className="mt-2 rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark space-y-1">
-                      <div className="flex justify-between"><span>Already sent (advance)</span><span>{formatCurrency(adv)}</span></div>
-                      <div className="flex justify-between"><span>Paying now</span><span>{formatCurrency(now)}</span></div>
+                      <div className="flex justify-between"><span>Already sent (advance)</span><span>{previewMoney(adv)}</span></div>
+                      <div className="flex justify-between"><span>Paying now</span><span>{previewMoney(now)}</span></div>
                       {/* A negative remainder means the advance and this
                           payment together come to more than the paystub — an
                           overpayment, not a debt. Showing it as "Remaining
@@ -1622,7 +1633,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                               : "Remaining after this"}
                         </span>
                         <span className={Math.abs(remaining) < 0.005 ? "text-sage" : remaining < 0 ? "text-sage" : "text-terracotta"}>
-                          {formatCurrency(Math.abs(remaining))}
+                          {previewMoney(Math.abs(remaining))}
                         </span>
                       </div>
                     </div>
@@ -1642,7 +1653,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   )}
                 </label>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-bark/50">$</span>
+                  <span className="text-sm font-semibold text-bark/50">{payCurrencySymbol(preview?.currency)}</span>
                   <input
                     type="number"
                     min="0"
@@ -1654,7 +1665,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
                 {customAmount !== "" && parseFloat(customAmount) !== effectiveTotalGrossPay && (
                   <p className="text-xs text-bark/40 mt-1">
-                    Default: {formatCurrency(effectiveTotalGrossPay)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
+                    Default: {previewMoney(effectiveTotalGrossPay)} · You entered: {previewMoney(parseFloat(customAmount) || 0)}
                   </p>
                 )}
               </div>
@@ -1665,7 +1676,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   Miscellaneous <span className="normal-case font-normal text-bark/40">(optional add-on)</span>
                 </label>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-bark/50">$</span>
+                  <span className="text-sm font-semibold text-bark/50">{payCurrencySymbol(preview?.currency)}</span>
                   <input
                     type="number"
                     min="0"
@@ -1680,7 +1691,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <div className="mt-2 flex justify-between items-center rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark">
                     <span>Total to Send</span>
                     <span className="text-terracotta">
-                      {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
+                      {previewMoney((customAmount !== "" ? parseFloat(customAmount) : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
                     </span>
                   </div>
                 ) : null}
@@ -1692,7 +1703,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   Processing Fee <span className="normal-case font-normal text-bark/40">(PayPal, Wise, bank transfer fees)</span>
                 </label>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-bark/50">$</span>
+                  <span className="text-sm font-semibold text-bark/50">{payCurrencySymbol(preview?.currency)}</span>
                   <input
                     type="number"
                     min="0"
@@ -1848,7 +1859,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <td className="px-4 py-3 font-semibold text-espresso">{d.full_name}</td>
                     <td className="px-3 py-3 text-bark">{d.pay_period_label || `${d.period_start} → ${d.period_end}`}</td>
                     <td className="px-3 py-3 text-right text-bark">{(Number(d.total_hours_ms) / 3_600_000).toFixed(2)} hrs</td>
-                    <td className="px-3 py-3 text-right font-semibold text-espresso">{Number(d.gross_pay).toLocaleString("en-US", { style: "currency", currency: "USD" })}</td>
+                    <td className="px-3 py-3 text-right font-semibold text-espresso">{formatCurrency(Number(d.gross_pay), d.currency)}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap">
                       <div className="inline-flex items-center gap-2">
                         <button
@@ -1912,6 +1923,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   {history.map((snap) => {
                     const isExpanded = expandedId === snap.id;
                     const totalHrs = snap.total_hours_ms / 3_600_000;
+                    const snapMoney = (n: number) => formatCurrency(n, snap.currency);
                     return (
                       <React.Fragment key={snap.id}>
                         <tr
@@ -1925,8 +1937,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right text-bark/70">{totalHrs.toFixed(2)} hrs</td>
-                          <td className="px-4 py-3 text-right text-bark/70">{formatCurrency(snap.gross_pay)}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-terracotta">{formatCurrency(snap.total_paid ?? snap.amount_paid)}</td>
+                          <td className="px-4 py-3 text-right text-bark/70">{snapMoney(snap.gross_pay)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-terracotta">{snapMoney(snap.total_paid ?? snap.amount_paid)}</td>
                           <td className="px-4 py-3 text-right text-bark/50 hidden sm:table-cell capitalize">
                             {snap.payment_method ? snap.payment_method.replace(/_/g, " ") : "—"}
                           </td>
@@ -1958,7 +1970,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                           <tr key={date} className="border-b border-linen/40">
                                             <td className="py-1 text-bark/70">{formatDateLabel(date)}</td>
                                             <td className="py-1 text-right text-bark/70">{(ms / 3_600_000).toFixed(2)} hrs</td>
-                                            <td className="py-1 text-right text-bark/70">{formatCurrency((ms / 3_600_000) * (rate ?? snap.pay_rate))}</td>
+                                            <td className="py-1 text-right text-bark/70">{snapMoney((ms / 3_600_000) * (rate ?? snap.pay_rate))}</td>
                                           </tr>
                                         ))}
                                     </tbody>
@@ -1971,7 +1983,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                   <div className="space-y-1 text-xs text-bark/70">
                                     <div className="flex justify-between">
                                       <span className="text-bark/40">Rate</span>
-                                      <span>{formatPayRate(snap.pay_rate, snap.pay_rate_type)}</span>
+                                      <span>{formatPayRate(snap.pay_rate, snap.pay_rate_type, snap.currency)}</span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span className="text-bark/40">Total Hours</span>
@@ -1979,11 +1991,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                     </div>
                                     <div className="flex justify-between font-semibold border-t border-linen pt-1 mt-1">
                                       <span>Gross Pay</span>
-                                      <span>{formatCurrency(snap.gross_pay)}</span>
+                                      <span>{snapMoney(snap.gross_pay)}</span>
                                     </div>
                                     <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
                                       <span>Amount Paid</span>
-                                      <span>{formatCurrency(snap.total_paid ?? snap.amount_paid)}</span>
+                                      <span>{snapMoney(snap.total_paid ?? snap.amount_paid)}</span>
                                     </div>
                                     {/* Say where the total came from when an advance made it
                                         up, so the figure can be reconciled against the stub. */}
@@ -1991,7 +2003,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <div className="flex justify-between text-[10px] text-bark/40">
                                         <span>on this paystub</span>
                                         <span>
-                                          {formatCurrency(snap.amount_paid)} + {formatCurrency((snap.total_paid ?? 0) - snap.amount_paid)} sent earlier
+                                          {snapMoney(snap.amount_paid)} + {snapMoney((snap.total_paid ?? 0) - snap.amount_paid)} sent earlier
                                         </span>
                                       </div>
                                     )}
@@ -2012,11 +2024,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                         {/* Gross Pay (read-only) */}
                                         <div className="flex justify-between text-xs py-1 border-b border-linen">
                                           <span className="text-bark/50">Gross Pay</span>
-                                          <span className="font-semibold text-bark">{formatCurrency(snap.gross_pay)}</span>
+                                          <span className="font-semibold text-bark">{snapMoney(snap.gross_pay)}</span>
                                         </div>
                                         {/* Additional Amount (editable) */}
                                         <div>
-                                          <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Additional Amount ($)</label>
+                                          <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Additional Amount ({payCurrencySymbol(snap.currency)})</label>
                                           <input
                                             type="number"
                                             step="0.01"
@@ -2035,7 +2047,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                         <div className="flex justify-between text-xs py-1.5 px-2 rounded-lg bg-parchment border border-linen">
                                           <span className="font-semibold text-bark">Total</span>
                                           <span className="font-bold text-terracotta">
-                                            {formatCurrency((snap.gross_pay ?? 0) + (parseFloat(getEditValues(snap).additional_amount) || 0))}
+                                            {snapMoney((snap.gross_pay ?? 0) + (parseFloat(getEditValues(snap).additional_amount) || 0))}
                                           </span>
                                         </div>
                                         <div>

@@ -224,6 +224,7 @@ export async function PATCH(request: Request) {
   if (!isFullAdmin) {
     delete updates.pay_rate;
     delete updates.pay_rate_type;
+    delete updates.pay_currency;
     delete updates.admin_permissions;
   }
   if ("role" in updates && !canGrantRoles({ role: authResult.role })) {
@@ -342,6 +343,7 @@ export async function PATCH(request: Request) {
     "position",
     "pay_rate",
     "pay_rate_type",
+    "pay_currency",
     "is_active",
     "can_see_available_tasks",
     "visible_for_collaboration",
@@ -358,6 +360,10 @@ export async function PATCH(request: Request) {
     if (field in updates) {
       profileUpdates[field] = updates[field];
     }
+  }
+
+  if ("pay_currency" in profileUpdates && !["USD", "PHP"].includes(String(profileUpdates.pay_currency))) {
+    return Response.json({ error: "pay_currency must be USD or PHP" }, { status: 400 });
   }
 
   if (Object.keys(profileUpdates).length > 0) {

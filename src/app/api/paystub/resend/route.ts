@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { normalizeByDateValue, isFixedPeriodRate, type ByDateValue, type RateSegment } from "@/lib/payroll";
+import { normalizeByDateValue, isFixedPeriodRate, formatPayMoney, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
@@ -83,6 +83,7 @@ export async function POST(request: Request) {
     companyName: (snap.company_name as string) || "MinuteFlow",
     originalSentAt: snap.sent_at as string,
     isFixedPeriod: isFixedPeriodRate(snap.pay_rate_type as string | null),
+    currency: snap.currency as string | null,
   });
 
   const resendRes = await sendResendEmail({
@@ -135,10 +136,6 @@ function formatHours(ms: number): string {
   return (ms / 3_600_000).toFixed(2) + " hrs";
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
-}
-
 function formatDateLabel(iso: string): string {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", {
     weekday: "short",
@@ -164,6 +161,7 @@ interface ResendEmailData {
   companyName: string;
   originalSentAt: string;
   isFixedPeriod: boolean;
+  currency: string | null;
 }
 
 function buildResendEmail(data: ResendEmailData): string {
@@ -182,7 +180,9 @@ function buildResendEmail(data: ResendEmailData): string {
     companyName,
     originalSentAt,
     isFixedPeriod,
+    currency,
   } = data;
+  const formatCurrency = (amount: number) => formatPayMoney(amount, currency);
 
   // by_date values are legacy plain ms numbers or {ms, rate} — normalize.
   const byDateEntries = Object.entries(byDate)
