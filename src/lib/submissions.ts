@@ -23,6 +23,14 @@ export type SubmissionMessageType =
    *  for the case where the request itself was the mistake (e.g. added to
    *  the wrong submission), not the work it was requesting a fix on. */
   | "revision_reversed"
+  /** A reviewer declining the work outright rather than asking for changes —
+   *  the task is not expected to come back for another round. Moves the task
+   *  to "cancelled", the same terminal status used when a task is called off
+   *  for any other reason. */
+  | "rejection"
+  /** Undoes a mistaken rejection. Same shape as approval_reversed /
+   *  revision_reversed. */
+  | "rejection_reversed"
   /** A reviewer's "hold on, I need to clarify this first" marker. Not a
    *  decision: it changes no status and costs the VA nothing. The VA is told
    *  about it and sees it, so the submission gets looked at first. */
@@ -145,6 +153,8 @@ export const SUBMISSION_TYPE_LABELS: Record<SubmissionMessageType, string> = {
   approval: "Approved",
   approval_reversed: "Approval reversed",
   revision_reversed: "Revision reversed",
+  rejection: "Rejected",
+  rejection_reversed: "Rejection reversed",
   flag: "Flagged",
   flag_cleared: "Flag cleared",
   comment: "Note",
@@ -158,6 +168,8 @@ export const SUBMISSION_TYPE_BADGE: Record<SubmissionMessageType, string> = {
   approval: "bg-emerald-50 text-emerald-600 border-emerald-200",
   approval_reversed: "bg-terracotta-soft text-terracotta border-terracotta/20",
   revision_reversed: "bg-terracotta-soft text-terracotta border-terracotta/20",
+  rejection: "bg-red-50 text-red-500 border-red-200",
+  rejection_reversed: "bg-terracotta-soft text-terracotta border-terracotta/20",
   flag: "bg-terracotta-soft text-terracotta border-terracotta/20",
   flag_cleared: "bg-stone/10 text-stone border-stone/20",
   comment: "bg-stone/10 text-stone border-stone/20",

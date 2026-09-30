@@ -96,9 +96,15 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
   const latestByTask = new Map<number, { message_type: string; created_at: string }>();
   for (const entry of allEntries) {
     if (
-      !["submission", "revision", "approval", "approval_reversed", "revision_reversed"].includes(
-        entry.message_type
-      )
+      ![
+        "submission",
+        "revision",
+        "approval",
+        "approval_reversed",
+        "revision_reversed",
+        "rejection",
+        "rejection_reversed",
+      ].includes(entry.message_type)
     )
       continue;
     const current = latestByTask.get(entry.assigned_task_id);
@@ -122,6 +128,8 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
         "approval",
         "approval_reversed",
         "revision_reversed",
+        "rejection",
+        "rejection_reversed",
       ].includes(entry.message_type)
     )
       continue;
@@ -144,9 +152,12 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
         ? "revision_requested"
         : entry.message_type === "approval"
           ? "approved"
-          : // submission, or a reversed approval/revision — either way it's
-            // back in front of a reviewer, nothing about the work changed.
-            "awaiting";
+          : entry.message_type === "rejection"
+            ? "rejected"
+            : // submission, or a reversed approval/revision/rejection —
+              // either way it's back in front of a reviewer, nothing about
+              // the work changed.
+              "awaiting";
   }
 
   // Each log names its task outright, so nothing has to be inferred.

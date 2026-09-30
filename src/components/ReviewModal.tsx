@@ -33,8 +33,8 @@ export type ReviewableSubmission = {
 
 type Todo = { id: number; text: string; sort_order: number };
 
-/** The two outcomes this modal can post — a subset of the page's ReviewOutcome. */
-type Outcome = "approval" | "revision";
+/** The three outcomes this modal can post — a subset of the page's ReviewOutcome. */
+type Outcome = "approval" | "revision" | "rejection";
 
 /**
  * Consolidates submission review into two gates, run in order:
@@ -43,8 +43,10 @@ type Outcome = "approval" | "revision";
  *    reviewer checks off each to-do item that's actually present — "Check
  *    all" when everything obviously is. Anything left unchecked becomes the
  *    reason on an immediate revision, and Quality is never reached.
- * 2. Quality — Approve or Revise, same outcome and API call the submissions
- *    page already made from its inline buttons.
+ * 2. Quality — Approve, Revise, or Reject, same outcomes and API call the
+ *    submissions page already made from its inline buttons. Revise expects
+ *    the work back for another round; Reject does not — it's the end of the
+ *    line for this submission, so it skips the due-date field.
  *
  * Deliberately not in scope here: open Q&A visibility (no Q&A feature exists
  * yet — see the build plan) and a VA-side self-check at submission time (this
@@ -78,15 +80,15 @@ export default function ReviewModal({
   const [confirmed, setConfirmed] = useState<Set<number>>(new Set());
   const [incompleteNote, setIncompleteNote] = useState("");
 
-  const [qualityMode, setQualityMode] = useState<null | "revision">(null);
+  const [qualityMode, setQualityMode] = useState<null | "revision" | "rejection">(null);
   const [qualityNote, setQualityNote] = useState("");
   const [revisionDue, setRevisionDue] = useState("");
 
   const taskId = submission.task?.id ?? null;
 
-  // Attach-by-upload/paste on a revision request — same signed-slot flow the
-  // submissions page's own note box uses, so a reviewer can point at what's
-  // wrong (a screenshot, say) instead of just describing it.
+  // Attach-by-upload/paste on a revision request or rejection — same
+  // signed-slot flow the submissions page's own note box uses, so a reviewer
+  // can point at what's wrong (a screenshot, say) instead of just describing it.
   const [revisionFiles, setRevisionFiles] = useState<File[]>([]);
   const [revisionUploading, setRevisionUploading] = useState(false);
   const [revisionUploadError, setRevisionUploadError] = useState("");
@@ -146,8 +148,10 @@ export default function ReviewModal({
     addRevisionFiles(e.dataTransfer.files);
   };
 
-  /** Uploads any attached files, then posts the revision request. */
-  const submitRevision = async () => {
+  /** Uploads any attached files, then posts the revision request or rejection —
+   *  whichever form is open. */
+  const submitQualityNote = async () => {
+    if (qualityMode !== "revision" && qualityMode !== "rejection") return;
     const note = qualityNote.trim();
     if (!note) return;
     setRevisionUploadError("");
@@ -183,9 +187,9 @@ export default function ReviewModal({
       }
       setRevisionProgress("");
       onReview(
-        "revision",
+        qualityMode,
         note,
-        revisionDue ? new Date(revisionDue).toISOString() : undefined,
+        qualityMode === "revision" && revisionDue ? new Date(revisionDue).toISOString() : undefined,
         attachments.length > 0 ? attachments : undefined
       );
     } finally {
@@ -436,7 +440,7 @@ export default function ReviewModal({
                 Gate 2 · Quality
               </p>
 
-              {qualityMode === "revision" ? (
+              {qualityMode === "revision" || qualityMode === "rejection" ? (
                 <div
                   onDragEnter={handleRevisionDragEnter}
                   onDragLeave={handleRevisionDragLeave}
@@ -452,7 +456,7 @@ export default function ReviewModal({
                     </p>
                   )}
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                    What needs changing?
+                    {qualityMode === "rejection" ? "Why is this being rejected?" : "What needs changing?"}
                   </label>
                   <textarea
                     value={qualityNote}
@@ -460,20 +464,22 @@ export default function ReviewModal({
                     onPaste={handleRevisionPaste}
                     rows={2}
                     autoFocus
-                    placeholder="Tell them what to fix..."
+                    placeholder={qualityMode === "rejection" ? "Tell them why..." : "Tell them what to fix..."}
                     className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
                   />
-                  <div className="mt-1.5">
-                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
-                      New due date (optional)
-                    </label>
-                    <input
-                      type="datetime-local"
-                      value={revisionDue}
-                      onChange={(e) => setRevisionDue(e.target.value)}
-                      className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
-                    />
-                  </div>
+                  {qualityMode === "revision" && (
+                    <div className="mt-1.5">
+                      <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                        New due date (optional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={revisionDue}
+                        onChange={(e) => setRevisionDue(e.target.value)}
+                        className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+                      />
+                    </div>
+                  )}
 
                   <div className="mt-1.5">
                     <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
@@ -522,11 +528,13 @@ export default function ReviewModal({
 
                   <div className="mt-1.5 flex items-center gap-2">
                     <button
-                      onClick={submitRevision}
+                      onClick={submitQualityNote}
                       disabled={busy || revisionUploading || !qualityNote.trim()}
-                      className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                      className={`rounded-lg px-3 py-1 text-[11px] font-semibold text-white transition-colors disabled:opacity-50 ${
+                        qualityMode === "rejection" ? "bg-terracotta hover:bg-[#a85840]" : "bg-sage hover:bg-sage/90"
+                      }`}
                     >
-                      {revisionUploading ? "Saving..." : "Request Revision"}
+                      {revisionUploading ? "Saving..." : qualityMode === "rejection" ? "Reject" : "Request Revision"}
                     </button>
                     <button
                       onClick={() => setQualityMode(null)}
@@ -552,6 +560,13 @@ export default function ReviewModal({
                     className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
                   >
                     Revise
+                  </button>
+                  <button
+                    onClick={() => setQualityMode("rejection")}
+                    disabled={busy}
+                    className="rounded-lg bg-terracotta-soft px-3 py-1 text-[11px] font-semibold text-terracotta transition-colors hover:bg-terracotta-soft/70 disabled:opacity-50"
+                  >
+                    Reject
                   </button>
                   <button
                     onClick={() => setStep("completeness")}
