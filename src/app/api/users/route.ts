@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { hasAdminPanelAccess, hasFinancialAccess, canGrantRoles } from "@/lib/financialAccess";
+import { hasAdminPanelAccess, hasFinancialAccess, canGrantRoles, isFounder } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,38 @@ async function verifyAdmin(): Promise<{ userId: string; role: string; isFinancia
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   return { userId: user.id, role: profile.role, isFinancialAccess: hasFinancialAccess(profile) };
+}
+
+/**
+ * Refuses an action targeting a Founder/CEO account unless that same account
+ * is the one acting — the same rule already applied to the role field below
+ * (a founder's role can only be changed by that account), extended to the
+ * other ways this route can act on someone: resetting their password,
+ * banning them, and deleting them outright. Without this, any Admin,
+ * Manager, or Specialist (everyone verifyAdmin lets through) could lock a
+ * Founder/CEO out of their own account or remove it.
+ *
+ * Returns a Response to short-circuit on, or null to continue as normal.
+ */
+export async function guardFounderAccount(
+  adminClient: Pick<SupabaseClient, "from">,
+  targetUserId: string,
+  callerUserId: string,
+  action: string
+): Promise<Response | null> {
+  if (targetUserId === callerUserId) return null;
+  const { data: targetProfile } = await adminClient
+    .from("profiles")
+    .select("role")
+    .eq("id", targetUserId)
+    .single();
+  if (isFounder(targetProfile)) {
+    return Response.json(
+      { error: `Only that account can ${action} for a Founder/CEO account.` },
+      { status: 403 }
+    );
+  }
+  return null;
 }
 
 /** POST: Create a new user via Supabase Admin API */
@@ -129,6 +162,17 @@ export async function PUT(request: Request) {
       { status: 400 }
     );
   }
+
+  const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const guardError = await guardFounderAccount(
+    adminClient,
+    userId,
+    (authResult as { userId: string }).userId,
+    "reset the password"
+  );
+  if (guardError) return guardError;
 
   try {
     const res = await fetch(
@@ -269,6 +313,15 @@ export async function PATCH(request: Request) {
   // If disabling/enabling user, use admin API
   if ("disabled" in updates) {
     const banned = !!updates.disabled;
+    if (banned) {
+      const guardError = await guardFounderAccount(
+        adminClient,
+        user_id,
+        authResult.userId,
+        "disable"
+      );
+      if (guardError) return guardError;
+    }
     const { error: banError } = await adminClient.auth.admin.updateUserById(
       user_id,
       { ban_duration: banned ? "876000h" : "none" }
@@ -344,6 +397,14 @@ export async function DELETE(request: Request) {
   const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+
+  const guardError = await guardFounderAccount(
+    adminClient,
+    userId,
+    (authResult as { userId: string }).userId,
+    "delete the account"
+  );
+  if (guardError) return guardError;
 
   // Check how many time logs this user has
   const { count: logCount } = await adminClient
