@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "invoiceId required" }, { status: 400 });
   }
 
-  const { invoiceId, amountPaid, newAmountPaid, newStatus } = body;
+  const { invoiceId, amountPaid, paymentDate, newAmountPaid, newStatus } = body;
 
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
   if (!RESEND_API_KEY) {
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 
   const { data: invoice, error } = await serviceClient
     .from("invoices")
-    .select("invoice_number, to_name, to_email, total, previous_balance, currency, from_name, dba, share_token")
+    .select("invoice_number, to_name, to_email, subtotal, tax_amount, adjustment_amount, total, previous_balance, currency, from_name, dba, share_token, period_start, period_end")
     .eq("id", invoiceId)
     .single();
 
@@ -85,16 +85,37 @@ export async function POST(request: Request) {
 
   const fmt = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Break the balance down so the summary adds up on its face: a balance
-  // carried in from an earlier invoice, or payments recorded before this one,
-  // otherwise make "Balance Remaining" look wrong next to "Invoice Total".
+  const fmtDate = (d: string, opts: Intl.DateTimeFormatOptions) =>
+    new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { ...opts, timeZone: "UTC" });
+  const receivedOn = fmtDate(paymentDate || new Date().toISOString().split("T")[0], { month: "short", day: "numeric", year: "numeric" });
+  // One calendar month reads as "August 2026"; anything else as the date range
+  // the invoice email uses.
+  const billingPeriod = invoice.period_start && invoice.period_end
+    ? invoice.period_start.slice(0, 7) === invoice.period_end.slice(0, 7)
+      ? fmtDate(invoice.period_start, { month: "long", year: "numeric" })
+      : `${fmtDate(invoice.period_start, { month: "short", day: "numeric" })} – ${fmtDate(invoice.period_end, { month: "short", day: "numeric", year: "numeric" })}`
+    : null;
+
+  // Same breakdown as the invoice page's "Invoice Financial Breakdown", so the
+  // summary adds up to the balance on its face — savings, a balance carried in
+  // from an earlier invoice, and earlier payments would otherwise make
+  // "Balance Remaining" look wrong next to the invoice total.
+  const { data: reimbRows } = await serviceClient
+    .from("invoice_line_items")
+    .select("amount")
+    .eq("invoice_id", invoiceId)
+    .not("expense_id", "is", null);
+  const reimbursable = (reimbRows ?? []).reduce((s: number, r: { amount: number | string }) => s + Number(r.amount), 0);
+  const tax = Number(invoice.tax_amount || 0);
+  const adjustment = Number(invoice.adjustment_amount || 0);
+  const hasBreakdown = reimbursable > 0 || tax > 0 || adjustment > 0;
   const previousBalance = Number(invoice.previous_balance || 0);
   const totalDue = grandTotal({ total: invoice.total, previous_balance: invoice.previous_balance });
   const thisPayment = Number(amountPaid || 0);
   const paidEarlier = Math.round((paid - thisPayment) * 100) / 100;
-  const row = (label: string, value: string, bold = false) => `<tr>
+  const row = (label: string, value: string, bold = false, money = true) => `<tr>
               <td style="padding:6px 0;font-size:14px;color:#6b7280;${bold ? "font-weight:600;" : ""}">${label}</td>
-              <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;${bold ? "font-weight:600;" : ""}">${value}${currencyLabel}</td>
+              <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;${bold ? "font-weight:600;" : ""}">${value}${money ? currencyLabel : ""}</td>
             </tr>`;
 
   const html = `<!DOCTYPE html>
@@ -123,7 +144,14 @@ export async function POST(request: Request) {
               <td style="padding:6px 0;font-size:14px;color:#6b7280;">Invoice</td>
               <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;">${invoice.invoice_number}</td>
             </tr>
-            ${row(previousBalance !== 0 ? "This Invoice" : "Invoice Total", fmt(total))}
+            ${billingPeriod ? row("Billing Month", billingPeriod, false, false) : ""}
+            ${row("Payment Date", receivedOn, false, false)}
+            <tr><td colspan="2" style="padding:6px 0;"><div style="border-top:1px solid #e5e7eb;"></div></td></tr>
+            ${hasBreakdown ? row("Billing Month's Total", fmt(Number(invoice.subtotal) - reimbursable)) : ""}
+            ${reimbursable > 0 ? row("Reimbursable Expenses", fmt(reimbursable)) : ""}
+            ${tax > 0 ? row("Tax", fmt(tax)) : ""}
+            ${adjustment > 0 ? row("Savings", `− ${fmt(adjustment)}`) : ""}
+            ${row(hasBreakdown ? "Current Month's Amount" : "Invoice Total", fmt(total), hasBreakdown)}
             ${previousBalance > 0 ? row("Previous Balance", fmt(previousBalance)) : ""}
             ${previousBalance < 0 ? row("Credit Applied", `− ${fmt(-previousBalance)}`) : ""}
             ${previousBalance !== 0 ? row("Total Due", fmt(totalDue), true) : ""}
