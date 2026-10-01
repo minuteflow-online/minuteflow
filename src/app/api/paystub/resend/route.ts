@@ -3,6 +3,7 @@ import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { normalizeByDateValue, isFixedPeriodRate, formatPayMoney, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { esc } from "@/lib/approvalPages";
 
 export const dynamic = "force-dynamic";
 
@@ -243,12 +244,12 @@ function buildResendEmail(data: ResendEmailData): string {
       <div style="padding: 28px 32px; border-bottom: 1px solid #e8e0d4;">
         <div style="display: flex; align-items: center; justify-content: space-between;">
           <div>
-            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #9e9080; margin-bottom: 4px;">${companyName}</div>
+            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #9e9080; margin-bottom: 4px;">${esc(companyName)}</div>
             <div style="font-size: 22px; font-weight: 700; color: #c0704e;">Paystub</div>
           </div>
           <div style="text-align: right;">
             <div style="font-size: 11px; color: #9e9080; margin-bottom: 2px;">Pay Period</div>
-            <div style="font-size: 13px; font-weight: 600; color: #3d2b1f;">${payPeriod}</div>
+            <div style="font-size: 13px; font-weight: 600; color: #3d2b1f;">${esc(payPeriod)}</div>
           </div>
         </div>
       </div>
@@ -256,7 +257,7 @@ function buildResendEmail(data: ResendEmailData): string {
       <!-- VA Info -->
       <div style="padding: 20px 32px; background: #faf6f0; border-bottom: 1px solid #e8e0d4;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 4px;">Prepared for</div>
-        <div style="font-size: 16px; font-weight: 700; color: #3d2b1f;">${vaName}</div>
+        <div style="font-size: 16px; font-weight: 700; color: #3d2b1f;">${esc(vaName)}</div>
         <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">Rate: ${isFixedPeriod ? `${formatCurrency(payRate)}/mo (salary)` : rateSegments.length > 1 ? rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ") : `${formatCurrency(payRate)}/hr`}</div>
       </div>
 
@@ -318,7 +319,7 @@ function buildResendEmail(data: ResendEmailData): string {
       <!-- Personal Message -->
       <div style="padding: 20px 32px; border-top: 1px solid #e8e0d4; background: #fdf9f5;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 8px;">Message</div>
-        <p style="font-size: 13px; color: #3d2b1f; line-height: 1.6; margin: 0; font-style: italic;">"${personalMessage}"</p>
+        <p style="font-size: 13px; color: #3d2b1f; line-height: 1.6; margin: 0; font-style: italic;">"${esc(personalMessage)}"</p>
       </div>` : ""}
 
       ${paymentMethod ? `
@@ -328,7 +329,7 @@ function buildResendEmail(data: ResendEmailData): string {
         <table style="width: 100%; border-collapse: collapse;">
           <tr>
             <td style="padding: 5px 0; font-size: 12px; color: #6b5e52; width: 140px;">Payment Method</td>
-            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${PAYMENT_METHOD_LABELS[paymentMethod] ?? paymentMethod}</td>
+            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${esc(PAYMENT_METHOD_LABELS[paymentMethod] ?? paymentMethod)}</td>
           </tr>
           ${paymentDate ? `<tr>
             <td style="padding: 5px 0; font-size: 12px; color: #6b5e52;">Payment Date</td>
@@ -336,14 +337,14 @@ function buildResendEmail(data: ResendEmailData): string {
           </tr>` : ""}
           ${confirmationNumber ? `<tr>
             <td style="padding: 5px 0; font-size: 12px; color: #6b5e52;">Confirmation #</td>
-            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${confirmationNumber}</td>
+            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${esc(confirmationNumber)}</td>
           </tr>` : ""}
         </table>
       </div>` : ""}
 
       <!-- Footer -->
       <div style="padding: 16px 32px; background: #faf6f0; border-top: 1px solid #e8e0d4; text-align: center;">
-        <div style="font-size: 11px; color: #9e9080;">${companyName} · Powered by MinuteFlow · noreply@minuteflow.click</div>
+        <div style="font-size: 11px; color: #9e9080;">${esc(companyName)} · Powered by MinuteFlow · noreply@minuteflow.click</div>
       </div>
 
     </div>

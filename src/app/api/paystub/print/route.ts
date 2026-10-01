@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { normalizeByDateValue, isFixedPeriodRate, formatPayMoney, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { esc } from "@/lib/approvalPages";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +120,7 @@ export async function GET(request: Request) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Paystub — ${snap.full_name} — ${snap.pay_period_label}</title>
+  <title>Paystub — ${esc(snap.full_name)} — ${esc(snap.pay_period_label)}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -361,25 +362,25 @@ export async function GET(request: Request) {
 </head>
 <body>
   <div class="toolbar">
-    <h1>Paystub: ${snap.full_name as string} — ${snap.pay_period_label as string}</h1>
+    <h1>Paystub: ${esc(snap.full_name)} — ${esc(snap.pay_period_label)}</h1>
     <button class="btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button>
   </div>
 
   <div class="card">
     <div class="card-header">
       <div>
-        <div class="company-label">${(snap.company_name as string) || "MinuteFlow"}</div>
+        <div class="company-label">${esc((snap.company_name as string) || "MinuteFlow")}</div>
         <div class="paystub-title">Paystub</div>
       </div>
       <div>
         <div class="period-label">Pay Period</div>
-        <div class="period-value">${snap.pay_period_label as string}</div>
+        <div class="period-value">${esc(snap.pay_period_label)}</div>
       </div>
     </div>
 
     <div class="va-section">
       <div class="section-label">Prepared for</div>
-      <div class="va-name">${snap.full_name as string}</div>
+      <div class="va-name">${esc(snap.full_name)}</div>
       <div class="va-rate">Rate: ${isFixedPeriod ? `${formatCurrency(payRate)}/mo (salary)` : rateSegments.length > 1 ? rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ") : `${formatCurrency(payRate)}/hr`}</div>
     </div>
 
@@ -440,19 +441,19 @@ export async function GET(request: Request) {
     ${snap.payment_method ? `
     <div class="details-section">
       <div class="section-label">Payment Details</div>
-      <div class="details-row"><span>Method</span><span>${PAYMENT_METHOD_LABELS[snap.payment_method as string] ?? snap.payment_method}</span></div>
+      <div class="details-row"><span>Method</span><span>${esc(PAYMENT_METHOD_LABELS[snap.payment_method as string] ?? snap.payment_method)}</span></div>
       ${snap.payment_date ? `<div class="details-row"><span>Payment Date</span><span>${formatDate(snap.payment_date as string)}</span></div>` : ""}
-      ${snap.confirmation_number ? `<div class="details-row"><span>Confirmation #</span><span>${snap.confirmation_number}</span></div>` : ""}
+      ${snap.confirmation_number ? `<div class="details-row"><span>Confirmation #</span><span>${esc(snap.confirmation_number)}</span></div>` : ""}
     </div>` : ""}
 
     ${snap.personal_message ? `
     <div class="message-section">
       <div class="section-label">Message</div>
-      <div class="message-text">"${snap.personal_message}"</div>
+      <div class="message-text">"${esc(snap.personal_message)}"</div>
     </div>` : ""}
 
     <div class="card-footer">
-      ${(snap.company_name as string) || "MinuteFlow"} · Powered by MinuteFlow · Sent ${new Date(snap.sent_at as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+      ${esc((snap.company_name as string) || "MinuteFlow")} · Powered by MinuteFlow · Sent ${new Date(snap.sent_at as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
     </div>
   </div>
 </body>
