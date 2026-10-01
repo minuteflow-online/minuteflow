@@ -1,13 +1,26 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/payment-templates — list all templates */
-export async function GET() {
+/** Same tier that can reach these templates in the UI (Organization settings,
+ *  Invoices) — Founder/CEO, or a Specialist in Accounting. Without this, any
+ *  logged-in user could read, create, edit, or delete the org's payment
+ *  installment plans by calling the API directly. */
+async function requireFinancialAccess() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  if (!hasFinancialAccess(profile)) return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
+  return { user };
+}
+
+/** GET /api/payment-templates — list all templates */
+export async function GET() {
+  const auth = await requireFinancialAccess();
+  if ("error" in auth) return auth.error;
 
   const serviceClient = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,9 +37,8 @@ export async function GET() {
 
 /** POST /api/payment-templates — create a new template */
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requireFinancialAccess();
+  if ("error" in auth) return auth.error;
 
   const body = await request.json();
   const { name, items } = body;
@@ -50,9 +62,8 @@ export async function POST(request: Request) {
 
 /** PUT /api/payment-templates — update a template */
 export async function PUT(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requireFinancialAccess();
+  if ("error" in auth) return auth.error;
 
   const body = await request.json();
   const { id, name, items } = body;
@@ -78,9 +89,8 @@ export async function PUT(request: Request) {
 
 /** DELETE /api/payment-templates?id=X — delete a template */
 export async function DELETE(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requireFinancialAccess();
+  if ("error" in auth) return auth.error;
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
