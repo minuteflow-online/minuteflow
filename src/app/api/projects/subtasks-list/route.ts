@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { boardStatus } from "@/lib/subtaskStatusColumns";
+import { filterAccessibleProjectIds } from "@/lib/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +24,22 @@ export async function GET(request: Request) {
   const { data: { user } } = await authClient.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const ids = (new URL(request.url).searchParams.get("projectIds") ?? "")
+  const requestedIds = (new URL(request.url).searchParams.get("projectIds") ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean);
-  if (ids.length === 0) return Response.json({ subtasks: [] });
+  if (requestedIds.length === 0) return Response.json({ subtasks: [] });
 
   const supabase = serviceClient();
+
+  // Keep only the ids this caller actually has a reason to see — same rule
+  // assigned-tasks applies (see PR #263). Without it, any project id here
+  // returned that project's subtasks in full, assignees included.
+  const { data: profile } = await authClient
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const ids = await filterAccessibleProjectIds(supabase, profile, user.id, requestedIds);
+  if (ids.length === 0) return Response.json({ subtasks: [] });
   const { data, error } = await supabase
     .from("assigned_tasks")
     .select("id, project_id, task_name, task_detail, status, recurring_template_id, due_date, start_date, account, review_required, assigned_task_assignees(va_id, status), task_todos(id, text, sort_order, completed)")

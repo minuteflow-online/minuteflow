@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { boardStatus } from "@/lib/subtaskStatusColumns";
+import { filterAccessibleProjectIds } from "@/lib/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,6 @@ const DONE = new Set(["completed", "approved", "paid"]);
  * GET /api/projects/subtask-stats?projectIds=a,b,c
  * Returns { stats: { [projectId]: { total, done } } } for the given objectives/
  * operations — total is non-cancelled subtasks, done is completed/approved/paid.
- * Caller passes the ids it can already see (from the projects list), so no RLS
- * fan-out is needed here.
  */
 export async function GET(request: Request) {
   const authClient = await createClient();
@@ -28,10 +27,22 @@ export async function GET(request: Request) {
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const idsParam = new URL(request.url).searchParams.get("projectIds") ?? "";
-  const ids = idsParam.split(",").map((s) => s.trim()).filter(Boolean);
-  if (ids.length === 0) return Response.json({ stats: {} });
+  const requestedIds = idsParam.split(",").map((s) => s.trim()).filter(Boolean);
+  if (requestedIds.length === 0) return Response.json({ stats: {} });
 
   const supabase = serviceClient();
+
+  // Keep only the ids this caller actually has a reason to see — same rule
+  // assigned-tasks applies (see PR #263). The query param is caller-supplied,
+  // not actually guaranteed to be ids the caller can see, despite what the
+  // old version of this comment assumed.
+  const { data: profile } = await authClient
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const ids = await filterAccessibleProjectIds(supabase, profile, user.id, requestedIds);
+  if (ids.length === 0) return Response.json({ stats: {} });
   const { data, error } = await supabase
     .from("assigned_tasks")
     .select("id, project_id, status, recurring_template_id, due_date, assigned_task_assignees(status)")

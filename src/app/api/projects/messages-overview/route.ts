@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { fetchAttachmentsByTargets } from "@/lib/messageAttachments";
+import { filterAccessibleProjectIds } from "@/lib/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -27,11 +28,22 @@ export async function GET(request: Request) {
   const { data: { user } } = await authClient.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const ids = (new URL(request.url).searchParams.get("projectIds") ?? "")
+  const requestedIds = (new URL(request.url).searchParams.get("projectIds") ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean);
-  if (ids.length === 0) return Response.json({ messages: [], counts: {} });
+  if (requestedIds.length === 0) return Response.json({ messages: [], counts: {} });
 
   const supabase = serviceClient();
+
+  // Keep only the ids this caller actually has a reason to see — same rule
+  // assigned-tasks applies (see PR #263). Without it, any project id here
+  // returned that project's message board in full.
+  const { data: profile } = await authClient
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const ids = await filterAccessibleProjectIds(supabase, profile, user.id, requestedIds);
+  if (ids.length === 0) return Response.json({ messages: [], counts: {} });
   const [{ data, error }, { data: countRows, error: countError }] = await Promise.all([
     supabase
       .from("project_messages")
