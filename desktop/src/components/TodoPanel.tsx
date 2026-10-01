@@ -32,13 +32,24 @@ export default function TodoPanel({ task, onTodosChanged }: TodoPanelProps) {
   const [editText, setEditText] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  // Re-syncs only when the selected task itself changes, not on every poll —
-  // see the file comment above for why.
+  // Clears the editor/composer only when the selection itself changes — not
+  // on every poll, so switching tasks doesn't leave a stray edit box open on
+  // the wrong one.
   useEffect(() => {
-    setTodos(task?.assigned_tasks.task_todos ?? []);
     setEditingId(null);
     setNewText("");
   }, [task?.id]);
+
+  // Re-syncs `todos` from the task's own embedded list whenever App refreshes
+  // it (App.tsx's loadTasks/loadAvailableTasks keep the selected task's object
+  // itself current now — see that file's comment on why a frozen selection
+  // used to go stale). Skipped while a text edit is open, so a poll can't
+  // overwrite what's mid-typing; an in-flight Add is fine either way since it
+  // only ever resolves to a superset of what's already showing.
+  useEffect(() => {
+    if (editingId !== null) return;
+    setTodos(task?.assigned_tasks.task_todos ?? []);
+  }, [task?.id, task?.assigned_tasks.task_todos, editingId]);
 
   if (!task) {
     return (
