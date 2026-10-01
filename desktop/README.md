@@ -44,9 +44,11 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   was the one actively being clocked, its open log is closed the same way
   Start/clock-out already do (no task-switch wizard here, same simplification
   as Break — see `src/contexts/SessionContext.tsx`'s comment on the
-  dashboard's memo-collection wizard this skips). No task-switch wizard, no
-  Accept (a `pending` task doesn't show here yet — only `on_queue`/
-  `in_progress`/`revision_needed` do), no to-do editing yet.
+  dashboard's memo-collection wizard this skips). **Accept** on a newly
+  assigned (`pending`) task moves it to `on_queue` — the same
+  `setAssignedTaskStatus` write path as Rework/Start, so no new backend work
+  was needed once `pending` was added to the VA-visible status list. No
+  task-switch wizard, no to-do editing yet.
 - **Capture Now** — grabs the entire primary display via Electron's
   `desktopCapturer` + `getUserMedia` (main process → preload → renderer) and
   uploads it to `/api/upload-screenshot`. **Screenshots go to Google Drive

@@ -32,6 +32,7 @@ export default function App() {
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<VAAssignedTask | null>(null);
+  const [acceptingId, setAcceptingId] = useState<number | null>(null);
   const [startingId, setStartingId] = useState<number | null>(null);
   const [reworkingId, setReworkingId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
@@ -202,6 +203,31 @@ export default function App() {
       }
     },
     [userId, profile, sessionRow, orgTimezone, startingId, loadTasks]
+  );
+
+  // Accept: a newly assigned task moves from pending to on_queue, same single
+  // write path as Rework/Start. Mirrors AssignedTasksWidget's
+  // updateStatus(task, "on_queue") for the pending case.
+  const handleAccept = useCallback(
+    async (task: VAAssignedTask) => {
+      if (!userId || acceptingId != null) return;
+      setAcceptingId(task.id);
+      try {
+        const ok = await setAssignedTaskStatus({
+          assignedTaskId: task.assigned_tasks.id,
+          status: "on_queue",
+          vaId: userId,
+        });
+        if (!ok) {
+          alert("Couldn't accept this task. Try again in a moment.");
+          return;
+        }
+        await loadTasks(userId);
+      } finally {
+        setAcceptingId(null);
+      }
+    },
+    [userId, acceptingId, loadTasks]
   );
 
   // Rework: a task sent back for revision goes back on the queue, from where
@@ -385,6 +411,8 @@ export default function App() {
             loading={tasksLoading}
             selectedId={selectedTask?.id ?? null}
             onSelect={setSelectedTask}
+            acceptingId={acceptingId}
+            onAccept={handleAccept}
             startingId={startingId}
             onStart={handleStart}
             reworkingId={reworkingId}

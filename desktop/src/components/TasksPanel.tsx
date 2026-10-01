@@ -1,6 +1,6 @@
-// On-queue / in-progress / revision-needed assigned tasks. Card, status badges,
-// the R revision badge, row layout, the Start and Rework buttons, and
-// drag-to-reorder are all copied from
+// Pending / on-queue / in-progress / revision-needed assigned tasks. Card,
+// status badges, the R revision badge, row layout, the Accept/Start/Rework/
+// Submit buttons, and drag-to-reorder are all copied from
 // AssignedTasksWidget.tsx (src/components/AssignedTasksWidget.tsx) and
 // AGENTS.md's Status Badge / Task list item / Button patterns — same
 // classes, same behavior. Drag state (draggedId/dragOverId) is ephemeral UI
@@ -16,6 +16,8 @@ interface TasksPanelProps {
   loading: boolean;
   selectedId: number | null;
   onSelect: (task: VAAssignedTask) => void;
+  acceptingId: number | null;
+  onAccept: (task: VAAssignedTask) => void;
   startingId: number | null;
   onStart: (task: VAAssignedTask) => void;
   reworkingId: number | null;
@@ -26,6 +28,12 @@ interface TasksPanelProps {
 
 function statusBadge(status: AssignedTaskStatus) {
   switch (status) {
+    case "pending":
+      return (
+        <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-slate-blue-soft text-slate-blue border border-slate-blue/20">
+          Pending
+        </span>
+      );
     case "on_queue":
       return (
         <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">
@@ -54,6 +62,8 @@ export default function TasksPanel({
   loading,
   selectedId,
   onSelect,
+  acceptingId,
+  onAccept,
   startingId,
   onStart,
   reworkingId,
@@ -86,6 +96,7 @@ export default function TasksPanel({
             const isSelected = selectedId === task.id;
             const isStarting = startingId === task.id;
             const isFixedPay = detail.fixed_pay_task_id != null;
+            const isAccepting = acceptingId === task.id;
             const isReworking = reworkingId === task.id;
             const rate = detail.fixed_pay_tasks?.rate;
             const isDragTarget = dragOverId === task.id && draggedId !== null && draggedId !== task.id;
@@ -176,6 +187,18 @@ export default function TasksPanel({
                       >
                         {[detail.account, detail.project].filter(Boolean).join(" · ")}
                       </button>
+                    )}
+
+                    {task.status === "pending" && (
+                      <div className="mt-1.5">
+                        <button
+                          onClick={() => onAccept(task)}
+                          disabled={isAccepting}
+                          className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-[#a85840] cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isAccepting ? "Accepting..." : "Accept"}
+                        </button>
+                      </div>
                     )}
 
                     {task.status === "revision_needed" && (

@@ -3,12 +3,12 @@
 // comment at the top of db.ts for why. This mirrors the exact select shape
 // the API route uses for a VA (`vaSelectString` in
 // src/app/api/assigned-tasks/route.ts) and AssignedTasksWidget's VA-visible
-// status filter (on_queue, in_progress only).
+// status filter (pending, on_queue, in_progress, revision_needed).
 //
-// Reads bypass the API route (bearer auth below is only for the one PATCH
-// this file needs); Accept/Submit and to-do edits still go through Next.js
-// API routes that authenticate via the web app's cookie-based session and
-// aren't wired up here yet — see the desktop app's README.
+// Reads bypass the API route; writes (status changes, submissions) go
+// through it with a bearer token in place of the cookie session it normally
+// authenticates with — see setAssignedTaskStatus below and submissions.ts.
+// To-do edits aren't wired up here yet — see the desktop app's README.
 import { query, ensureAuth } from "./db";
 import { API_BASE } from "./config";
 
@@ -80,7 +80,9 @@ const VA_SELECT =
 // revision_needed has to stay in this list: the tasks panel is the only place
 // a VA can Rework -> Start -> Submit again. Without it a sent-back task just
 // disappears (the mistake AssignedTasksWidget's Jul 14 change made, then fixed).
-const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = ["on_queue", "in_progress", "revision_needed"];
+// pending is a newly assigned task nobody has accepted yet — without it here,
+// a VA using only the desktop app would never see a new assignment at all.
+const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress", "revision_needed"];
 
 const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
   pending: -1,
@@ -111,7 +113,7 @@ function todoLabel(sortOrder: number): string {
 }
 export { todoLabel };
 
-/** On-queue, in-progress and revision-needed tasks assigned to this VA, ordered the same way
+/** Pending, on-queue, in-progress and revision-needed tasks assigned to this VA, ordered the same way
  *  the web dashboard's Assigned Tasks widget shows them. */
 export async function fetchAssignedTasks(userId: string): Promise<VAAssignedTask[]> {
   const statusList = VA_VISIBLE_STATUSES.join(",");
