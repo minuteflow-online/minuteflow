@@ -3,12 +3,17 @@
 // comment at the top of db.ts for why. This mirrors the exact select shape
 // the API route uses for a VA (`vaSelectString` in
 // src/app/api/assigned-tasks/route.ts) and AssignedTasksWidget's VA-visible
-// status filter (on_queue, in_progress only).
+// status filter (on_queue, in_progress, revision_needed) — NOT pending.
+// Pending tasks are deliberately a separate fetch (fetchAvailableTasks
+// below): mirrors AvailableTasksWidget.tsx, a completely separate "Available
+// Tasks" card on web, not folded into the Assigned Tasks widget. Mixing the
+// two in one list (tried once, reverted) is confusing the moment a VA has
+// more than a couple of pending tasks sitting alongside their active work.
 //
-// Reads bypass the API route (bearer auth below is only for the one PATCH
-// this file needs); Accept/Submit and to-do edits still go through Next.js
-// API routes that authenticate via the web app's cookie-based session and
-// aren't wired up here yet — see the desktop app's README.
+// Reads bypass the API route; writes (status changes, submissions) go
+// through it with a bearer token in place of the cookie session it normally
+// authenticates with — see setAssignedTaskStatus below and submissions.ts.
+// To-do edits aren't wired up here yet — see the desktop app's README.
 import { query, ensureAuth } from "./db";
 import { API_BASE } from "./config";
 
@@ -129,6 +134,37 @@ export async function fetchAssignedTasks(userId: string): Promise<VAAssignedTask
       },
     }))
     .sort(compareTasks);
+}
+
+/**
+ * Newly assigned tasks waiting on this VA to Accept — mirrors
+ * AvailableTasksWidget.tsx's "Assigned to You" section. Hourly only
+ * (fixed_pay_task_id null): fixed-pay tasks have their own claim flow
+ * (/api/fixed-pay-tasks/:id/grab) desktop doesn't support yet — same reason
+ * Start and Cancel Grab are fixed-pay-gated elsewhere in this app. The open
+ * "unassigned" pool (grabbable by any VA) isn't ported either, same reason.
+ */
+export async function fetchAvailableTasks(userId: string): Promise<VAAssignedTask[]> {
+  const rows = await query<VAAssignedTask[]>("assigned_task_assignees", {
+    filters: `va_id=eq.${userId}&status=eq.pending&select=${VA_SELECT}`,
+  });
+
+  return rows
+    .filter(
+      (t) =>
+        t.assigned_tasks &&
+        !t.assigned_tasks.archived_at &&
+        !t.assigned_tasks.deleted_at &&
+        t.assigned_tasks.fixed_pay_task_id == null
+    )
+    .map((t) => ({
+      ...t,
+      assigned_tasks: {
+        ...t.assigned_tasks,
+        task_todos: [...(t.assigned_tasks.task_todos ?? [])].sort((a, b) => a.sort_order - b.sort_order),
+      },
+    }))
+    .sort((a, b) => a.assigned_at.localeCompare(b.assigned_at));
 }
 
 /**
