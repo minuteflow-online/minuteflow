@@ -1,19 +1,27 @@
-// Pending / on-queue / in-progress / revision-needed assigned tasks. Card,
-// status badges, the R revision badge, row layout, the Accept/Start/Rework/
-// Submit buttons, and drag-to-reorder are all copied from
-// AssignedTasksWidget.tsx (src/components/AssignedTasksWidget.tsx) and
-// AGENTS.md's Status Badge / Task list item / Button patterns — same
-// classes, same behavior. Drag state (draggedId/dragOverId) is ephemeral UI
-// state kept local to this component, same as the web widget; the actual
-// reorder (array splice + persist) is App's to do since it owns `tasks`,
-// mirroring how onSelect/onStart already work.
+// On-queue / in-progress / revision-needed assigned tasks, plus a separate
+// "Available" tab for pending ones awaiting Accept — mirrors how web keeps
+// AssignedTasksWidget.tsx and AvailableTasksWidget.tsx as two entirely
+// separate cards rather than one mixed list (tried folding pending into the
+// single list once; it got noisy the moment a VA had more than a couple).
+// Card, status badges, the R revision badge, row layout, the Accept/Start/
+// Rework/Submit buttons, and drag-to-reorder (assigned tab only — pending
+// tasks aren't reorderable on web either) are all copied from those two web
+// components and AGENTS.md's Status Badge / Task list item / Button
+// patterns — same classes, same behavior. Drag state (draggedId/dragOverId)
+// is ephemeral UI state kept local to this component, same as the web
+// widget; the actual reorder (array splice + persist) is App's to do since
+// it owns `tasks`, mirroring how onSelect/onStart already work.
 import { useState } from "react";
 import type { VAAssignedTask, AssignedTaskStatus } from "../lib/tasks";
 import RevisionBadge from "./RevisionBadge";
 
+type ViewTab = "assigned" | "available";
+
 interface TasksPanelProps {
   tasks: VAAssignedTask[];
   loading: boolean;
+  availableTasks: VAAssignedTask[];
+  availableLoading: boolean;
   selectedId: number | null;
   onSelect: (task: VAAssignedTask) => void;
   acceptingId: number | null;
@@ -60,6 +68,8 @@ function statusBadge(status: AssignedTaskStatus) {
 export default function TasksPanel({
   tasks,
   loading,
+  availableTasks,
+  availableLoading,
   selectedId,
   onSelect,
   acceptingId,
@@ -73,25 +83,42 @@ export default function TasksPanel({
 }: TasksPanelProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
+  const [viewTab, setViewTab] = useState<ViewTab>("assigned");
+
+  const isAssignedTab = viewTab === "assigned";
+  const visibleTasks = isAssignedTab ? tasks : availableTasks;
+  const isLoading = isAssignedTab ? loading : availableLoading;
 
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3 flex-1 min-h-0 flex flex-col">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Tasks</h3>
-        {tasks.length > 0 && (
-          <span className="text-[10px] font-semibold py-[2px] px-2 rounded-full bg-terracotta-soft text-terracotta">
-            {tasks.length} task{tasks.length !== 1 ? "s" : ""}
-          </span>
-        )}
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => setViewTab("assigned")}
+          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors cursor-pointer ${
+            isAssignedTab ? "bg-terracotta-soft text-terracotta" : "bg-stone/10 text-stone hover:bg-stone/20"
+          }`}
+        >
+          Assigned{tasks.length > 0 ? ` (${tasks.length})` : ""}
+        </button>
+        <button
+          onClick={() => setViewTab("available")}
+          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors cursor-pointer ${
+            !isAssignedTab ? "bg-terracotta-soft text-terracotta" : "bg-stone/10 text-stone hover:bg-stone/20"
+          }`}
+        >
+          Available{availableTasks.length > 0 ? ` (${availableTasks.length})` : ""}
+        </button>
       </div>
 
       <div className="space-y-1.5 overflow-y-auto min-h-0">
-        {loading ? (
+        {isLoading ? (
           [1, 2, 3].map((i) => <div key={i} className="animate-pulse h-12 w-full bg-parchment rounded-lg" />)
-        ) : tasks.length === 0 ? (
-          <p className="text-xs text-stone py-3 text-center">No assigned tasks.</p>
+        ) : visibleTasks.length === 0 ? (
+          <p className="text-xs text-stone py-3 text-center">
+            {isAssignedTab ? "No assigned tasks." : "No available tasks right now."}
+          </p>
         ) : (
-          tasks.map((task) => {
+          visibleTasks.map((task) => {
             const detail = task.assigned_tasks;
             const isSelected = selectedId === task.id;
             const isStarting = startingId === task.id;
@@ -112,19 +139,20 @@ export default function TasksPanel({
                       : "border-sand bg-white hover:bg-cream"
                 } ${draggedId === task.id ? "opacity-50" : ""}`}
                 onDragOver={(e) => {
-                  if (draggedId == null || draggedId === task.id) return;
+                  if (!isAssignedTab || draggedId == null || draggedId === task.id) return;
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
                   if (dragOverId !== task.id) setDragOverId(task.id);
                 }}
                 onDragLeave={() => setDragOverId((cur) => (cur === task.id ? null : cur))}
                 onDrop={(e) => {
+                  if (!isAssignedTab) return;
                   e.preventDefault();
                   const sourceId = draggedId;
                   setDraggedId(null);
                   setDragOverId(null);
                   if (sourceId == null || sourceId === task.id) return;
-                  const source = tasks.find((t) => t.id === sourceId);
+                  const source = visibleTasks.find((t) => t.id === sourceId);
                   // Same-status-group only — a cross-group drop would just be
                   // undone by the status-first sort on the next render.
                   if (source && source.status === task.status) onReorder(source, task);
@@ -132,10 +160,13 @@ export default function TasksPanel({
               >
                 <div className="flex items-start gap-1">
                   {/* Reserves the handle's width even while dragging, so the
-                      title text doesn't jump. */}
+                      title text doesn't jump. Pending tasks (Available tab)
+                      aren't reorderable — no sort_order concept for them on
+                      web either — so the handle is just blank space there. */}
                   <span
-                    draggable
+                    draggable={isAssignedTab}
                     onDragStart={(e) => {
+                      if (!isAssignedTab) return;
                       setDraggedId(task.id);
                       e.dataTransfer.effectAllowed = "move";
                     }}
@@ -143,17 +174,21 @@ export default function TasksPanel({
                       setDraggedId(null);
                       setDragOverId(null);
                     }}
-                    title="Drag to reorder"
-                    className="mt-[3px] shrink-0 w-[10px] h-[14px] flex items-center justify-center cursor-grab active:cursor-grabbing text-bark/40 hover:text-bark transition-colors"
+                    title={isAssignedTab ? "Drag to reorder" : undefined}
+                    className={`mt-[3px] shrink-0 w-[10px] h-[14px] flex items-center justify-center text-bark/40 transition-colors ${
+                      isAssignedTab ? "cursor-grab active:cursor-grabbing hover:text-bark" : ""
+                    }`}
                   >
-                    <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
-                      <circle cx="2.5" cy="2" r="1.4" />
-                      <circle cx="7.5" cy="2" r="1.4" />
-                      <circle cx="2.5" cy="7" r="1.4" />
-                      <circle cx="7.5" cy="7" r="1.4" />
-                      <circle cx="2.5" cy="12" r="1.4" />
-                      <circle cx="7.5" cy="12" r="1.4" />
-                    </svg>
+                    {isAssignedTab && (
+                      <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+                        <circle cx="2.5" cy="2" r="1.4" />
+                        <circle cx="7.5" cy="2" r="1.4" />
+                        <circle cx="2.5" cy="7" r="1.4" />
+                        <circle cx="7.5" cy="7" r="1.4" />
+                        <circle cx="2.5" cy="12" r="1.4" />
+                        <circle cx="7.5" cy="12" r="1.4" />
+                      </svg>
+                    )}
                   </span>
 
                   <div className="flex-1 min-w-0">

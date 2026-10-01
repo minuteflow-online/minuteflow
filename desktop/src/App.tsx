@@ -8,7 +8,7 @@ import NotificationBell from "./components/NotificationBell";
 import SubmitWorkModal from "./components/SubmitWorkModal";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
-import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, type VAAssignedTask, type AssignedTaskStatus } from "./lib/tasks";
+import { fetchAssignedTasks, fetchAvailableTasks, reorderAssignedTasks, setAssignedTaskStatus, type VAAssignedTask, type AssignedTaskStatus } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 
@@ -31,6 +31,8 @@ export default function App() {
 
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
+  const [availableTasks, setAvailableTasks] = useState<VAAssignedTask[]>([]);
+  const [availableLoading, setAvailableLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<VAAssignedTask | null>(null);
   const [acceptingId, setAcceptingId] = useState<number | null>(null);
   const [startingId, setStartingId] = useState<number | null>(null);
@@ -71,17 +73,36 @@ export default function App() {
     }
   }, []);
 
+  // Separate fetch, separate tab — mirrors web keeping AssignedTasksWidget
+  // and AvailableTasksWidget as two different cards rather than one mixed
+  // list (see tasks.ts's fetchAvailableTasks comment for why).
+  const loadAvailableTasks = useCallback(async (uid: string) => {
+    setAvailableLoading(true);
+    try {
+      const rows = await fetchAvailableTasks(uid);
+      setAvailableTasks(rows);
+    } catch {
+      // Non-critical — leave the previous list showing rather than blank it.
+    } finally {
+      setAvailableLoading(false);
+    }
+  }, []);
+
   // Initial auth check — restores a session saved from a previous run.
   useEffect(() => {
     (async () => {
       const session = await auth.ensureAuth();
       if (session) {
         setUserId(session.user.id);
-        await Promise.all([loadForUser(session.user.id), loadTasks(session.user.id)]);
+        await Promise.all([
+          loadForUser(session.user.id),
+          loadTasks(session.user.id),
+          loadAvailableTasks(session.user.id),
+        ]);
       }
       setCheckingAuth(false);
     })();
-  }, [loadForUser, loadTasks]);
+  }, [loadForUser, loadTasks, loadAvailableTasks]);
 
   // Poll session + tasks so a clock-in/task change made on the web app or the
   // extension shows up here too, same idea as the extension's own poll loop.
@@ -90,12 +111,15 @@ export default function App() {
     const sessionTimer = setInterval(() => {
       clock.fetchSession(userId).then(setSessionRow).catch(() => {});
     }, SESSION_POLL_MS);
-    const tasksTimer = setInterval(() => loadTasks(userId), TASKS_POLL_MS);
+    const tasksTimer = setInterval(() => {
+      loadTasks(userId);
+      loadAvailableTasks(userId);
+    }, TASKS_POLL_MS);
     return () => {
       clearInterval(sessionTimer);
       clearInterval(tasksTimer);
     };
-  }, [userId, loadTasks]);
+  }, [userId, loadTasks, loadAvailableTasks]);
 
   // Tells the main process whether to warn before quitting — see
   // electron/main.js's close handler. Also clears the flag on sign-out
@@ -121,9 +145,9 @@ export default function App() {
     async (email: string, password: string) => {
       const session = await auth.signIn(email, password);
       setUserId(session.user.id);
-      await Promise.all([loadForUser(session.user.id), loadTasks(session.user.id)]);
+      await Promise.all([loadForUser(session.user.id), loadTasks(session.user.id), loadAvailableTasks(session.user.id)]);
     },
-    [loadForUser, loadTasks]
+    [loadForUser, loadTasks, loadAvailableTasks]
   );
 
   const handleLogout = useCallback(async () => {
@@ -132,6 +156,7 @@ export default function App() {
     setProfile(null);
     setSessionRow(null);
     setTasks([]);
+    setAvailableTasks([]);
     setSelectedTask(null);
   }, []);
 
@@ -222,12 +247,15 @@ export default function App() {
           alert("Couldn't accept this task. Try again in a moment.");
           return;
         }
-        await loadTasks(userId);
+        // It moves from the Available tab's list to the Assigned tab's —
+        // both need refreshing, or it'd look like it vanished rather than
+        // relocated.
+        await Promise.all([loadTasks(userId), loadAvailableTasks(userId)]);
       } finally {
         setAcceptingId(null);
       }
     },
-    [userId, acceptingId, loadTasks]
+    [userId, acceptingId, loadTasks, loadAvailableTasks]
   );
 
   // Rework: a task sent back for revision goes back on the queue, from where
@@ -409,6 +437,8 @@ export default function App() {
           <TasksPanel
             tasks={tasks}
             loading={tasksLoading}
+            availableTasks={availableTasks}
+            availableLoading={availableLoading}
             selectedId={selectedTask?.id ?? null}
             onSelect={setSelectedTask}
             acceptingId={acceptingId}

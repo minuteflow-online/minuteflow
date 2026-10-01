@@ -13,9 +13,20 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `src/app/(app)/dashboard/page.tsx` and `src/contexts/SessionContext.tsx`,
   including the duplicate-active-log guard and the overnight-log-capping
   safety net (see `src/lib/clock.ts` for the file-by-file mapping).
-- **Assigned Tasks** — shows your `on_queue` / `in_progress` /
-  `revision_needed` tasks and their per-task to-do list (TD1, TD2, …), same
-  visual pattern as `AssignedTasksWidget.tsx`. A task sent back for revision
+- **Assigned Tasks** — a two-tab card: **Assigned** (`on_queue` / `in_progress`
+  / `revision_needed`) and **Available** (newly assigned `pending` tasks
+  awaiting Accept). Kept as two tabs on one card rather than one mixed list —
+  mirrors web keeping `AssignedTasksWidget.tsx` and `AvailableTasksWidget.tsx`
+  as two entirely separate widgets; a first pass folded `pending` straight
+  into the Assigned list and it got unreadable the moment a VA had more than
+  a couple of pending tasks sitting alongside active work. Available only
+  shows hourly tasks (`fixed_pay_task_id` null) — fixed-pay ones have their
+  own claim flow (`/api/fixed-pay-tasks/:id/grab`) this app doesn't support
+  yet, and web's "open pool" of unclaimed tasks (grabbable by any VA, not
+  just ones already assigned to you) isn't ported either, same reason. See
+  `src/lib/tasks.ts`'s `fetchAvailableTasks`. Each tab shows its own per-task
+  to-do list (TD1, TD2, …), same visual pattern as `AssignedTasksWidget.tsx`.
+  A task sent back for revision
   shows an amber "Revision Needed" badge, the red **R / R2 / R3** revision
   count badge, and a **Rework** button that puts it back on your queue (same
   `setAssignedTaskStatus` write path as Start) so you can Start it again;
@@ -28,8 +39,10 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `startTask()` in the web dashboard for the standard (non-fixed-pay) case;
   see `src/lib/startTask.ts`. Fixed-pay tasks aren't supported yet (Start is
   disabled for them — their web flow is a different instant one-shot log with
-  no timer). **Drag-to-reorder** within a status group, same as the web
-  widget (grip handle, same `/api/assigned-tasks/reorder` endpoint) — see
+  no timer). **Drag-to-reorder** within a status group on the Assigned tab
+  (the Available tab isn't reorderable — no `sort_order` concept for pending
+  tasks on web either), same as the web widget (grip handle, same
+  `/api/assigned-tasks/reorder` endpoint) — see
   `src/lib/tasks.ts`'s `compareTasks`/`reorderAssignedTasks`. **Submit** on an
   `in_progress` task opens the same checklist + word-count-bar modal as web's
   `SubmitWorkModal.tsx` (attach files, a message, a link, or any combination —
@@ -44,11 +57,11 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   was the one actively being clocked, its open log is closed the same way
   Start/clock-out already do (no task-switch wizard here, same simplification
   as Break — see `src/contexts/SessionContext.tsx`'s comment on the
-  dashboard's memo-collection wizard this skips). **Accept** on a newly
-  assigned (`pending`) task moves it to `on_queue` — the same
-  `setAssignedTaskStatus` write path as Rework/Start, so no new backend work
-  was needed once `pending` was added to the VA-visible status list. No
-  task-switch wizard, no to-do editing yet.
+  dashboard's memo-collection wizard this skips). **Accept** on the Available
+  tab moves a `pending` task to `on_queue` (where it then shows under
+  Assigned) — the same `setAssignedTaskStatus` write path as Rework/Start, so
+  no new backend work was needed. No task-switch wizard, no to-do editing
+  yet.
 - **Capture Now** — grabs the entire primary display via Electron's
   `desktopCapturer` + `getUserMedia` (main process → preload → renderer) and
   uploads it to `/api/upload-screenshot`. **Screenshots go to Google Drive
