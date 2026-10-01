@@ -3,6 +3,7 @@ import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAuthClient } from "@/lib/supabase/server";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 import { amountOwed, grandTotal } from "@/lib/invoiceBalance";
+import { esc } from "@/lib/approvalPages";
 
 export const dynamic = "force-dynamic";
 
@@ -121,15 +122,15 @@ export async function POST(request: Request) {
   <div style="max-width:560px;margin:0 auto;padding:32px 16px;">
     <div style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
       <div style="background:#1a1a2e;padding:28px 32px;text-align:center;">
-        <p style="margin:0;font-size:13px;color:#9ca3af;letter-spacing:0.05em;text-transform:uppercase;">${brandName}</p>
+        <p style="margin:0;font-size:13px;color:#9ca3af;letter-spacing:0.05em;text-transform:uppercase;">${esc(brandName)}</p>
         <h1 style="margin:8px 0 0;font-size:24px;color:#fff;font-weight:700;">Payment ${isPaid ? "Received" : "Recorded"}</h1>
       </div>
       <div style="padding:32px;">
-        <p style="margin:0 0 24px;font-size:15px;color:#374151;">Hi ${invoice.to_name ?? "there"},</p>
+        <p style="margin:0 0 24px;font-size:15px;color:#374151;">Hi ${esc(invoice.to_name ?? "there")},</p>
         <p style="margin:0 0 24px;font-size:15px;color:#374151;">
           ${isPaid
-            ? `Your payment of <strong>${fmt(Number(amountPaid))}${currencyLabel}</strong> has been received, and Invoice <strong>${invoice.invoice_number}</strong> is now <strong>paid in full</strong>.`
-            : `Your payment of <strong>${fmt(Number(amountPaid))}${currencyLabel}</strong> for Invoice <strong>${invoice.invoice_number}</strong> has been received. Your remaining balance is <strong>${fmt(balanceRemaining)}${currencyLabel}</strong>, which you can view and pay anytime using the link below.`}
+            ? `Your payment of <strong>${fmt(Number(amountPaid))}${currencyLabel}</strong> has been received, and Invoice <strong>${esc(invoice.invoice_number)}</strong> is now <strong>paid in full</strong>.`
+            : `Your payment of <strong>${fmt(Number(amountPaid))}${currencyLabel}</strong> for Invoice <strong>${esc(invoice.invoice_number)}</strong> has been received. Your remaining balance is <strong>${fmt(balanceRemaining)}${currencyLabel}</strong>, which you can view and pay anytime using the link below.`}
         </p>
         <p style="margin:0 0 24px;font-size:15px;color:#374151;">
           ${isPaid ? "Thank you for your payment and for your business!" : "Thank you for your payment!"}
@@ -138,7 +139,7 @@ export async function POST(request: Request) {
           <table style="width:100%;border-collapse:collapse;">
             <tr>
               <td style="padding:6px 0;font-size:14px;color:#6b7280;">Invoice</td>
-              <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;">${invoice.invoice_number}</td>
+              <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;">${esc(invoice.invoice_number)}</td>
             </tr>
             ${billingPeriod ? row("Billing Month", billingPeriod, false, false) : ""}
             ${row("Payment Date", receivedOn, false, false)}
