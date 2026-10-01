@@ -113,8 +113,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
  * VAs can add to tasks assigned to them.
  */
 export async function POST(request: Request, { params }: RouteContext) {
-  const supabase = await createClient();
-  const auth = await supabase.auth.getUser();
+  // Bearer-token fallback for the desktop app — see project-messages/route.ts's
+  // identical comment and PR #167. GET above is untouched; desktop never
+  // calls it (to-dos arrive embedded in the assigned-task select instead).
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const auth = await supabase.auth.getUser(bearerToken);
   const user = auth.data.user;
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 

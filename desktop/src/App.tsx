@@ -476,7 +476,15 @@ export default function App() {
             </button>
           </div>
           {rightTab === "todo" ? (
-            <TodoPanel task={selectedTask} />
+            <TodoPanel
+              task={selectedTask}
+              onTodosChanged={() => {
+                if (userId) {
+                  loadTasks(userId);
+                  loadAvailableTasks(userId);
+                }
+              }}
+            />
           ) : (
             <MessageBoardPanel userId={userId} openDmRequest={dmRequest} />
           )}

@@ -38,8 +38,11 @@ const LOCKED_TODO_STATUSES = new Set(["submitted", "reviewing", "approved", "com
  * Body: { text?: string, sort_order?: number, completed?: boolean }
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
-  const supabase = await createClient();
-  const auth = await supabase.auth.getUser();
+  // Bearer-token fallback for the desktop app — see project-messages/route.ts's
+  // identical comment and PR #167.
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const auth = await supabase.auth.getUser(bearerToken);
   const user = auth.data.user;
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -110,9 +113,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 /**
  * DELETE /api/assigned-tasks/[id]/todos/[todoId]
  */
-export async function DELETE(_request: Request, { params }: RouteContext) {
-  const supabase = await createClient();
-  const auth = await supabase.auth.getUser();
+export async function DELETE(request: Request, { params }: RouteContext) {
+  // Bearer-token fallback for the desktop app — see project-messages/route.ts's
+  // identical comment and PR #167.
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
+  const auth = await supabase.auth.getUser(bearerToken);
   const user = auth.data.user;
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
