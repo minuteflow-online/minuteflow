@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { filterAccessibleProjectIds } from "@/lib/projectAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -28,11 +29,23 @@ export async function GET(request: Request) {
   const { data: { user } } = await authClient.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const ids = (new URL(request.url).searchParams.get("projectIds") ?? "")
+  const requestedIds = (new URL(request.url).searchParams.get("projectIds") ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean);
-  if (ids.length === 0) return Response.json({ files: [] });
+  if (requestedIds.length === 0) return Response.json({ files: [] });
 
   const supabase = serviceClient();
+
+  // Keep only the ids this caller actually has a reason to see (owns the
+  // project, or was granted access via project_va_access) — the same rule
+  // assigned-tasks applies (see PR #263). Without it, any project id here
+  // returned that project's files in full, with working download links.
+  const { data: profile } = await authClient
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const ids = await filterAccessibleProjectIds(supabase, profile, user.id, requestedIds);
+  if (ids.length === 0) return Response.json({ files: [] });
 
   // Project-level docs and the tasks in these projects, in parallel.
   const [{ data: projFiles, error }, { data: tasks }] = await Promise.all([
