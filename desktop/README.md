@@ -60,8 +60,13 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   dashboard's memo-collection wizard this skips). **Accept** on the Available
   tab moves a `pending` task to `on_queue` (where it then shows under
   Assigned) — the same `setAssignedTaskStatus` write path as Rework/Start, so
-  no new backend work was needed. No task-switch wizard, no to-do editing
-  yet.
+  no new backend work was needed. **To-do editing** — Add/Edit/Delete on each
+  to-do item, right in the To-Do panel. Ported from `TaskEditor.tsx`'s
+  checklist (`src/lib/taskTodos.ts`'s `addTodo`/`updateTodo`/`deleteTodo`) —
+  not from `AssignedTasksWidget.tsx`, which doesn't have this either; it only
+  exists in the fuller task editor, and this app only ports the to-do piece
+  of that, not the whole editor. No drag-reorder of to-dos (only tasks
+  themselves reorder). No task-switch wizard.
 - **Capture Now** — grabs the entire primary display via Electron's
   `desktopCapturer` + `getUserMedia` (main process → preload → renderer) and
   uploads it to `/api/upload-screenshot`. **Screenshots go to Google Drive
@@ -165,16 +170,6 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
 
 ## What it deliberately does NOT do yet
 
-- **No Accept / Submit on tasks, no to-do editing.** Those still go through
-  Next.js API routes (`/api/assigned-tasks/[id]/todos`, and the submit flow)
-  that authenticate via the web app's cookie-based Supabase session
-  (`src/lib/supabase/server.ts`), which this app has no browser cookies to
-  present for. Start works (see above) because `PATCH /api/assigned-tasks/[id]`
-  now *also* accepts a bearer token as a fallback when there's no cookie
-  session — added specifically for this app, see "Bearer-token auth" below.
-  The same approach would unlock Accept/Submit/to-do edits too; not done yet
-  because each has more surface than Start (Submit needs the attachment-upload
-  flow SubmitWorkModal drives; to-do edits are multiple routes).
 - **No automatic/scheduled capture, no idle detection, no local retry queue.**
   The Chrome extension (`../extension/background.js`) already owns the
   5-minute auto-capture cadence, idle/lock detection, and offline-safe upload
@@ -244,4 +239,9 @@ replacement. `desktop/src/lib/tasks.ts`'s `setAssignedTaskStatus()` sends the
 desktop app's own Supabase access token this way — same endpoint, same body
 shape as the web app's `src/lib/assignedTaskStatus.ts`, so Start stays the one
 shared write path rather than a second hand-rolled one (see that file's own
-comment on why that mattered before).
+comment on why that mattered before). The same pattern has since been
+extended, one route at a time as each desktop feature needed it, to
+`/api/assigned-tasks/[id]/submissions` (+ its `upload-url` sub-route, for
+Submit) and `/api/assigned-tasks/[id]/todos` (+ `/[todoId]`, for to-do
+editing) — each needs its own `next.config.ts` CORS entry too, since CORS is
+checked per path, not inherited from a parent route.

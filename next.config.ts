@@ -41,11 +41,13 @@ const nextConfig: NextConfig = {
       },
       // /:id matches one path segment, so this covers both
       // /api/assigned-tasks/reorder and /api/assigned-tasks/<real id> without
-      // widening CORS to deeper routes desktop doesn't call (todos, grab) —
-      // the two it does call (Submit) get their own entries below.
+      // widening CORS to deeper routes desktop doesn't call (grab) — the
+      // ones it does call (Submit, to-do editing) get their own entries below.
       { source: "/api/assigned-tasks/:id", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/assigned-tasks/:id/submissions", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/assigned-tasks/:id/submissions/upload-url", headers: DESKTOP_CORS_HEADERS },
+      { source: "/api/assigned-tasks/:id/todos", headers: DESKTOP_CORS_HEADERS },
+      { source: "/api/assigned-tasks/:id/todos/:todoId", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/project-messages", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/project-messages/:id/comments", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/conversations", headers: DESKTOP_CORS_HEADERS },

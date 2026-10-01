@@ -66,6 +66,16 @@ export default function App() {
     try {
       const rows = await fetchAssignedTasks(uid);
       setTasks(rows);
+      // Without this, a selected task's own object goes stale the moment a
+      // poll refreshes `tasks` — same fix MessageBoardPanel's loadTopics
+      // already uses for activeThread. Caught live: a brand-new task's
+      // to-dos are added a moment after the task itself (TaskEditor posts
+      // them one at a time after the create), so selecting it right away
+      // could freeze on the zero-to-dos snapshot forever, even once the
+      // to-dos existed server-side. `?? prev` leaves it alone when the
+      // selected task isn't in this particular list (e.g. it's pending, so
+      // it only lives in availableTasks).
+      setSelectedTask((prev) => (prev ? (rows.find((t) => t.id === prev.id) ?? prev) : prev));
     } catch {
       // Non-critical — leave the previous list showing rather than blank it.
     } finally {
@@ -81,6 +91,7 @@ export default function App() {
     try {
       const rows = await fetchAvailableTasks(uid);
       setAvailableTasks(rows);
+      setSelectedTask((prev) => (prev ? (rows.find((t) => t.id === prev.id) ?? prev) : prev));
     } catch {
       // Non-critical — leave the previous list showing rather than blank it.
     } finally {
@@ -476,7 +487,15 @@ export default function App() {
             </button>
           </div>
           {rightTab === "todo" ? (
-            <TodoPanel task={selectedTask} />
+            <TodoPanel
+              task={selectedTask}
+              onTodosChanged={() => {
+                if (userId) {
+                  loadTasks(userId);
+                  loadAvailableTasks(userId);
+                }
+              }}
+            />
           ) : (
             <MessageBoardPanel userId={userId} openDmRequest={dmRequest} />
           )}
