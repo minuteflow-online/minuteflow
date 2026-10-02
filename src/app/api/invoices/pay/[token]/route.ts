@@ -1,6 +1,7 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { syncInvoicePaymentState } from "@/lib/invoiceBalance";
+import { isValidProcessingFee } from "@/lib/processingFee";
 
 export const dynamic = "force-dynamic";
 
@@ -116,6 +117,12 @@ export async function POST(
 
   const payAmount = Number(amount);
   const fee = Number(processingFee) || 0;
+  // The fee comes from the browser, so it has to be one the page could have
+  // produced. Without this a negative fee charges less than the amount that
+  // gets credited to the invoice.
+  if (!isValidProcessingFee(payAmount, fee)) {
+    return Response.json({ error: "Invalid processing fee" }, { status: 400 });
+  }
   const chargeAmount = Math.round((payAmount + fee) * 100) / 100;
 
   // Validate base amount does not exceed balance (fee is on top, not counted against balance)
