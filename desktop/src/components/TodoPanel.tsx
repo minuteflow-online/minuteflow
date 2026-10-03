@@ -1,13 +1,14 @@
 // Right-hand column: the selected task's to-dos (TD1, TD2, ...) plus a
 // description panel — the "To do" + "Todo Description" split from the
 // wireframe. To-do rows, the TD label chip, and the Play button are copied
-// from AssignedTasksWidget.tsx's to-do list (same ▶ icon, same sage/
-// terracotta "playing" color swap) — Play starts/switches tracking against
-// that specific to-do, via startAssignedTask's optional todoLabel param (see
-// that file and App.tsx's handlePlayTodo). Not ported: the amber "played
-// before" highlight AssignedTasksWidget also shows — that needs a separate
-// time_logs lookup per to-do this app doesn't make yet; only the live
-// "currently playing" state is here. Add/Edit/Delete are ported from
+// from AssignedTasksWidget.tsx's to-do list (same ▶ icon, same sage/amber/
+// terracotta color scheme — sage default, amber once played before, terracotta
+// while live) — Play starts/switches tracking against that specific to-do, via
+// startAssignedTask's optional todoLabel param (see that file and App.tsx's
+// handlePlayTodo). "Played before" is sourced the same way the todos GET
+// route computes it on web: any time_logs row for this user + this task's
+// task_name with a non-null todo_label (see taskTodos.ts's
+// fetchPlayedTodoLabels). Add/Edit/Delete are ported from
 // TaskEditor.tsx's to-do checklist (src/lib/taskTodos.ts's addTodo/
 // updateTodo/deleteTodo) — the web dashboard's own widget (AssignedTasksWidget)
 // doesn't have these either; they live in the fuller task editor, which this
@@ -21,11 +22,14 @@
 import { useEffect, useState } from "react";
 import type { VAAssignedTask, TaskTodo } from "../lib/tasks";
 import { todoLabel } from "../lib/tasks";
-import { addTodo, updateTodo, deleteTodo } from "../lib/taskTodos";
+import { addTodo, updateTodo, deleteTodo, fetchPlayedTodoLabels } from "../lib/taskTodos";
 
 interface TodoPanelProps {
   task: VAAssignedTask | null;
   onTodosChanged?: () => void;
+  /** Signed-in VA — used to look up which to-dos on this task have been
+   *  played before (see fetchPlayedTodoLabels). */
+  userId?: string | null;
   /** Which task/to-do is actively being clocked right now — drives the Play
    *  button's "Playing" state. Both null when nothing's running or it's
    *  plain task time with no to-do selected. */
@@ -40,6 +44,7 @@ const inputClass = "w-full rounded-lg border border-sand px-2 py-1.5 text-xs tex
 export default function TodoPanel({
   task,
   onTodosChanged,
+  userId = null,
   activeAssignedTaskId = null,
   activeTodoLabel = null,
   playingTodoId = null,
@@ -51,6 +56,7 @@ export default function TodoPanel({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [playedLabels, setPlayedLabels] = useState<Set<string>>(new Set());
 
   // Clears the editor/composer only when the selection itself changes — not
   // on every poll, so switching tasks doesn't leave a stray edit box open on
@@ -70,6 +76,21 @@ export default function TodoPanel({
     if (editingId !== null) return;
     setTodos(task?.assigned_tasks.task_todos ?? []);
   }, [task?.id, task?.assigned_tasks.task_todos, editingId]);
+
+  // Which labels have been played before, for the amber highlight — refetched
+  // whenever the selection changes. Cleared immediately on a task switch so a
+  // stale task's played labels don't flash on the newly selected one.
+  useEffect(() => {
+    setPlayedLabels(new Set());
+    if (!userId || !task) return;
+    let cancelled = false;
+    fetchPlayedTodoLabels(userId, task.assigned_tasks.task_name).then((labels) => {
+      if (!cancelled) setPlayedLabels(labels);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, task?.id, task?.assigned_tasks.task_name]);
 
   if (!task) {
     return (
@@ -190,13 +211,21 @@ export default function TodoPanel({
                       (() => {
                         const label = todoLabel(i);
                         const isPlaying = activeAssignedTaskId === detail.id && activeTodoLabel === label;
+                        const isPlayed = !isPlaying && playedLabels.has(label);
                         return (
                           <button
-                            onClick={() => onPlayTodo!(task, todo)}
+                            onClick={() => {
+                              setPlayedLabels((prev) => new Set(prev).add(label));
+                              onPlayTodo!(task, todo);
+                            }}
                             disabled={playingTodoId === todo.id}
-                            title={isPlaying ? `${label} is currently playing` : `Play ${label}`}
+                            title={isPlaying ? `${label} is currently playing` : isPlayed ? `${label} played before — play again` : `Play ${label}`}
                             className={`shrink-0 flex items-center justify-center h-5 w-5 rounded cursor-pointer transition-colors disabled:opacity-50 ${
-                              isPlaying ? "bg-terracotta text-white hover:bg-terracotta/90" : "bg-sage text-white hover:bg-sage/90"
+                              isPlaying
+                                ? "bg-terracotta text-white hover:bg-terracotta/90"
+                                : isPlayed
+                                  ? "bg-amber text-white hover:bg-amber/90"
+                                  : "bg-sage text-white hover:bg-sage/90"
                             }`}
                           >
                             <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">

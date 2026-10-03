@@ -522,6 +522,7 @@ export default function App() {
                   loadAvailableTasks(userId);
                 }
               }}
+              userId={userId}
               activeAssignedTaskId={sessionRow?.active_task?.assignedTaskId ?? null}
               activeTodoLabel={sessionRow?.active_task?.todoLabel ?? null}
               playingTodoId={playingTodoId}

@@ -71,11 +71,13 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   close-and-restart behavior as the dashboard's `handlePlayTodo`, via
   `startAssignedTask`'s optional `todoLabel` param (`src/lib/startTask.ts`).
   No new backend work here either — it's the same direct `time_logs` insert
-  Start already makes, just with one more field. Not ported: the amber
-  "played before" highlight `AssignedTasksWidget.tsx` also shows (needs a
-  separate time-log lookup per to-do this app doesn't make) — only the live
-  "currently playing" highlight is here. No drag-reorder of to-dos (only
-  tasks themselves reorder). No task-switch wizard.
+  Start already makes, just with one more field. The amber "played before"
+  highlight is also ported now (`taskTodos.ts`'s `fetchPlayedTodoLabels`) —
+  same `time_logs` lookup by `task_name` + non-null `todo_label` the todos GET
+  route uses on web, so a to-do's button goes sage → amber once it's been
+  played, and terracotta only while it's the one currently playing. No
+  drag-reorder of to-dos (only tasks themselves reorder). No task-switch
+  wizard.
 - **Capture Now** — grabs the entire primary display via Electron's
   `desktopCapturer` + `getUserMedia` (main process → preload → renderer) and
   uploads it to `/api/upload-screenshot`. **Screenshots go to Google Drive
