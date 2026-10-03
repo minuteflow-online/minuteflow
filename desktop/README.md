@@ -65,8 +65,17 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   checklist (`src/lib/taskTodos.ts`'s `addTodo`/`updateTodo`/`deleteTodo`) —
   not from `AssignedTasksWidget.tsx`, which doesn't have this either; it only
   exists in the fuller task editor, and this app only ports the to-do piece
-  of that, not the whole editor. No drag-reorder of to-dos (only tasks
-  themselves reorder). No task-switch wizard.
+  of that, not the whole editor. **Play a to-do** — the ▶ button next to each
+  item on an `on_queue`/`in_progress` task starts (or switches) tracking
+  against that specific to-do — same `todo_label` column and same always-
+  close-and-restart behavior as the dashboard's `handlePlayTodo`, via
+  `startAssignedTask`'s optional `todoLabel` param (`src/lib/startTask.ts`).
+  No new backend work here either — it's the same direct `time_logs` insert
+  Start already makes, just with one more field. Not ported: the amber
+  "played before" highlight `AssignedTasksWidget.tsx` also shows (needs a
+  separate time-log lookup per to-do this app doesn't make) — only the live
+  "currently playing" highlight is here. No drag-reorder of to-dos (only
+  tasks themselves reorder). No task-switch wizard.
 - **Capture Now** — grabs the entire primary display via Electron's
   `desktopCapturer` + `getUserMedia` (main process → preload → renderer) and
   uploads it to `/api/upload-screenshot`. **Screenshots go to Google Drive

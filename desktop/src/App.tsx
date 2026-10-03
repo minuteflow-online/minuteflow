@@ -8,7 +8,7 @@ import NotificationBell from "./components/NotificationBell";
 import SubmitWorkModal from "./components/SubmitWorkModal";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
-import { fetchAssignedTasks, fetchAvailableTasks, reorderAssignedTasks, setAssignedTaskStatus, type VAAssignedTask, type AssignedTaskStatus } from "./lib/tasks";
+import { fetchAssignedTasks, fetchAvailableTasks, reorderAssignedTasks, setAssignedTaskStatus, todoLabel, type VAAssignedTask, type AssignedTaskStatus, type TaskTodo } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 
@@ -36,6 +36,7 @@ export default function App() {
   const [selectedTask, setSelectedTask] = useState<VAAssignedTask | null>(null);
   const [acceptingId, setAcceptingId] = useState<number | null>(null);
   const [startingId, setStartingId] = useState<number | null>(null);
+  const [playingTodoId, setPlayingTodoId] = useState<number | null>(null);
   const [reworkingId, setReworkingId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
 
@@ -239,6 +240,32 @@ export default function App() {
       }
     },
     [userId, profile, sessionRow, orgTimezone, startingId, loadTasks]
+  );
+
+  // Play a specific to-do: mirrors the dashboard's handlePlayTodo. Always
+  // closes whatever's open and starts a fresh log tagged with this to-do's
+  // label (startAssignedTask's todoLabel param) — even if the same task is
+  // already the active one, switching between to-dos still splits the time
+  // into separate segments rather than silently merging them. No
+  // task-switch wizard (same simplification as plain Start).
+  const handlePlayTodo = useCallback(
+    async (task: VAAssignedTask, todo: TaskTodo) => {
+      if (!userId || !profile || playingTodoId != null) return;
+      setPlayingTodoId(todo.id);
+      try {
+        const result = await startAssignedTask(task, userId, profile, sessionRow, orgTimezone, todoLabel(todo.sort_order));
+        if (!result.ok) {
+          alert(result.error);
+          return;
+        }
+        if (result.session) setSessionRow(result.session);
+        setSelectedTask(task);
+        await loadTasks(userId);
+      } finally {
+        setPlayingTodoId(null);
+      }
+    },
+    [userId, profile, sessionRow, orgTimezone, playingTodoId, loadTasks]
   );
 
   // Accept: a newly assigned task moves from pending to on_queue, same single
@@ -495,6 +522,10 @@ export default function App() {
                   loadAvailableTasks(userId);
                 }
               }}
+              activeAssignedTaskId={sessionRow?.active_task?.assignedTaskId ?? null}
+              activeTodoLabel={sessionRow?.active_task?.todoLabel ?? null}
+              playingTodoId={playingTodoId}
+              onPlayTodo={handlePlayTodo}
             />
           ) : (
             <MessageBoardPanel userId={userId} openDmRequest={dmRequest} />

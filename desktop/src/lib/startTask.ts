@@ -28,13 +28,23 @@ export interface StartTaskResult {
 
 /** Starts a standard assigned task: closes whatever log is currently open,
  *  inserts a new time_log for this task, flips its assignee status to
- *  in_progress, and (auto-clocking in if idle) marks it the active task. */
+ *  in_progress, and (auto-clocking in if idle) marks it the active task.
+ *
+ *  `todoLabel` ("TD1", "TD2", …) is set when this call came from playing a
+ *  specific to-do rather than plain Start — mirrors the dashboard's
+ *  handlePlayTodo exactly: always closes whatever's open and starts a fresh
+ *  log tagged with that to-do's label, even if the same task is already
+ *  running (so time against one to-do doesn't silently keep counting toward
+ *  a different one). task_name/account/project/client_memo stay identical
+ *  to the parent task either way, so Reports' task-level rollup still sums
+ *  a task's to-do time for free — only todo_label tells them apart. */
 export async function startAssignedTask(
   task: VAAssignedTask,
   userId: string,
   profile: Profile,
   currentSession: SessionRow | null,
-  orgTimezone: string
+  orgTimezone: string,
+  todoLabel: string | null = null
 ): Promise<StartTaskResult> {
   const detail = task.assigned_tasks;
   if (detail.fixed_pay_task_id != null) {
@@ -75,6 +85,7 @@ export async function startAssignedTask(
         form_fill_ms: 0,
         billing_type: "hourly",
         session_date: sessionDate,
+        todo_label: todoLabel,
       },
     });
     log = rows[0];
@@ -110,7 +121,7 @@ export async function startAssignedTask(
     logId: String(log.id),
     _startMs: Date.now(),
     assignedTaskId: detail.id,
-    todoLabel: null,
+    todoLabel,
   };
 
   const clockInTime = currentSession?.clocked_in ? currentSession.clock_in_time || now : now;
