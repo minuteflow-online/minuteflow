@@ -141,7 +141,7 @@ export async function POST(request: Request) {
               <td style="padding:6px 0;font-size:14px;color:#6b7280;">Invoice</td>
               <td style="padding:6px 0;font-size:14px;color:#111827;text-align:right;">${esc(invoice.invoice_number)}</td>
             </tr>
-            ${billingPeriod ? row("Billing Month", billingPeriod, false, false) : ""}
+            ${billingPeriod ? row("Billing Cycle", billingPeriod, false, false) : ""}
             ${row("Payment Date", receivedOn, false, false)}
             <tr><td colspan="2" style="padding:6px 0;"><div style="border-top:1px solid #e5e7eb;"></div></td></tr>
             ${row("Invoice Total", fmt(totalDue))}
