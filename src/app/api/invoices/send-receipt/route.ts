@@ -96,11 +96,11 @@ export async function POST(request: Request) {
     .limit(1)
     .maybeSingle();
   const receivedOn = fmtDate(lastPayment?.payment_date || new Date().toISOString().split("T")[0], { month: "short", day: "numeric", year: "numeric" });
-  // One calendar month reads as "August 2026"; anything else as the date range
-  // the invoice email uses.
+  // The service period as dates: "August 1–31, 2026" within one month,
+  // otherwise "Aug 15 – Sep 14, 2026" (the range the invoice email uses).
   const billingPeriod = invoice.period_start && invoice.period_end
     ? invoice.period_start.slice(0, 7) === invoice.period_end.slice(0, 7)
-      ? fmtDate(invoice.period_start, { month: "long", year: "numeric" })
+      ? `${fmtDate(invoice.period_start, { month: "long", day: "numeric" })}–${Number(invoice.period_end.slice(8, 10))}, ${invoice.period_end.slice(0, 4)}`
       : `${fmtDate(invoice.period_start, { month: "short", day: "numeric" })} – ${fmtDate(invoice.period_end, { month: "short", day: "numeric", year: "numeric" })}`
     : null;
 
