@@ -6,6 +6,9 @@ import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+/** Sent to the client and not settled. Drafts and ready_to_send were never sent. */
+const REMINDABLE_STATUSES = ["sent", "partially_paid", "overdue"];
+
 /**
  * GET /api/cron/invoice-reminders
  * Daily cron: send gentle reminder emails for invoices with reminder_enabled=true
@@ -25,12 +28,14 @@ export async function GET(request: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Fetch all invoices with reminders enabled that aren't done
+  // Only invoices the client has actually been sent and still owes on. This
+  // used to exclude just paid/cancelled/trash, so a freshly generated draft or
+  // ready_to_send invoice got a "Gentle Reminder" before it was ever sent.
   const { data: invoices, error } = await serviceClient
     .from("invoices")
     .select("*")
     .eq("reminder_enabled", true)
-    .not("status", "in", '("paid","cancelled","trash")')
+    .in("status", REMINDABLE_STATUSES)
     .not("to_email", "is", null);
 
   if (error) {
@@ -119,7 +124,7 @@ export async function GET(request: NextRequest) {
     .from("invoices")
     .select("id, invoice_number, to_name, to_email, from_name, from_email, total, amount_paid, currency, share_token, payment_schedule")
     .not("payment_schedule", "is", null)
-    .not("status", "in", '("paid","cancelled","trash")')
+    .in("status", REMINDABLE_STATUSES)
     .not("to_email", "is", null);
 
   let splitSent = 0;
