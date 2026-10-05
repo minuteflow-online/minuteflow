@@ -84,6 +84,18 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   only** — same endpoint, same rule as everywhere else in this app (see
   CLAUDE.md's screenshot rule). There is no Supabase Storage path here, and
   none should ever be added.
+- **Automatic capture every 5 minutes while clocked in** — `src/lib/autoCapture.ts`,
+  the desktop equivalent of the Chrome extension's background capture loop
+  (`extension/background.js`'s `runScheduledCapture`). Skips silently on a
+  break or with no task running; checks idle/lock state first via
+  `powerMonitor.getSystemIdleState()` (main process, bridged through
+  `window.mfDesktop.getIdleState()`) and records a reason instead of a
+  screenshot — `/api/screenshot-marker`, no image — when the VA's been away
+  from the keyboard for 5 minutes or the screen is locked. Deliberately
+  simpler than the extension's version: no local-first retry queue, since
+  this app's main process stays running in the tray rather than getting
+  killed and restarted the way a browser service worker can — a tick that
+  fails to upload just tries again in 5 minutes.
 - **Minimizes to the system tray instead of quitting** — closing the window
   (X, Alt+F4) hides it rather than exiting the app, same as any other
   background tracker; a shift timer isn't useful if closing the window stops
@@ -181,12 +193,12 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
 
 ## What it deliberately does NOT do yet
 
-- **No automatic/scheduled capture, no idle detection, no local retry queue.**
-  The Chrome extension (`../extension/background.js`) already owns the
-  5-minute auto-capture cadence, idle/lock detection, and offline-safe upload
-  queue for anyone who has it installed. This app's capture is manual
-  ("Capture Now") for now — see AGENTS.md's task-sizing note if extending it
-  to full parity.
+- **No offline-safe local retry queue for automatic captures.** The Chrome
+  extension (`../extension/background.js`) saves a capture locally first and
+  retries on a 30-second alarm because a browser service worker can be
+  killed and restarted unpredictably. This app's main process keeps running
+  in the tray for as long as the VA is signed in, so `autoCapture.ts` just
+  tries again at the next 5-minute tick instead — see that file's comment.
 - **No full Break-flow wizard.** Break/End Break here just flips
   `sessions.active_task`, the same simplified version `SessionContext.tsx`
   uses on non-dashboard pages — not the dashboard's memo-collection wizard for

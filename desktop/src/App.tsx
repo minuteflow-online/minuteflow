@@ -11,6 +11,7 @@ import * as clock from "./lib/clock";
 import { fetchAssignedTasks, fetchAvailableTasks, reorderAssignedTasks, setAssignedTaskStatus, todoLabel, type VAAssignedTask, type AssignedTaskStatus, type TaskTodo } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
+import { startAutoCapture } from "./lib/autoCapture";
 
 const SESSION_POLL_MS = 15000;
 const TASKS_POLL_MS = 30000;
@@ -49,6 +50,35 @@ export default function App() {
   const userIdRef = useRef<string | null>(null);
   useEffect(() => {
     userIdRef.current = userId;
+  }, [userId]);
+
+  // Read by autoCapture's loop on every tick (see sessionRowRef effect below)
+  // rather than closed over once — sessionRow updates far more often than
+  // the 5-minute capture interval restarts, and a closure taken at effect-run
+  // time would otherwise freeze on whatever task/break state happened to be
+  // current when the VA signed in.
+  const sessionRowRef = useRef<clock.SessionRow | null>(null);
+  useEffect(() => {
+    sessionRowRef.current = sessionRow;
+  }, [sessionRow]);
+
+  // Automatic screenshot every 5 minutes while clocked in — desktop's
+  // equivalent of the Chrome extension's background capture loop (see
+  // autoCapture.ts). Tied to userId alone (not sessionRow) so the interval
+  // itself isn't torn down and recreated on every clock in/out/task switch —
+  // each tick reads the live session state off the ref above instead.
+  useEffect(() => {
+    if (!userId) return;
+    return startAutoCapture(() => {
+      const row = sessionRowRef.current;
+      if (!row?.clocked_in) return null;
+      const task = row.active_task;
+      return {
+        userId,
+        isOnBreak: isOnBreak(task),
+        activeLogId: task?.logId ? Number(task.logId) : null,
+      };
+    });
   }, [userId]);
 
   const loadForUser = useCallback(async (uid: string) => {

@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("mfDesktop", {
   getScreenSources: () => ipcRenderer.invoke("mf:get-screen-sources"),
+  // "active" | "idle" | "locked" | "unknown" — see main.js's handler.
+  getIdleState: (thresholdSeconds) => ipcRenderer.invoke("mf:get-idle-state", thresholdSeconds),
   auth: {
     save: (session) => ipcRenderer.invoke("mf:auth-save", session),
     load: () => ipcRenderer.invoke("mf:auth-load"),
