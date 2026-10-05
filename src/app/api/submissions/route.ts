@@ -11,6 +11,19 @@ export const dynamic = "force-dynamic";
 
 type AdminClient = SupabaseClient;
 
+function isAdminProfile(
+  profile: { role?: string | null; admin_permissions?: string[] | null } | null | undefined
+): boolean {
+  return (
+    profile?.role === "admin" ||
+    profile?.role === "manager" ||
+    hasAdminPermission(profile, "task_management")
+  );
+}
+
+/** storage path -> signed URL, kept for the life of the server instance. */
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
 /** Every attachment on this batch of submissions, with a signed URL apiece. */
 async function loadAttachments(
   admin: AdminClient,
@@ -37,14 +50,22 @@ async function loadAttachments(
     }
     return all;
   };
-  const linkedPromise = fetchAll((from, to) =>
-    admin
-      .from("assigned_task_attachments")
-      .select(select)
-      .in("submission_id", submissionIds)
-      .order("id")
-      .range(from, to)
-  );
+  // Split by submission and run side by side: one big paged request reads its
+  // pages one after another, which was the slowest part of this load.
+  const idChunks: number[][] = [];
+  for (let i = 0; i < submissionIds.length; i += 100) idChunks.push(submissionIds.slice(i, i + 100));
+  const linkedPromise = Promise.all(
+    idChunks.map((ids) =>
+      fetchAll((from, to) =>
+        admin
+          .from("assigned_task_attachments")
+          .select(select)
+          .in("submission_id", ids)
+          .order("id")
+          .range(from, to)
+      )
+    )
+  ).then((parts) => parts.flat());
 
   // Files a VA drops onto the task in the task editor are saved against the
   // task with no submission_id, so they never showed up here and the reviewer
@@ -87,15 +108,32 @@ async function loadAttachments(
   // bottleneck behind "submissions takes a while to load", not the SQL.
   // Chunked: a single call with every path (past ~1000) fails outright and
   // leaves every thumbnail without a URL.
-  const paths = files.map((f) => f.storage_path as string);
+  // Links stay valid for an hour, so reuse the ones already signed instead of
+  // signing every file again on each page load.
+  const now = Date.now();
+  const urlByPath = new Map<string, string | null>();
+  const toSign: string[] = [];
+  for (const f of files) {
+    const path = f.storage_path as string;
+    const cached = signedUrlCache.get(path);
+    if (cached && cached.expiresAt > now) urlByPath.set(path, cached.url);
+    else if (!urlByPath.has(path)) {
+      urlByPath.set(path, null);
+      toSign.push(path);
+    }
+  }
   const chunks: string[][] = [];
-  for (let i = 0; i < paths.length; i += 200) chunks.push(paths.slice(i, i + 200));
+  for (let i = 0; i < toSign.length; i += 200) chunks.push(toSign.slice(i, i + 200));
   const signed = await Promise.all(
     chunks.map((chunk) => admin.storage.from("task-attachments").createSignedUrls(chunk, 3600))
   );
-  const urlByPath = new Map(
-    signed.flatMap((r) => r.data ?? []).map((s) => [s.path, s.signedUrl ?? null])
-  );
+  if (signedUrlCache.size > 5000) signedUrlCache.clear();
+  for (const s of signed.flatMap((r) => r.data ?? [])) {
+    if (!s.path || !s.signedUrl) continue;
+    urlByPath.set(s.path, s.signedUrl);
+    // Cached for 50 of the 60 minutes, so a served link never expires mid-view.
+    signedUrlCache.set(s.path, { url: s.signedUrl, expiresAt: now + 50 * 60 * 1000 });
+  }
 
   for (const file of files ?? []) {
     const list = filesBySubmission.get(file.submission_id as number) ?? [];
@@ -521,16 +559,28 @@ export async function GET(request: Request) {
   // instead of running one after another. On a workspace with a few hundred
   // submissions this was the actual source of "submissions takes a while to
   // load" — not any single slow query, but ~8 of them run in series.
-  const [{ data: profile }, { data, error }] = await Promise.all([
-    supabase.from("profiles").select("role, department, admin_permissions").eq("id", user.id).single(),
-    query,
-  ]);
+  const profilePromise = Promise.resolve(
+    supabase.from("profiles").select("role, department, admin_permissions").eq("id", user.id).single()
+  );
+  // Expected work only needs the profile, not the submissions below, so it
+  // starts as soon as the profile is back and runs alongside the main query.
+  const expectedPromise: Promise<Array<Record<string, unknown>>> = showTrash
+    ? Promise.resolve([])
+    : profilePromise.then(({ data: p }) =>
+        loadExpectedWork(admin, {
+          isAdminEquivalent: isAdminProfile(p),
+          va,
+          scope,
+          projectId,
+          userId: user.id,
+        })
+      );
+  // If the main query fails below we return early; don't leave this unhandled.
+  expectedPromise.catch(() => {});
+  const [{ data: profile }, { data, error }] = await Promise.all([profilePromise, query]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  const isAdminEquivalent =
-    profile?.role === "admin" ||
-    profile?.role === "manager" ||
-    hasAdminPermission(profile, "task_management");
+  const isAdminEquivalent = isAdminProfile(profile);
 
   type Row = Record<string, unknown> & {
     id: number;
@@ -606,9 +656,7 @@ export async function GET(request: Request) {
   const [filesBySubmission, roundData, expected, unreadByTask] = await Promise.all([
     loadAttachments(admin, submissionIds, rows),
     loadRoundData(admin, taskIds, completedTasks),
-    showTrash
-      ? Promise.resolve([] as Array<Record<string, unknown>>)
-      : loadExpectedWork(admin, { isAdminEquivalent, va, scope, projectId, userId: user.id }),
+    expectedPromise,
     loadUnreadByTask(admin, rows, user.id),
   ]);
   const { roundDurations, reviewState, flaggedTasks } = roundData;
