@@ -4,8 +4,11 @@ export interface ScreenSource {
   thumbnailDataUrl: string | null;
 }
 
+export type IdleState = "active" | "idle" | "locked" | "unknown";
+
 export interface MfDesktopApi {
   getScreenSources: () => Promise<ScreenSource[]>;
+  getIdleState: (thresholdSeconds: number) => Promise<IdleState>;
   auth: {
     save: (session: unknown) => Promise<{ encrypted: boolean }>;
     load: () => Promise<unknown | null>;

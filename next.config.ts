@@ -55,6 +55,13 @@ const nextConfig: NextConfig = {
       { source: "/api/conversations/:id/messages", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/team-members", headers: DESKTOP_CORS_HEADERS },
       { source: "/api/message-attachments", headers: DESKTOP_CORS_HEADERS },
+      // Capture Now and the automatic 5-minute capture loop (desktop's
+      // autoCapture.ts) both call these two — neither had ever gotten this
+      // header, so every desktop call's *response* was likely unreadable in
+      // the renderer even though the server-side upload/marker insert still
+      // completed (the same silent-failure shape #210 found elsewhere).
+      { source: "/api/upload-screenshot", headers: DESKTOP_CORS_HEADERS },
+      { source: "/api/screenshot-marker", headers: DESKTOP_CORS_HEADERS },
     ];
   },
 };

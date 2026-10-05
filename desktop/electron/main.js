@@ -7,7 +7,7 @@
 //   2. Encrypted-at-rest storage of the Supabase refresh token, via
 //      safeStorage (OS keychain / DPAPI), so a login survives an app
 //      restart without the token sitting around as plain text.
-const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog, Tray, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog, Tray, Menu, nativeImage, powerMonitor } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { SUPABASE_URL, API_BASE } = require("./config");
@@ -253,6 +253,16 @@ ipcMain.handle("mf:get-screen-sources", async () => {
     name: s.name,
     thumbnailDataUrl: s.thumbnail.isEmpty() ? null : s.thumbnail.toDataURL(),
   }));
+});
+
+// Idle/lock state for the automatic 5-minute capture loop (autoCapture.ts) —
+// mirrors the extension's chrome.idle.queryState(threshold): "active" means
+// real input within the last `threshold` seconds, "idle" means none, "locked"
+// means the OS session itself is locked (not supported on every platform, in
+// which case Electron falls back to "unknown", treated the same as "active"
+// by the caller so a platform gap can never falsely mark someone idle).
+ipcMain.handle("mf:get-idle-state", (_event, thresholdSeconds) => {
+  return powerMonitor.getSystemIdleState(thresholdSeconds);
 });
 
 // ── Notifications ────────────────────────────────────────────────────────
