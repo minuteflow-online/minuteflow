@@ -8,6 +8,7 @@
 // one, same as a missed chrome.alarms firing a few minutes later would.
 import { captureAndUploadScreenshot } from "./screenshot";
 import { API_BASE } from "./config";
+import { query } from "./db";
 
 const CAPTURE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -16,6 +17,27 @@ const CAPTURE_INTERVAL_MS = 5 * 60 * 1000;
 // IDLE_THRESHOLD_SECONDS: an "idle" marker should mean idle for the whole
 // slot, not merely idle the instant the timer happened to fire.
 const IDLE_THRESHOLD_SECONDS = 300;
+
+// How far back to look for an existing screenshot before assuming this slot
+// needs one — same window the extension's own slotAlreadyCovered() uses.
+const SLOT_COVERED_MINUTES = 4;
+
+/** True when a screenshot already exists for this task within the current
+ *  slot — e.g. a web browser tab with an active screen-share session
+ *  already covered it. Any failure answers false, so a lookup problem costs
+ *  a duplicate screenshot rather than a missing one — same fallback the
+ *  extension's own version of this check uses. */
+async function slotAlreadyCovered(logId: number): Promise<boolean> {
+  try {
+    const since = new Date(Date.now() - SLOT_COVERED_MINUTES * 60000).toISOString();
+    const rows = await query<{ id: number }[]>("task_screenshots", {
+      filters: `log_id=eq.${logId}&captured_at=gte.${since}&screenshot_type=neq.failed&select=id&limit=1`,
+    });
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 /** Records why a capture slot has no screenshot — no image, just a reason
  *  and a timestamp, same /api/screenshot-marker endpoint the extension uses.
@@ -54,6 +76,12 @@ async function runCaptureTick(tick: AutoCaptureTick): Promise<void> {
   if (tick.isOnBreak) return;
 
   if (!tick.activeLogId) return;
+
+  // Something else (most likely a web browser tab with an active
+  // screen-share session, which doesn't know desktop exists) may have
+  // already captured this slot. Checked before the idle read since there's
+  // nothing to decide once a slot's already covered either way.
+  if (await slotAlreadyCovered(tick.activeLogId)) return;
 
   const idleState = await window.mfDesktop.getIdleState(IDLE_THRESHOLD_SECONDS);
   if (idleState === "idle") {

@@ -87,15 +87,18 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
 - **Automatic capture every 5 minutes while clocked in** — `src/lib/autoCapture.ts`,
   the desktop equivalent of the Chrome extension's background capture loop
   (`extension/background.js`'s `runScheduledCapture`). Skips silently on a
-  break or with no task running; checks idle/lock state first via
-  `powerMonitor.getSystemIdleState()` (main process, bridged through
-  `window.mfDesktop.getIdleState()`) and records a reason instead of a
-  screenshot — `/api/screenshot-marker`, no image — when the VA's been away
-  from the keyboard for 5 minutes or the screen is locked. Deliberately
-  simpler than the extension's version: no local-first retry queue, since
-  this app's main process stays running in the tray rather than getting
-  killed and restarted the way a browser service worker can — a tick that
-  fails to upload just tries again in 5 minutes.
+  break or with no task running; checks whether the slot's already covered
+  by something else (a web browser tab with an active screen-share session,
+  which has no way to know desktop exists) via the same `task_screenshots`
+  lookup the extension's own `slotAlreadyCovered` uses; then checks idle/lock
+  state via `powerMonitor.getSystemIdleState()` (main process, bridged
+  through `window.mfDesktop.getIdleState()`) and records a reason instead of
+  a screenshot — `/api/screenshot-marker`, no image — when the VA's been
+  away from the keyboard for 5 minutes or the screen is locked. Deliberately
+  simpler than the extension's version in one respect: no local-first retry
+  queue, since this app's main process stays running in the tray rather than
+  getting killed and restarted the way a browser service worker can — a tick
+  that fails to upload just tries again in 5 minutes.
 - **Minimizes to the system tray instead of quitting** — closing the window
   (X, Alt+F4) hides it rather than exiting the app, same as any other
   background tracker; a shift timer isn't useful if closing the window stops
