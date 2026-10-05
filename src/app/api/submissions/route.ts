@@ -12,24 +12,90 @@ export const dynamic = "force-dynamic";
 type AdminClient = SupabaseClient;
 
 /** Every attachment on this batch of submissions, with a signed URL apiece. */
-async function loadAttachments(admin: AdminClient, submissionIds: number[]) {
+async function loadAttachments(
+  admin: AdminClient,
+  submissionIds: number[],
+  rows: Array<Record<string, unknown> & { id: number; assigned_tasks?: { id: number } | null }>
+) {
   const filesBySubmission = new Map<number, Array<Record<string, unknown>>>();
   if (submissionIds.length === 0) return filesBySubmission;
 
-  const { data: files } = await admin
-    .from("assigned_task_attachments")
-    .select("id, submission_id, filename, storage_path, file_size, mime_type")
-    .in("submission_id", submissionIds);
+  const select = "id, submission_id, filename, storage_path, file_size, mime_type";
+  // PostgREST silently truncates any response at 1000 rows. One request for
+  // every submission's files stopped at ~1000 attachments, so every newer
+  // submission came back with none — hence the paging.
+  const fetchAll = async (
+    page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null }>
+  ): Promise<Array<Record<string, unknown>>> => {
+    const PAGE = 1000;
+    const all: Array<Record<string, unknown>> = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data } = await page(from, from + PAGE - 1);
+      const batch = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      all.push(...batch);
+      if (batch.length < PAGE) break;
+    }
+    return all;
+  };
+  const linkedPromise = fetchAll((from, to) =>
+    admin
+      .from("assigned_task_attachments")
+      .select(select)
+      .in("submission_id", submissionIds)
+      .order("id")
+      .range(from, to)
+  );
+
+  // Files a VA drops onto the task in the task editor are saved against the
+  // task with no submission_id, so they never showed up here and the reviewer
+  // had to open the editor to see the work. Show them on that VA's newest
+  // submission for the task — the one they were submitting when they added them.
+  const latestByTaskUser = new Map<string, { id: number; created_at: string }>();
+  for (const r of rows) {
+    const taskId = r.assigned_tasks?.id;
+    if (r.message_type !== "submission" || taskId == null) continue;
+    const key = `${taskId}:${r.user_id}`;
+    const createdAt = String(r.created_at);
+    const current = latestByTaskUser.get(key);
+    if (!current || createdAt > current.created_at) {
+      latestByTaskUser.set(key, { id: r.id, created_at: createdAt });
+    }
+  }
+  const taskIds = Array.from(new Set(Array.from(latestByTaskUser.keys()).map((k) => Number(k.split(":")[0]))));
+  const [linked, unlinked] = await Promise.all([
+    linkedPromise,
+    taskIds.length > 0
+      ? fetchAll((from, to) =>
+          admin
+            .from("assigned_task_attachments")
+            .select(`${select}, assigned_task_id, uploaded_by`)
+            .in("assigned_task_id", taskIds)
+            .is("submission_id", null)
+            .order("id")
+            .range(from, to)
+        )
+      : Promise.resolve([] as Array<Record<string, unknown>>),
+  ]);
+  const files: Array<Record<string, unknown>> = [...linked];
+  for (const f of unlinked) {
+    const target = latestByTaskUser.get(`${f.assigned_task_id}:${f.uploaded_by}`);
+    if (target) files.push({ ...f, submission_id: target.id });
+  }
 
   // One batched call instead of one createSignedUrl round-trip per file —
   // with hundreds of attachments the per-file version was the actual
   // bottleneck behind "submissions takes a while to load", not the SQL.
-  const paths = (files ?? []).map((f) => f.storage_path as string);
-  const { data: signedUrls } =
-    paths.length > 0
-      ? await admin.storage.from("task-attachments").createSignedUrls(paths, 3600)
-      : { data: [] as Array<{ path?: string | null; signedUrl?: string }> };
-  const urlByPath = new Map((signedUrls ?? []).map((s) => [s.path, s.signedUrl ?? null]));
+  // Chunked: a single call with every path (past ~1000) fails outright and
+  // leaves every thumbnail without a URL.
+  const paths = files.map((f) => f.storage_path as string);
+  const chunks: string[][] = [];
+  for (let i = 0; i < paths.length; i += 200) chunks.push(paths.slice(i, i + 200));
+  const signed = await Promise.all(
+    chunks.map((chunk) => admin.storage.from("task-attachments").createSignedUrls(chunk, 3600))
+  );
+  const urlByPath = new Map(
+    signed.flatMap((r) => r.data ?? []).map((s) => [s.path, s.signedUrl ?? null])
+  );
 
   for (const file of files ?? []) {
     const list = filesBySubmission.get(file.submission_id as number) ?? [];
@@ -538,7 +604,7 @@ export async function GET(request: Request) {
   // takes a while to load": roughly half a dozen sequential Supabase
   // round-trips add up fast even when each one individually is fine.
   const [filesBySubmission, roundData, expected, unreadByTask] = await Promise.all([
-    loadAttachments(admin, submissionIds),
+    loadAttachments(admin, submissionIds, rows),
     loadRoundData(admin, taskIds, completedTasks),
     showTrash
       ? Promise.resolve([] as Array<Record<string, unknown>>)
