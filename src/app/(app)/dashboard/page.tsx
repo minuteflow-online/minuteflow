@@ -2168,6 +2168,27 @@ export default function DashboardPage() {
           return false;
         }
       }
+      // Guard: skip if something else already covered this slot — most likely
+      // the desktop app, which captures on its own 5-minute schedule with no
+      // idea this browser tab exists. The desktop app already checks for a
+      // screenshot from here before capturing (autoCapture.ts's
+      // slotAlreadyCovered, itself ported from the extension's own version);
+      // this is the one capture path that never deferred to anyone, so two
+      // independent schedules could land within a few minutes of each other.
+      if (screenshotType !== 'manual') {
+        const since = new Date(Date.now() - 4 * 60000).toISOString();
+        const { data: covered } = await supabase
+          .from("task_screenshots")
+          .select("id")
+          .eq("log_id", logId)
+          .gte("captured_at", since)
+          .neq("screenshot_type", "failed")
+          .limit(1);
+        if (covered && covered.length > 0) {
+          console.info(`[Screenshot] Skipped (${screenshotType}): slot already covered for log ${logId}.`);
+          return false;
+        }
+      }
       // Guard: enforce 45-second cooldown between captures (skip for 'end' and 'manual' — those are intentional)
       if (screenshotType !== 'end' && screenshotType !== 'manual') {
         const now = Date.now();
