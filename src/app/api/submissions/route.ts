@@ -11,6 +11,29 @@ export const dynamic = "force-dynamic";
 
 type AdminClient = SupabaseClient;
 
+/**
+ * Every row of a query, however many there are. PostgREST silently truncates
+ * any response at 1000 rows — even with an explicit .limit(n) above that — so a
+ * query that returns "everything" quietly drops the rest once a table grows
+ * past it. Pass a function that builds the query fresh and applies the given
+ * range; it must have a stable order, or rows can repeat or go missing between
+ * pages.
+ */
+async function fetchAllPages<T = Record<string, unknown>>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const PAGE = 1000;
+  const all: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await page(from, from + PAGE - 1);
+    if (error) return { data: all, error };
+    const batch = (data ?? []) as T[];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return { data: all, error: null };
+}
+
 function isAdminProfile(
   profile: { role?: string | null; admin_permissions?: string[] | null } | null | undefined
 ): boolean {
@@ -34,22 +57,9 @@ async function loadAttachments(
   if (submissionIds.length === 0) return filesBySubmission;
 
   const select = "id, submission_id, filename, storage_path, file_size, mime_type";
-  // PostgREST silently truncates any response at 1000 rows. One request for
-  // every submission's files stopped at ~1000 attachments, so every newer
-  // submission came back with none — hence the paging.
   const fetchAll = async (
-    page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null }>
-  ): Promise<Array<Record<string, unknown>>> => {
-    const PAGE = 1000;
-    const all: Array<Record<string, unknown>> = [];
-    for (let from = 0; ; from += PAGE) {
-      const { data } = await page(from, from + PAGE - 1);
-      const batch = (data ?? []) as unknown as Array<Record<string, unknown>>;
-      all.push(...batch);
-      if (batch.length < PAGE) break;
-    }
-    return all;
-  };
+    page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>
+  ) => (await fetchAllPages(page)).data;
   // Split by submission and run side by side: one big paged request reads its
   // pages one after another, which was the slowest part of this load.
   const idChunks: number[][] = [];
@@ -161,25 +171,32 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
   const [revisionRes, logRes] = await Promise.all([
     // Every thread entry, not just revisions: the newest one also tells us
     // whether the task is still awaiting review (see reviewState below).
-    admin
-      .from("task_submissions")
-      .select("assigned_task_id, message_type, created_at")
-      .in("assigned_task_id", taskIds)
-      // A trashed entry must not decide where the task stands — cancelling
-      // a mistaken reversal works by trashing it, so counting it here would
-      // leave the task stuck in the state the mistake caused.
-      .is("deleted_at", null),
+    fetchAllPages((from, to) =>
+      admin
+        .from("task_submissions")
+        .select("assigned_task_id, message_type, created_at")
+        .in("assigned_task_id", taskIds)
+        // A trashed entry must not decide where the task stands — cancelling
+        // a mistaken reversal works by trashing it, so counting it here would
+        // leave the task stuck in the state the mistake caused.
+        .is("deleted_at", null)
+        .order("id")
+        .range(from, to)
+    ),
 
     // Logs now name the task they were worked under, so this asks for
     // exactly the ones that belong to these tasks. It replaces matching on
     // person + task name + account, which counted one session against every
     // recurring instance sharing a name — an eight-hour total for someone
     // on a four-hour day.
-    admin
-      .from("time_logs")
-      .select("assigned_task_id, start_time, duration_ms")
-      .in("assigned_task_id", taskIds)
-      .limit(20000),
+    fetchAllPages((from, to) =>
+      admin
+        .from("time_logs")
+        .select("assigned_task_id, start_time, duration_ms")
+        .in("assigned_task_id", taskIds)
+        .order("id")
+        .range(from, to)
+    ),
   ]);
 
   const allEntries = (revisionRes.data ?? []) as Array<{
@@ -323,18 +340,20 @@ async function loadExpectedWork(
     "revision_needed",
   ]);
 
-  const { data: dueTasks } = await admin
-    .from("assigned_tasks")
-    .select(
-      "id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
-        "assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), " +
-        "projects(id, name, kind), assigned_task_assignees(id, va_id, status)"
-    )
-    .not("due_date", "is", null)
-    .is("deleted_at", null)
-    .is("archived_at", null)
-    // Explicit, because PostgREST silently truncates at 1000 rows otherwise.
-    .limit(5000);
+  const { data: dueTasks } = await fetchAllPages((from, to) =>
+    admin
+      .from("assigned_tasks")
+      .select(
+        "id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
+          "assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), " +
+          "projects(id, name, kind), assigned_task_assignees(id, va_id, status)"
+      )
+      .not("due_date", "is", null)
+      .is("deleted_at", null)
+      .is("archived_at", null)
+      .order("id")
+      .range(from, to)
+  );
 
   type DueTask = {
     id: number;
@@ -476,16 +495,21 @@ async function loadUnreadByTask(
   const candidates = rows.filter((r) => r.assigned_task_id != null && isUnreadCandidate(r, userId));
   if (candidates.length === 0) return unreadByTask;
 
-  const { data: seen, error } = await admin
-    .from("submission_reads")
-    .select("submission_id")
-    .eq("user_id", userId)
-    .in("submission_id", candidates.map((r) => r.id));
+  const candidateIds = candidates.map((r) => r.id);
+  const { data: seen, error } = await fetchAllPages<{ submission_id: number }>((from, to) =>
+    admin
+      .from("submission_reads")
+      .select("submission_id")
+      .eq("user_id", userId)
+      .in("submission_id", candidateIds)
+      .order("submission_id")
+      .range(from, to)
+  );
   // Without the table there's no way to tell read from unread; showing nothing
   // beats marking every submission as new.
   if (error) return unreadByTask;
 
-  const seenIds = new Set((seen ?? []).map((s) => s.submission_id as number));
+  const seenIds = new Set(seen.map((s) => s.submission_id));
   for (const row of candidates) {
     if (seenIds.has(row.id)) continue;
     const taskId = row.assigned_task_id as number;
@@ -529,26 +553,32 @@ export async function GET(request: Request) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  let query = admin
-    .from("task_submissions")
-    .select(
-      "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, " +
-        "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
-    )
-    // The whole thread, not just submissions: revision notes, approvals and
-    // added notes all belong in the timeline alongside the work.
-    .not("assigned_task_id", "is", null)
-    .order("created_at", { ascending: false });
+  const buildQuery = () => {
+    let query = admin
+      .from("task_submissions")
+      .select(
+        "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, " +
+          "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
+          "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
+      )
+      // The whole thread, not just submissions: revision notes, approvals and
+      // added notes all belong in the timeline alongside the work.
+      .not("assigned_task_id", "is", null)
+      // id breaks ties, so paging past 1000 rows can't repeat or skip entries
+      // that share a timestamp.
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
 
-  // Trashed submissions are hidden by default and shown on request, so a
-  // reviewer can find and restore something binned by mistake.
-  query = showTrash
-    ? query.not("deleted_at", "is", null)
-    : query.is("deleted_at", null);
+    // Trashed submissions are hidden by default and shown on request, so a
+    // reviewer can find and restore something binned by mistake.
+    query = showTrash
+      ? query.not("deleted_at", "is", null)
+      : query.is("deleted_at", null);
 
-  if (from) query = query.gte("created_at", `${from}T00:00:00Z`);
-  if (to) query = query.lte("created_at", `${to}T23:59:59Z`);
+    if (from) query = query.gte("created_at", `${from}T00:00:00Z`);
+    if (to) query = query.lte("created_at", `${to}T23:59:59Z`);
+    return query;
+  };
 
   // The query above never touches `profile` (the `va` filter that used to
   // depend on it now happens in JS below), so it doesn't have to wait on the
@@ -577,7 +607,10 @@ export async function GET(request: Request) {
       );
   // If the main query fails below we return early; don't leave this unhandled.
   expectedPromise.catch(() => {});
-  const [{ data: profile }, { data, error }] = await Promise.all([profilePromise, query]);
+  const [{ data: profile }, { data, error }] = await Promise.all([
+    profilePromise,
+    fetchAllPages((rangeFrom, rangeTo) => buildQuery().range(rangeFrom, rangeTo)),
+  ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   const isAdminEquivalent = isAdminProfile(profile);
