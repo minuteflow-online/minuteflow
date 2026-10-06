@@ -2071,6 +2071,7 @@ export default function DashboardPage() {
       form.append("userId", userId);
       form.append("logId", String(logId));
       form.append("screenshotType", screenshotType);
+      form.append("source", "web");
       if (captureRequestId !== undefined) {
         form.append("captureRequestId", String(captureRequestId));
       }
@@ -2116,6 +2117,7 @@ export default function DashboardPage() {
             logId,
             failureReason: reason,
             capturedAt: new Date().toISOString(),
+            source: "web",
           }),
         });
         if (!res.ok) {

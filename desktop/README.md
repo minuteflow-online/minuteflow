@@ -98,7 +98,11 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   simpler than the extension's version in one respect: no local-first retry
   queue, since this app's main process stays running in the tray rather than
   getting killed and restarted the way a browser service worker can — a tick
-  that fails to upload just tries again in 5 minutes.
+  that fails to upload just tries again in 5 minutes. Every upload/marker
+  tags itself `source: "desktop"` so a screenshot can be traced back to
+  which app took it — Drive filenames come out prefixed `desktop_...`
+  (web's are `web_...`, the extension's `extension_...` inferred server-side
+  since it predates the field) — see `/api/upload-screenshot`'s comment.
 - **Minimizes to the system tray instead of quitting** — closing the window
   (X, Alt+F4) hides it rather than exiting the app, same as any other
   background tracker; a shift timer isn't useful if closing the window stops

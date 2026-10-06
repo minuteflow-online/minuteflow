@@ -170,6 +170,7 @@ export async function POST(request: NextRequest) {
     // capture path doesn't fingerprint.
     const capturedAtRaw = formData.get("capturedAt") as string | null;
     const fingerprint = formData.get("fingerprint") as string | null;
+    const sourceRaw = formData.get("source") as string | null;
 
     if (!blob || !bodyUserId || !logId || !screenshotType) {
       return Response.json(
@@ -190,6 +191,16 @@ export async function POST(request: NextRequest) {
       console.warn(`[upload-screenshot] body userId (${bodyUserId}) didn't match the verified session (${verifiedUserId}) — using the verified one.`);
     }
     const userId = verifiedUserId ?? bodyUserId;
+
+    // Which app captured this, folded into the Drive filename below so a
+    // screenshot can be traced back to its source without a new column.
+    // Only the desktop app and the web dashboard send this explicitly (added
+    // 2026-10-06, after a VA testing both at once couldn't tell which app had
+    // taken which shot); the extension predates the field and never sends it,
+    // but it's the only caller that presents a verified bearer token on this
+    // route, so that's used to label its uploads without needing an
+    // extension release to do it.
+    const source = sourceRaw || (verifiedUserId ? "extension" : "unknown");
 
     // Nothing captured during a break or personal time is kept. The extension
     // stops capturing on its own from 1.2.2, but older builds keep going and
@@ -235,9 +246,12 @@ export async function POST(request: NextRequest) {
       ? new Date(capturedAtRaw)
       : new Date();
 
-    // Build Drive filename (Eastern time, directly readable — see formatEasternTimestamp)
+    // Build Drive filename (Eastern time, directly readable — see formatEasternTimestamp).
+    // `source` is prefixed, never appended, so the timestamp stays anchored at
+    // the very end — screenshotCaptureTime()/captureTimeFromFilename() both
+    // match on a `_ET.png`/`Z.png` suffix, and a prefix can't break that.
     const timestamp = formatEasternTimestamp(capturedAt);
-    const driveFilename = `${sanitizeFilename(vaName)}_${sanitizeFilename(taskName)}_${timestamp}.png`;
+    const driveFilename = `${sanitizeFilename(source)}_${sanitizeFilename(vaName)}_${sanitizeFilename(taskName)}_${timestamp}.png`;
 
     // Convert Blob to Buffer once
     const arrayBuffer = await blob.arrayBuffer();
