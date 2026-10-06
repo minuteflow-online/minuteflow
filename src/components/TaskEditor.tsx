@@ -620,12 +620,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     async (attachmentId: number) => {
       if (attachmentOwnerId == null) return;
       if (!confirm("Delete this attachment? This cannot be undone.")) return;
-      await fetch(`${attachmentsBase}/${attachmentOwnerId}/attachments?attachmentId=${attachmentId}`, {
+      const res = await fetch(`${attachmentsBase}/${attachmentOwnerId}/attachments?attachmentId=${attachmentId}`, {
         method: "DELETE",
-      });
+      }).catch(() => null);
+      if (!res || !res.ok) showToast("error", "Couldn't delete that attachment.");
       await loadAttachments(attachmentOwnerId);
     },
-    [attachmentOwnerId, attachmentsBase, loadAttachments]
+    [attachmentOwnerId, attachmentsBase, loadAttachments, showToast]
   );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
