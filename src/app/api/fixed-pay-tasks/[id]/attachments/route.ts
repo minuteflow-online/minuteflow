@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import type { FixedPayTaskAttachment } from "@/types/database";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { canManageFixedPayAttachments } from "@/lib/fixedPayAttachmentAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,11 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const ATTACHMENT_SELECT = "id, filename, storage_path, file_size, mime_type, uploaded_by, uploaded_at";
 
-async function requireAdminOrManager() {
+// Signs the caller in and says whether they're admin-equivalent. Non-admins are
+// not turned away here any more: the VA who owns an Output Based task has to be
+// able to attach files to it, so the per-task ownership check (authorizeForTask)
+// decides for them instead.
+async function authenticate() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -28,33 +33,44 @@ async function requireAdminOrManager() {
     return { error: Response.json({ error: error.message }, { status: 500 }) as Response };
   }
 
-  if (
-    profile?.role !== "admin" &&
-    profile?.role !== "manager" &&
-    !hasAdminPermission(profile, "task_management")
-  ) {
-    return { error: Response.json({ error: "Forbidden" }, { status: 403 }) as Response };
-  }
+  const isAdminLike =
+    profile?.role === "admin" ||
+    profile?.role === "manager" ||
+    hasAdminPermission(profile, "task_management");
 
-  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
-  // RLS check (role stays "va"), so every operation below uses the
-  // service-role client once the app-layer check above has already cleared
-  // the caller. No-op behavior change for real admins/managers.
+  // Plain VAs (and permission-granted ones) don't pass the DB's
+  // is_admin_or_manager() RLS check, so every operation below uses the
+  // service-role client once the app-layer check has cleared the caller.
   const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  return { supabase: admin, userId: user.id };
+  return { supabase: admin, userId: user.id, isAdminLike };
 }
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-async function ensureTaskExists(supabase: Awaited<ReturnType<typeof createClient>>, taskId: number) {
-  const { data, error } = await supabase.from("fixed_pay_tasks").select("id").eq("id", taskId).single();
+// 404 if the task doesn't exist, 403 if the caller is neither admin-equivalent
+// nor the VA who claimed or created it. Returns an error Response, or null when
+// the caller may proceed.
+async function authorizeForTask(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  taskId: number,
+  userId: string,
+  isAdminLike: boolean
+): Promise<Response | null> {
+  const { data, error } = await supabase
+    .from("fixed_pay_tasks")
+    .select("id, claimed_by, created_by")
+    .eq("id", taskId)
+    .single();
   if (error || !data) {
-    return false;
+    return Response.json({ error: "Task not found" }, { status: 404 });
   }
-  return true;
+  if (!canManageFixedPayAttachments({ isAdminLike, userId, claimedBy: data.claimed_by, createdBy: data.created_by })) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return null;
 }
 
 async function buildAttachmentResponse(supabase: Awaited<ReturnType<typeof createClient>>, rows: FixedPayTaskAttachment[]) {
@@ -67,15 +83,18 @@ async function buildAttachmentResponse(supabase: Awaited<ReturnType<typeof creat
 }
 
 export async function GET(_request: Request, { params }: RouteContext) {
-  const auth = await requireAdminOrManager();
+  const auth = await authenticate();
   if ("error" in auth) return auth.error;
 
-  const { supabase } = auth;
+  const { supabase, userId, isAdminLike } = auth;
   const { id } = await params;
   const taskId = Number(id);
   if (!Number.isFinite(taskId)) {
     return Response.json({ error: "Invalid task id" }, { status: 400 });
   }
+
+  const denied = await authorizeForTask(supabase, taskId, userId, isAdminLike);
+  if (denied) return denied;
 
   const { data, error } = await supabase
     .from("fixed_pay_task_attachments")
@@ -92,20 +111,18 @@ export async function GET(_request: Request, { params }: RouteContext) {
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
-  const auth = await requireAdminOrManager();
+  const auth = await authenticate();
   if ("error" in auth) return auth.error;
 
-  const { supabase, userId } = auth;
+  const { supabase, userId, isAdminLike } = auth;
   const { id } = await params;
   const taskId = Number(id);
   if (!Number.isFinite(taskId)) {
     return Response.json({ error: "Invalid task id" }, { status: 400 });
   }
 
-  const exists = await ensureTaskExists(supabase, taskId);
-  if (!exists) {
-    return Response.json({ error: "Task not found" }, { status: 404 });
-  }
+  const denied = await authorizeForTask(supabase, taskId, userId, isAdminLike);
+  if (denied) return denied;
 
   let formData: FormData;
   try {
