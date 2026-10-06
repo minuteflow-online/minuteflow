@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
     const logId = body?.logId as string | number | undefined;
     const failureReason = body?.failureReason as string | undefined;
     const capturedAtRaw = body?.capturedAt as string | undefined;
+    const sourceRaw = body?.source as string | undefined;
 
     if (!bodyUserId || !logId || !failureReason) {
       return Response.json(
@@ -58,6 +59,11 @@ export async function POST(request: NextRequest) {
     }
     const userId = verifiedUserId ?? bodyUserId;
 
+    // Same source tagging as /api/upload-screenshot — see that route's
+    // comment. A marker has no real filename to prefix, so it's stored there
+    // directly instead (that field is otherwise always empty for a marker).
+    const source = sourceRaw || (verifiedUserId ? "extension" : "unknown");
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
@@ -67,7 +73,7 @@ export async function POST(request: NextRequest) {
       log_id: Number(logId),
       screenshot_type: "failed" as const,
       failure_reason: failureReason,
-      filename: "",
+      filename: source,
     };
 
     const capturedAt =

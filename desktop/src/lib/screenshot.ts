@@ -85,6 +85,7 @@ export async function captureAndUploadScreenshot(params: {
     formData.append("logId", String(params.logId));
     formData.append("screenshotType", params.screenshotType ?? "manual");
     formData.append("capturedAt", new Date().toISOString());
+    formData.append("source", "desktop");
 
     const res = await fetch(`${API_BASE}/api/upload-screenshot`, {
       method: "POST",

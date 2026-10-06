@@ -53,6 +53,7 @@ async function recordMarker(userId: string, logId: number, failureReason: string
         logId,
         failureReason,
         capturedAt: new Date().toISOString(),
+        source: "desktop",
       }),
     });
   } catch {
