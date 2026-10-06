@@ -196,7 +196,10 @@ export async function DELETE(request: Request, { params }: RouteContext) {
   const denied = await authorizeForTask(supabase, taskId, userId, isAdminLike);
   if (denied) return denied;
 
-  const attachmentId = Number(new URL(request.url).searchParams.get("attachmentId"));
+  // Number(null) is 0, which would pass an isFinite check and fall through to a
+  // misleading 404 — a missing param has to be rejected before converting.
+  const rawAttachmentId = new URL(request.url).searchParams.get("attachmentId");
+  const attachmentId = rawAttachmentId ? Number(rawAttachmentId) : NaN;
   if (!Number.isFinite(attachmentId)) {
     return Response.json({ error: "attachmentId is required" }, { status: 400 });
   }
