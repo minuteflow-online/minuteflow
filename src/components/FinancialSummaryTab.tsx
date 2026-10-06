@@ -500,8 +500,10 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       // owed on those, not even a "pending" figure.
       supabase
         .from("fixed_pay_tasks")
-        .select("assigned_to, task_name, account, project, rate, status, paid_at, paid_period_label")
-        .not("assigned_to", "is", null)
+        .select("claimed_by, assigned_to, task_name, account, project, rate, status, paid_at, paid_period_label")
+        // Whoever claimed it, or else was assigned it. Claiming sets claimed_by
+        // only, so filtering on assigned_to alone left every claimed task out.
+        .or("claimed_by.not.is.null,assigned_to.not.is.null")
         .gt("rate", 0)
         .is("deleted_at", null)
         .neq("status", "cancelled"),
@@ -654,15 +656,18 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     // "earned means approved" rule the downstream calc already applies.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawFixedPayTasks = (fixedPayTasksRes.data ?? []) as any[];
+    // The VA a task belongs to: who claimed it, else who it's assigned to —
+    // the same rule the paystub (claimed_by) and the task lists use.
     const parsedFixedPayTasks: VaFixedAssignment[] = rawFixedPayTasks.map((row) => ({
-      va_id: row.assigned_to,
+      va_id: row.claimed_by ?? row.assigned_to,
       task_name: row.task_name ?? "Unknown Task",
       account: row.account ?? null,
       project_name: row.project ?? null,
       // Paid on a peso stub → that stub's locked rate; otherwise the default.
       rate: Number(row.rate) * (() => {
-        const stub = row.paid_period_label ? (pesoStubs[row.assigned_to] ?? []).find((s) => s.label === row.paid_period_label) : undefined;
-        return stub ? 1 / stub.rate : usdFactor(row.assigned_to);
+        const vaId = row.claimed_by ?? row.assigned_to;
+        const stub = row.paid_period_label ? (pesoStubs[vaId] ?? []).find((s) => s.label === row.paid_period_label) : undefined;
+        return stub ? 1 / stub.rate : usdFactor(vaId);
       })(),
       task_library_id: 0,
       // A paid task counts as earned regardless of its review status — real
