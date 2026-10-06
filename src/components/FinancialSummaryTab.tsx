@@ -359,8 +359,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   // converted for lack of one — shown as a warning, never counted as dollars.
   const [phpPerUsd, setPhpPerUsd] = useState<number | null>(null);
   // The default peso rate lives here, where the dollar figures it drives are —
-  // edited from the top bar, saved to organization_settings.php_per_usd.
-  const [orgSettingsId, setOrgSettingsId] = useState<number | null>(null);
+  // edited from the top bar, saved via /api/peso-rate.
   const [pesoRateInput, setPesoRateInput] = useState("");
   const [savingPesoRate, setSavingPesoRate] = useState(false);
   const [pesoRateMsg, setPesoRateMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -525,7 +524,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .from("projected_expenses")
         .select("id, description, amount, quantity, category, account, frequency, start_date, end_date, notes")
         .order("start_date", { ascending: true }),
-      supabase.from("organization_settings").select("id, php_per_usd").limit(1).maybeSingle(),
+      supabase.from("organization_settings").select("php_per_usd").limit(1).maybeSingle(),
       // Every sent peso paystub and its locked rate — not range-filtered, since
       // an output task paid on an older stub still needs that stub's rate.
       supabase
@@ -547,7 +546,6 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     // is left out and the VA is named in a warning, never counted as dollars.
     const defaultRate = parsePhpPerUsd(orgRes.data?.php_per_usd);
     setPhpPerUsd(defaultRate);
-    setOrgSettingsId(orgRes.data?.id ?? null);
     setPesoRateInput(defaultRate != null ? String(defaultRate) : "");
     const rawProfiles = (profileRes.data as ProfileRow[]) ?? [];
     const currencyByVa: Record<string, string | null> = Object.fromEntries(rawProfiles.map((p) => [p.id, p.pay_currency]));
@@ -1521,17 +1519,25 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const savePesoRate = async () => {
     const rate = parsePhpPerUsd(pesoRateInput);
     if (rate == null) { setPesoRateMsg({ type: "err", text: "Enter pesos per $1, e.g. 58.50." }); return; }
-    if (orgSettingsId == null) { setPesoRateMsg({ type: "err", text: "No organization settings row to save to." }); return; }
     setSavingPesoRate(true);
     setPesoRateMsg(null);
-    const { data, error } = await supabase
-      .from("organization_settings")
-      .update({ php_per_usd: rate, updated_at: new Date().toISOString() })
-      .eq("id", orgSettingsId)
-      .select("id");
+    // Saved server-side — the table's own update policy only admits role
+    // 'admin', which silently rejected founders/accounting from the browser.
+    let errorText: string | null = null;
+    try {
+      const res = await fetch("/api/peso-rate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ php_per_usd: rate }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) errorText = json.error || "Couldn't save the peso rate.";
+    } catch {
+      errorText = "Network error — try again.";
+    }
     setSavingPesoRate(false);
-    if (error || !data || data.length === 0) {
-      setPesoRateMsg({ type: "err", text: error ? `Couldn't save: ${error.message}` : "Save didn't apply — you may not have permission." });
+    if (errorText) {
+      setPesoRateMsg({ type: "err", text: errorText });
       return;
     }
     setPesoRateMsg({ type: "ok", text: "Saved." });
