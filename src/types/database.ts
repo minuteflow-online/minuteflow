@@ -804,13 +804,13 @@ export interface FixedPayTaskWithClaimer {
   /** Joined linked project (Objective/Operation) — same projects(id, name) join used by assigned_tasks */
   projects?: { id: string; name: string } | null;
   /** Joined profile for the assignee — present on admin responses, absent on VA responses */
-  assigned_to_profile?: { id: string; full_name: string; username: string } | null;
+  assigned_to_profile?: { id: string; full_name: string; username: string; pay_currency?: string | null } | null;
   /** Joined profile for the task creator/assigner — present on admin responses */
   assigned_by_profile?: { id: string; full_name: string; username: string } | null;
   /** Joined profile for the claimer — present on admin responses, absent on VA responses */
-  claimed_by_profile?: { id: string; full_name: string; username: string } | null;
+  claimed_by_profile?: { id: string; full_name: string; username: string; pay_currency?: string | null } | null;
   /** Joined profile for whoever created the task row — present on admin and VA responses */
-  created_by_profile?: { id: string; full_name: string; username: string } | null;
+  created_by_profile?: { id: string; full_name: string; username: string; pay_currency?: string | null } | null;
   /** True when this task was claimed by the current VA (VA responses only) */
   claimed_by_me?: boolean;
   /** The assigned_tasks.id linked to this fixed-pay task for the current VA (VA responses only) */

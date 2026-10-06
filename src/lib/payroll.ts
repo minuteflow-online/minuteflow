@@ -263,6 +263,20 @@ export function toUsd(amount: number, currency?: string | null, phpPerUsd?: numb
   return Number.isFinite(rate) && rate > 0 ? amount / rate : null;
 }
 
+/**
+ * An output-based task is priced in the currency of whoever it belongs to:
+ * the VA who claimed it, else the VA it's assigned to, else whoever created
+ * it. So the same task reads ₱ for a peso-paid VA and $ for a dollar one.
+ */
+export function taskPayCurrency(task: {
+  claimed_by_profile?: { pay_currency?: string | null } | null;
+  assigned_to_profile?: { pay_currency?: string | null } | null;
+  created_by_profile?: { pay_currency?: string | null } | null;
+}): PayCurrency {
+  const owner = task.claimed_by_profile ?? task.assigned_to_profile ?? task.created_by_profile;
+  return normalizePayCurrency(owner?.pay_currency);
+}
+
 /** " (₱150.00 @ ₱58.5/$1)" for a peso processing fee's expense description, "" otherwise. */
 export function processingFeePesoNote(fee: number, currency?: string | null, phpPerUsd?: number | null): string {
   if (normalizePayCurrency(currency) !== "PHP" || !phpPerUsd) return "";

@@ -8,6 +8,8 @@ import SubmitWorkModal from "@/components/SubmitWorkModal";
 import RevisionBadge from "@/components/RevisionBadge";
 import RecurringBadge from "@/components/RecurringBadge";
 import { collapseRecurringSeriesBy } from "@/lib/taskSchedule";
+import { formatPayMoney } from "@/lib/payroll";
+import { usePayCurrency } from "@/hooks/usePayCurrency";
 
 interface AssignedTasksWidgetProps {
   userId: string;
@@ -127,6 +129,8 @@ export default function AssignedTasksWidget({
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
+  // These are this VA's own tasks, so their rates are in this VA's currency.
+  const payCurrency = usePayCurrency(userId);
   const [updatingIds, setUpdatingIds] = useState<Set<number>>(new Set());
   const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
@@ -574,7 +578,7 @@ export default function AssignedTasksWidget({
                           {statusBadge(effectiveStatus)}
                           {rate != null && (
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
-                              ${Number(rate).toFixed(2)}
+                              {formatPayMoney(Number(rate), payCurrency)}
                             </span>
                           )}
                         </div>
