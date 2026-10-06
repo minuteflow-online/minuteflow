@@ -283,6 +283,29 @@ export function processingFeePesoNote(fee: number, currency?: string | null, php
   return ` (${formatPayMoney(fee, "PHP")} @ ₱${phpPerUsd}/$1)`;
 }
 
+/** "₱5,000.00 ≈ $85.47" for a peso amount once a rate is known; otherwise the amount in its own currency. */
+export function formatPayWithUsd(amount: number, currency?: string | null, phpPerUsd?: number | null): string {
+  const base = formatPayMoney(amount, currency);
+  if (normalizePayCurrency(currency) !== "PHP") return base;
+  const usd = toUsd(amount, "PHP", phpPerUsd);
+  return usd == null ? base : `${base} ≈ ${formatPayMoney(usd, "USD")}`;
+}
+
+/**
+ * One dollar total across VAs, converting pesos at phpPerUsd. With no rate a
+ * peso amount can't be counted in dollars, so it falls back to per-currency
+ * totals ("$120.00 + ₱8,500.00") rather than guess.
+ */
+export function formatPayTotalUsd(items: { amount: number; currency?: string | null }[], phpPerUsd?: number | null): string {
+  let sum = 0;
+  for (const { amount, currency } of items) {
+    const usd = toUsd(amount, currency, phpPerUsd);
+    if (usd == null) return formatPayTotals(items);
+    sum += usd;
+  }
+  return formatPayMoney(sum, "USD");
+}
+
 /** A positive pesos-per-dollar rate, or null. */
 export function parsePhpPerUsd(value: unknown): number | null {
   const n = Number(value);
