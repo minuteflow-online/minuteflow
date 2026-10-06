@@ -175,3 +175,51 @@ export async function POST(request: Request, { params }: RouteContext) {
   const [signedAttachment] = await buildAttachmentResponse(supabase, [attachment as FixedPayTaskAttachment]);
   return Response.json({ attachment: signedAttachment }, { status: 201 });
 }
+
+/**
+ * DELETE /api/fixed-pay-tasks/[id]/attachments?attachmentId=<id>
+ * Remove one file from the task. Same access rule as GET/POST: admin-equivalents,
+ * or the VA who claimed or created the task. The route was missing, so the
+ * editor's Delete button on an Output Based task got a 405 and nothing happened.
+ */
+export async function DELETE(request: Request, { params }: RouteContext) {
+  const auth = await authenticate();
+  if ("error" in auth) return auth.error;
+
+  const { supabase, userId, isAdminLike } = auth;
+  const { id } = await params;
+  const taskId = Number(id);
+  if (!Number.isFinite(taskId)) {
+    return Response.json({ error: "Invalid task id" }, { status: 400 });
+  }
+
+  const denied = await authorizeForTask(supabase, taskId, userId, isAdminLike);
+  if (denied) return denied;
+
+  const attachmentId = Number(new URL(request.url).searchParams.get("attachmentId"));
+  if (!Number.isFinite(attachmentId)) {
+    return Response.json({ error: "attachmentId is required" }, { status: 400 });
+  }
+
+  // Scoped to this task, so an id belonging to another task's file can't be
+  // removed by naming it under a task the caller does own.
+  const { data: attachment, error: fetchError } = await supabase
+    .from("fixed_pay_task_attachments")
+    .select("id, storage_path")
+    .eq("id", attachmentId)
+    .eq("task_id", taskId)
+    .single();
+  if (fetchError || !attachment) {
+    return Response.json({ error: "Attachment not found" }, { status: 404 });
+  }
+
+  // Row first. If the storage removal then fails the worst case is an orphaned
+  // file nobody can see, rather than a listed attachment whose file is gone.
+  const { error: deleteError } = await supabase.from("fixed_pay_task_attachments").delete().eq("id", attachmentId);
+  if (deleteError) {
+    return Response.json({ error: deleteError.message }, { status: 500 });
+  }
+  await supabase.storage.from("task-attachments").remove([attachment.storage_path]);
+
+  return new Response(null, { status: 204 });
+}
