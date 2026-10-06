@@ -339,6 +339,10 @@ export async function POST(request: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
+  // The mirror row's id, handed back so a VA can submit work straight from the
+  // create form instead of finding the task on their dashboard first.
+  let assignedTaskId: number | null = null;
+
   if (autoClaim) {
     const { data: assignedTask, error: assignedTaskError } = await admin
       .from("assigned_tasks")
@@ -378,8 +382,10 @@ export async function POST(request: Request) {
       await admin.from("fixed_pay_tasks").update({ claimed_by: null, claimed_at: null }).eq("id", data.id);
       return Response.json({ error: assigneeError.message || "Unable to create task assignment" }, { status: 500 });
     }
+
+    assignedTaskId = assignedTask.id;
   }
 
   const [task] = await hydrateTaskProfiles(admin, [data as unknown as FixedPayTaskWithClaimer]);
-  return Response.json({ task }, { status: 201 });
+  return Response.json({ task, assigned_task_id: assignedTaskId }, { status: 201 });
 }
