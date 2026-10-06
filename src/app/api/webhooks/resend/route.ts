@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
+import { after } from "next/server";
 import { sendResendEmail } from "@/lib/sendEmail";
+import { esc } from "@/lib/approvalPages";
 import { createHmac } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -145,23 +147,32 @@ export async function POST(request: Request) {
     const subject = `📬 ${recipientEmail ?? "A recipient"} ${actionLabel} your ${typeLabel}`;
     const html = `
       <div style="font-family:sans-serif; font-size:15px; color:#333; max-width:480px; margin:0 auto; padding:24px;">
-        <p style="margin:0 0 12px;"><strong>${recipientEmail ?? "Someone"}</strong> just <strong>${actionLabel}</strong> a MinuteFlow <strong>${typeLabel}</strong> email.</p>
-        ${referenceId ? `<p style="margin:0 0 12px; color:#666; font-size:13px;">Reference ID: ${referenceId}</p>` : ""}
+        <p style="margin:0 0 12px;"><strong>${esc(recipientEmail ?? "Someone")}</strong> just <strong>${actionLabel}</strong> a MinuteFlow <strong>${esc(typeLabel)}</strong> email.</p>
+        ${referenceId ? `<p style="margin:0 0 12px; color:#666; font-size:13px;">Reference ID: ${esc(referenceId)}</p>` : ""}
         <p style="margin:0; color:#999; font-size:12px;">MinuteFlow notification</p>
       </div>`;
-    sendResendEmail({
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: "MinuteFlow <noreply@minuteflow.click>",
-        to: ["minuteflow.online@gmail.com"],
-        subject,
-        html,
-      }),
-    }).catch(() => {/* non-fatal */});
+    // after() keeps the function alive until the send finishes; started and
+    // left, it can be cut off once the reply goes out.
+    after(async () => {
+      try {
+        const res = await sendResendEmail({
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: "MinuteFlow <noreply@minuteflow.click>",
+            to: ["minuteflow.online@gmail.com"],
+            subject,
+            html,
+          }),
+        });
+        if (!res.ok) console.error(`[resend webhook] open/click alert was not sent (${res.status})`);
+      } catch (err) {
+        console.error("[resend webhook] open/click alert failed", err);
+      }
+    });
   }
 
   return Response.json({ ok: true });
