@@ -557,6 +557,27 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     void loadAttachments(attachmentOwnerId);
   }, [attachmentOwnerId, loadAttachments]);
 
+  // Uploads one file at a time and names the ones that didn't make it. The
+  // responses used to go unchecked, so a refused upload (a 403 for a VA, say)
+  // left the form looking as if the file had attached.
+  const uploadFiles = useCallback(
+    async (taskId: string | number, files: File[]) => {
+      const failed: string[] = [];
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          const res = await fetch(`${attachmentsBase}/${taskId}/attachments`, { method: "POST", body: form });
+          if (!res.ok) failed.push(file.name);
+        } catch {
+          failed.push(file.name);
+        }
+      }
+      return failed;
+    },
+    [attachmentsBase]
+  );
+
   /** Upload straight away when the task exists; hold otherwise (see handleSubmit). */
   const handleFilesPicked = useCallback(
     async (files: File[]) => {
@@ -567,17 +588,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       }
       setUploading(true);
       try {
-        for (const file of files) {
-          const form = new FormData();
-          form.append("file", file);
-          await fetch(`${attachmentsBase}/${attachmentOwnerId}/attachments`, { method: "POST", body: form });
-        }
+        const failed = await uploadFiles(attachmentOwnerId, files);
+        if (failed.length > 0) showToast("error", `Couldn't attach: ${failed.join(", ")}`);
         await loadAttachments(attachmentOwnerId);
       } finally {
         setUploading(false);
       }
     },
-    [attachmentOwnerId, attachmentsBase, loadAttachments]
+    [attachmentOwnerId, uploadFiles, loadAttachments, showToast]
   );
 
   /** Files picked before the task existed, uploaded once it does. */
@@ -586,17 +604,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       if (pendingFiles.length === 0) return;
       setUploading(true);
       try {
-        for (const file of pendingFiles) {
-          const form = new FormData();
-          form.append("file", file);
-          await fetch(`${attachmentsBase}/${taskId}/attachments`, { method: "POST", body: form });
-        }
+        const failed = await uploadFiles(taskId, pendingFiles);
+        // The task itself is already saved by now, so say so rather than
+        // implying the whole save failed.
+        if (failed.length > 0) showToast("error", `Task saved, but couldn't attach: ${failed.join(", ")}`);
         setPendingFiles([]);
       } finally {
         setUploading(false);
       }
     },
-    [pendingFiles, attachmentsBase]
+    [pendingFiles, uploadFiles, showToast]
   );
 
   const handleDeleteAttachment = useCallback(
@@ -1401,6 +1418,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         task = data.task;
         assignedTaskId = typeof data.assigned_task_id === "number" ? data.assigned_task_id : null;
+        // Create only. Files picked before the task existed were being held in
+        // state and then dropped here — this branch never flushed them. Runs
+        // before onSaved/the Submit modal so the files are there for review.
+        if (!isEditing) await flushPendingFiles(task.id);
       }
 
       if (thenSubmitWork && assignedTaskId != null) {
