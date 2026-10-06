@@ -22,7 +22,9 @@ import {
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
-import type { Project } from "@/types/database";
+import SubmitWorkModal from "@/components/SubmitWorkModal";
+import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
+import type { AssignedTaskStatus, Project } from "@/types/database";
 import { vaBudgetType } from "@/lib/budget";
 import WorkDaysPicker from "@/components/WorkDaysPicker";
 
@@ -502,6 +504,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const viewableShots = useMemo(() => screenshots.filter((s) => Boolean(s.url)), [screenshots]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
+  // Set by "Create & Submit": the task already exists, and onSaved is held back
+  // until the Submit Work modal resolves so the parent doesn't close the panel
+  // out from under it.
+  const [pendingSubmit, setPendingSubmit] = useState<{ task: { id: number; [key: string]: unknown }; assignedTaskId: number } | null>(null);
 
   // Attachments live in the editor rather than being handed in by each caller.
   // As a prop, only the Assignment panel ever supplied them, so the Calendar,
@@ -979,7 +985,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     return `Applies daily, ${fmt(startTime)}–${fmt(endTime)}, ${startDate || "?"}–${endDate}`;
   }, [hasSchedule, startTime, endTime, startDate, endDate]);
 
-  const submitWithScope = useCallback(async (scope?: "this" | "future") => {
+  const submitWithScope = useCallback(async (scope?: "this" | "future", thenSubmitWork = false) => {
     if (readOnly) return;
     if (!taskName.trim()) {
       setError("Task name is required.");
@@ -1190,6 +1196,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     };
 
     let task: { id: number; [key: string]: unknown };
+    let assignedTaskId: number | null = null;
 
       if (mode === "time_based") {
         // Companion template create/update happens BEFORE the main task save,
@@ -1393,8 +1400,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         task = data.task;
+        assignedTaskId = typeof data.assigned_task_id === "number" ? data.assigned_task_id : null;
       }
 
+      if (thenSubmitWork && assignedTaskId != null) {
+        setPendingSubmit({ task, assignedTaskId });
+        return;
+      }
       onSaved(task);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save task.");
@@ -1671,6 +1683,26 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     if (choice === null) return; // cancelled — nothing saved
     return submitWithScope(choice);
   }, [belongsToSeries, readOnly, submitWithScope]);
+  // Output Based create, for the person doing the work: saves the task and goes
+  // straight to Submit Work, skipping On Queue and the dashboard Start/Submit
+  // steps. Only offered where the create route also makes the VA's own
+  // assignment (an eligible VA creating for themselves), since submitting needs it.
+  const canCreateAndSubmit = mode === "output_based" && !isEditing && !templateMode && !isAdminOrManager && !readOnly;
+  const handleCreateAndSubmit = useCallback(() => submitWithScope(undefined, true), [submitWithScope]);
+
+  // The task is already created by the time the modal shows, so both exits
+  // finish the create. Cancelling leaves it On Queue, same as plain Create Task.
+  const finishPendingSubmit = useCallback(
+    async (status?: AssignedTaskStatus) => {
+      if (!pendingSubmit) return;
+      const { task, assignedTaskId } = pendingSubmit;
+      setPendingSubmit(null);
+      if (status) await setAssignedTaskStatus({ assignedTaskId, status, vaId: currentUserId });
+      onSaved(task);
+    },
+    [pendingSubmit, currentUserId, onSaved]
+  );
+
   useImperativeHandle(ref, () => ({ submit: handleSubmit, duplicate: handleDuplicate, convert: handleConvert }), [handleSubmit, handleDuplicate, handleConvert]);
 
   // Unchecking "Also save as a recurring template" on a task that already has
@@ -2819,6 +2851,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               >
                 {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
               </button>
+              {canCreateAndSubmit && (
+                <button
+                  onClick={() => void handleCreateAndSubmit().catch(() => {})}
+                  disabled={saving || !taskName.trim() || !taskDetail.trim()}
+                  title="Create the task and submit your work now — skips On Queue and the dashboard"
+                  className="px-4 py-2 rounded-lg border border-sage text-[13px] font-semibold text-sage hover:bg-sage-soft transition-colors disabled:opacity-50"
+                >
+                  Create &amp; Submit
+                </button>
+              )}
               {/* Only when the button is actually blocked. The sections already
                   flag themselves and the fields go terracotta, so this is the
                   last resort for "why won't this save", not a running notice. */}
@@ -2859,6 +2901,17 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             </>
           )}
         </div>
+      )}
+
+      {pendingSubmit && (
+        <SubmitWorkModal
+          taskId={pendingSubmit.assignedTaskId}
+          taskName={taskName.trim()}
+          instructions={instructions}
+          reviewRequired
+          onClose={() => void finishPendingSubmit()}
+          onSubmitted={(status) => void finishPendingSubmit(status)}
+        />
       )}
     </div>
   );
