@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
 import { isPayrollEligible, sumPayrollMs } from "@/lib/payrollHours";
-import { formatPayMoney, formatPayTotals } from "@/lib/payroll";
+import { formatPayMoney, formatPayTotalUsd, formatPayWithUsd, normalizePayCurrency, parsePhpPerUsd } from "@/lib/payroll";
 import { computeTransitionMs } from "@/lib/transitionTime";
 import AddRateModal from "@/components/AddRateModal";
 import {
@@ -222,6 +222,8 @@ export default function TeamPage() {
   const [role, setRole] = useState<UserRole | null>(null);
   const [department, setDepartment] = useState<string | null>(null);
   const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
+  // Peso rate set on the Financial tab — shows peso pay with its dollar value.
+  const [phpPerUsd, setPhpPerUsd] = useState<number | null>(null);
 
   // Date range state
   const [datePreset, setDatePreset] = useState<DateRangePreset>("today");
@@ -342,7 +344,7 @@ export default function TeamPage() {
           .select("user_id, session_date, mood")
           .gte("session_date", moodStart)
           .lte("session_date", moodEnd),
-        supabase.from("organization_settings").select("timezone").limit(1).single(),
+        supabase.from("organization_settings").select("timezone, php_per_usd").limit(1).single(),
         supabase
           .from("va_requests")
           .select("user_id, type, subject, start_date, end_date, start_time, end_time, status")
@@ -375,6 +377,7 @@ export default function TeamPage() {
     if (orgRes.data?.timezone) {
       setOrgTimezone(orgRes.data.timezone);
     }
+    setPhpPerUsd(parsePhpPerUsd(orgRes.data?.php_per_usd));
 
     const allProfiles = (profilesRes.data ?? []) as Profile[];
     const profiles = allProfiles.filter((p) => p.is_active !== false);
@@ -698,14 +701,15 @@ export default function TeamPage() {
       totalBillableHoursMs += m.taskMs;
     });
 
-    // VAs can be paid in different currencies — summed per currency, not blended.
-    const totalPayable = formatPayTotals(payables);
+    // In dollars, pesos converted at the Financial tab's rate — or per
+    // currency if no rate is set, rather than blending pesos in as dollars.
+    const totalPayable = formatPayTotalUsd(payables, phpPerUsd);
     return {
       totalPayable,
       totalBillableHoursMs,
       totalInternalCost: totalPayable,
     };
-  }, [members]);
+  }, [members, phpPerUsd]);
 
   const hasSelection = selectedMembers.size > 0;
 
@@ -1042,6 +1046,7 @@ export default function TeamPage() {
                   userMoods={moodData[member.profile.id] || {}}
                   submissions={submissionsByUser[member.profile.id] || []}
                   timezone={orgTimezone}
+                  phpPerUsd={phpPerUsd}
                 />
               ))}
             </div>
@@ -1061,6 +1066,7 @@ export default function TeamPage() {
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
                   onRateSaved={isAdmin ? fetchTeamData : undefined}
                   timezone={orgTimezone}
+                  phpPerUsd={phpPerUsd}
                 />
               ))}
             </div>
@@ -1102,7 +1108,7 @@ function StatCard({
 
 /* ── Member Card (Compact) ───────────────────────────────── */
 
-function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLogout, onRateSaved, timezone = "UTC" }: {
+function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLogout, onRateSaved, timezone = "UTC", phpPerUsd = null }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
@@ -1111,6 +1117,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
   onForceLogout?: (userId: string, fullName: string) => void;
   onRateSaved?: () => void;
   timezone?: string;
+  phpPerUsd?: number | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showRateModal, setShowRateModal] = useState(false);
@@ -1280,7 +1287,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           </div>
           {profile.pay_rate > 0 && (
             <span className="text-[11px] font-semibold text-sage">
-              {formatCurrency(payable, profile.pay_currency)} {isToday ? "today" : ""}
+              {formatPayWithUsd(payable, profile.pay_currency, phpPerUsd)} {isToday ? "today" : ""}
             </span>
           )}
         </div>
@@ -1571,7 +1578,7 @@ function DailyRatingsPanel({ vaId, isAdmin, timezone = "UTC" }: { vaId: string; 
 
 /* ── Expanded Member Card (Full Width) ───────────────────── */
 
-function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, onForceLogout, onDeselect, userMoods, submissions, timezone }: {
+function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, onForceLogout, onDeselect, userMoods, submissions, timezone, phpPerUsd = null }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
@@ -1582,6 +1589,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
   userMoods: Record<string, string>; // { "YYYY-MM-DD": mood }
   submissions: SubmissionStat[];
   timezone: string;
+  phpPerUsd?: number | null;
 }) {
   const { profile, status, activeCategory, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
@@ -1889,6 +1897,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
           {isAdmin && profile.pay_rate > 0 && (
             <div className="rounded-lg bg-parchment/50 p-3 text-center">
               <div className="text-lg font-bold text-sage">{formatCurrency(payable, profile.pay_currency)}</div>
+              {normalizePayCurrency(profile.pay_currency) === "PHP" && phpPerUsd != null && (
+                <div className="text-[10px] text-bark/70">≈ {formatPayMoney(payable / phpPerUsd, "USD")}</div>
+              )}
               <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Payable</div>
             </div>
           )}

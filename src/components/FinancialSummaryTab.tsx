@@ -1879,6 +1879,10 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                         <td className="px-3 py-3 text-right font-semibold">
                           {row.projected != null ? (
                             <span className="text-terracotta">{fmtMoney(row.projected)}</span>
+                          ) : row.hasLimit && phpPerUsd == null && normalizePayCurrency(profiles.find((p) => p.id === row.userId)?.pay_currency) === "PHP" ? (
+                            // Paid in pesos and no peso rate yet — the pay rate is fine,
+                            // it just can't be shown in dollars until the rate is set.
+                            <span className="italic text-terracotta" title="Paid in pesos — set the Peso Rate at the top of this page to see this in dollars">Set peso rate ↑</span>
                           ) : row.hasLimit ? (
                             <span className="italic text-bark/50" title="No pay rate set for this VA">Rate not set</span>
                           ) : (
