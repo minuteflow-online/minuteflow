@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { verifyApprovalToken } from "@/lib/approvalToken";
-import { resultPage } from "@/lib/approvalPages";
+import { resultPage, htmlResponse, card, summaryBlock, primaryButton, esc as escHtml } from "@/lib/approvalPages";
 import { cheerApproval } from "@/lib/reviewLinks";
 import type { ReviewAction } from "@/lib/reviewLinks";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
@@ -12,6 +12,9 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/assigned-tasks/review-action?id=<taskId>&do=approve|revision&t=<token>
+ *   shows a confirm page and changes nothing.
+ * POST /api/assigned-tasks/review-action (form: id, do, t)
+ *   makes the change, from the confirm page's button.
  *
  * Approving or bouncing a submission straight from the Telegram alert, without
  * opening the admin panel.
@@ -41,13 +44,26 @@ const ACTIONS = {
   },
 } as const;
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl;
-  const id = Number(searchParams.get("id"));
-  const action = searchParams.get("do") as ReviewAction | null;
-  const token = searchParams.get("t") ?? "";
+function makeAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
 
-  if (!id || !action || !(action in ACTIONS)) {
+/** Validates the link's task, action and token. Returns the parsed link, or a
+ * ready-to-return page when it isn't a good one. */
+function checkLink(
+  rawId: unknown,
+  rawAction: unknown,
+  rawToken: unknown
+): { id: number; action: ReviewAction } | Response {
+  const id = Number(rawId);
+  const action = String(rawAction ?? "");
+  const token = String(rawToken ?? "");
+
+  if (!id || !Object.hasOwn(ACTIONS, action)) {
     return resultPage(false, "Bad link", "That link is not valid.");
   }
   if (!verifyApprovalToken("submission", id, action, token)) {
@@ -57,12 +73,69 @@ export async function GET(request: NextRequest) {
       "Please act on the task in MinuteFlow instead."
     );
   }
+  return { id, action: action as ReviewAction };
+}
 
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
+/**
+ * Opening the link only shows what it would do, with a button. Link previews
+ * and mail scanners fetch links on their own, so a GET that changed the task
+ * could approve it before anyone had looked. The change happens in POST, from
+ * the button — the same way the VA-request and budget-request links work.
+ */
+export async function GET(request: NextRequest) {
+  const { searchParams } = request.nextUrl;
+  const link = checkLink(searchParams.get("id"), searchParams.get("do"), searchParams.get("t"));
+  if (link instanceof Response) return link;
+  const { id, action } = link;
+
+  const { data: task } = await makeAdmin()
+    .from("assigned_tasks")
+    .select("id, task_name, status")
+    .eq("id", id)
+    .single();
+  if (!task) {
+    return resultPage(false, "Task not found", "It may have been deleted.");
+  }
+
+  const cfg = ACTIONS[action];
+  const taskName = String(task.task_name ?? "This task");
+
+  if (task.status === cfg.status) {
+    return resultPage(
+      true,
+      `Already ${cfg.heading.toLowerCase()}`,
+      `${escHtml(taskName)} is already marked ${cfg.heading.toLowerCase()}.`
+    );
+  }
+
+  const token = String(searchParams.get("t") ?? "");
+  const hidden = `<input type="hidden" name="id" value="${escHtml(id)}"><input type="hidden" name="do" value="${escHtml(action)}"><input type="hidden" name="t" value="${escHtml(token)}">`;
+  const question = action === "approve" ? "Approve this task?" : "Ask for a revision on this task?";
+  const color = action === "approve" ? "#6b8f71" : "#c2694f";
+  const button = action === "approve" ? "✓ Confirm Approve" : "Confirm Revision Request";
+  return htmlResponse(
+    card(
+      `<h2 style="color:${color};margin:0 0 12px">${question}</h2>${summaryBlock(
+        `<strong>${escHtml(taskName)}</strong><br>Currently ${escHtml(String(task.status).replace(/_/g, " "))}.`
+      )}<form method="post">${hidden}${primaryButton(button, color)}</form>`
+    )
   );
+}
+
+export async function POST(request: NextRequest) {
+  // Backs a link opened from Telegram, so a replayed or malformed POST is a
+  // realistic hit and should land on the same styled page as every other failure.
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return resultPage(false, "Invalid submission", "That form could not be read. Open the link again and resubmit.");
+  }
+  const link = checkLink(form.get("id"), form.get("do"), form.get("t"));
+  if (link instanceof Response) return link;
+  const { id, action } = link;
+
+  const admin = makeAdmin();
 
   const { data: task } = await admin
     .from("assigned_tasks")
@@ -82,7 +155,7 @@ export async function GET(request: NextRequest) {
     return resultPage(
       true,
       `Already ${cfg.heading.toLowerCase()}`,
-      `${taskName} is already marked ${cfg.heading.toLowerCase()}.`
+      `${escHtml(taskName)} is already marked ${cfg.heading.toLowerCase()}.`
     );
   }
 
@@ -122,5 +195,5 @@ export async function GET(request: NextRequest) {
     await sendTelegram("submissions", `${emoji} <b>${cfg.heading}</b> — ${esc(taskName)}`);
   }
 
-  return resultPage(true, cfg.heading, `${taskName} is now marked ${cfg.heading.toLowerCase()}.`);
+  return resultPage(true, cfg.heading, `${escHtml(taskName)} is now marked ${cfg.heading.toLowerCase()}.`);
 }
