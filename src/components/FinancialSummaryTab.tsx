@@ -358,6 +358,12 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   // Org default pesos per $1, and the PHP-paid VAs whose amounts couldn't be
   // converted for lack of one — shown as a warning, never counted as dollars.
   const [phpPerUsd, setPhpPerUsd] = useState<number | null>(null);
+  // The default peso rate lives here, where the dollar figures it drives are —
+  // edited from the top bar, saved to organization_settings.php_per_usd.
+  const [orgSettingsId, setOrgSettingsId] = useState<number | null>(null);
+  const [pesoRateInput, setPesoRateInput] = useState("");
+  const [savingPesoRate, setSavingPesoRate] = useState(false);
+  const [pesoRateMsg, setPesoRateMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [unconvertedVaNames, setUnconvertedVaNames] = useState<string[]>([]);
   // Sent peso paystubs per VA — the rate each was paid at. Work a sent stub
   // covers is costed at that stub's rate, so changing the default later never
@@ -519,7 +525,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .from("projected_expenses")
         .select("id, description, amount, quantity, category, account, frequency, start_date, end_date, notes")
         .order("start_date", { ascending: true }),
-      supabase.from("organization_settings").select("php_per_usd").limit(1).maybeSingle(),
+      supabase.from("organization_settings").select("id, php_per_usd").limit(1).maybeSingle(),
       // Every sent peso paystub and its locked rate — not range-filtered, since
       // an output task paid on an older stub still needs that stub's rate.
       supabase
@@ -541,6 +547,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     // is left out and the VA is named in a warning, never counted as dollars.
     const defaultRate = parsePhpPerUsd(orgRes.data?.php_per_usd);
     setPhpPerUsd(defaultRate);
+    setOrgSettingsId(orgRes.data?.id ?? null);
+    setPesoRateInput(defaultRate != null ? String(defaultRate) : "");
     const rawProfiles = (profileRes.data as ProfileRow[]) ?? [];
     const currencyByVa: Record<string, string | null> = Object.fromEntries(rawProfiles.map((p) => [p.id, p.pay_currency]));
     const unconverted = new Set<string>();
@@ -1510,6 +1518,27 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
   /* ── Save handlers ──────────────────────────────────── */
 
+  const savePesoRate = async () => {
+    const rate = parsePhpPerUsd(pesoRateInput);
+    if (rate == null) { setPesoRateMsg({ type: "err", text: "Enter pesos per $1, e.g. 58.50." }); return; }
+    if (orgSettingsId == null) { setPesoRateMsg({ type: "err", text: "No organization settings row to save to." }); return; }
+    setSavingPesoRate(true);
+    setPesoRateMsg(null);
+    const { data, error } = await supabase
+      .from("organization_settings")
+      .update({ php_per_usd: rate, updated_at: new Date().toISOString() })
+      .eq("id", orgSettingsId)
+      .select("id");
+    setSavingPesoRate(false);
+    if (error || !data || data.length === 0) {
+      setPesoRateMsg({ type: "err", text: error ? `Couldn't save: ${error.message}` : "Save didn't apply — you may not have permission." });
+      return;
+    }
+    setPesoRateMsg({ type: "ok", text: "Saved." });
+    // Every peso amount is converted at load, so reload to apply it.
+    fetchData();
+  };
+
   const saveVaPayment = async (vaId: string, form: {
     amount: string; payment_date: string; payment_method: string;
     confirmation_number: string; notes: string;
@@ -1668,7 +1697,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       {unconvertedVaNames.length > 0 && (
         <div className="rounded-lg bg-terracotta-soft px-4 py-3 text-[13px] text-terracotta">
           Paid in pesos with no exchange rate, so left out of these dollar totals: {unconvertedVaNames.join(", ")}.
-          Set a Peso Rate (₱ per $1) in Settings.
+          Set the Peso Rate (₱ per $1) at the top of this page.
         </div>
       )}
 
@@ -1765,6 +1794,33 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
           >
             Reset
           </button>
+          <div className="ml-auto">
+            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-bark">
+              Peso Rate (₱ per $1)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={pesoRateInput}
+                onChange={(e) => { setPesoRateInput(e.target.value); setPesoRateMsg(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") savePesoRate(); }}
+                placeholder="e.g. 58.50"
+                className="w-28 rounded-lg border border-sand px-3 py-1.5 text-[13px] text-espresso outline-none focus:border-terracotta"
+              />
+              <button
+                onClick={savePesoRate}
+                disabled={savingPesoRate || pesoRateInput === (phpPerUsd != null ? String(phpPerUsd) : "")}
+                className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+              >
+                {savingPesoRate ? "Saving…" : "Save"}
+              </button>
+            </div>
+            <p className={`mt-1 text-[10px] ${pesoRateMsg?.type === "err" ? "text-terracotta" : "text-stone"}`}>
+              {pesoRateMsg?.text ?? "For VAs paid in pesos. Sent paystubs keep their own rate."}
+            </p>
+          </div>
         </div>
       </div>
 

@@ -55,7 +55,7 @@ import {
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
-import { formatPayMoney, parsePhpPerUsd } from "@/lib/payroll";
+import { formatPayMoney } from "@/lib/payroll";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -5763,7 +5763,6 @@ function OrganizationTab() {
   const [address, setAddress] = useState("");
   const [timezone, setTimezone] = useState("");
   const [billingEmail, setBillingEmail] = useState("");
-  const [phpPerUsd, setPhpPerUsd] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -5784,7 +5783,6 @@ function OrganizationTab() {
         setAddress(s.address || "");
         setTimezone(s.timezone || "UTC");
         setBillingEmail(s.billing_email || "");
-        setPhpPerUsd(s.php_per_usd != null ? String(s.php_per_usd) : "");
       }
       setLoadingSettings(false);
     }
@@ -5928,12 +5926,6 @@ function OrganizationTab() {
     setSaveError("");
     setSaveSuccess(false);
 
-    if (phpPerUsd.trim() && parsePhpPerUsd(phpPerUsd) == null) {
-      setSaveError("Peso rate must be a number above 0, e.g. 58.50.");
-      setSaving(false);
-      return;
-    }
-
     const updatePayload = {
       org_name: orgName || "MinuteFlow",
       registered_business_name: registeredBusinessName || null,
@@ -5943,7 +5935,6 @@ function OrganizationTab() {
       address: address || null,
       timezone: timezone || "UTC",
       billing_email: billingEmail || null,
-      php_per_usd: parsePhpPerUsd(phpPerUsd),
       updated_at: new Date().toISOString(),
     };
 
@@ -6142,22 +6133,6 @@ function OrganizationTab() {
             className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
             placeholder="billing@example.com"
           />
-        </div>
-
-        <div>
-          <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">
-            Peso Rate (₱ per $1)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={phpPerUsd}
-            onChange={(e) => setPhpPerUsd(e.target.value)}
-            className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
-            placeholder="e.g. 58.50"
-          />
-          <p className="mt-1 text-[11px] text-stone">Pre-filled on payments to VAs paid in pesos, so Financials stay in dollars. Each payment keeps the rate it was made at.</p>
         </div>
 
         <div className="pt-2">

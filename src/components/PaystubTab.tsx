@@ -1825,7 +1825,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                         <span className="text-xs text-bark/60">
                           {usd != null
                             ? <>{previewMoney(total)} ≈ <span className="font-semibold text-bark">{formatPayMoney(usd, "USD")}</span> in Financials</>
-                            : "Enter a rate — no default Peso Rate is set in Settings."}
+                            : "Enter a rate — no default Peso Rate is set on the Financial tab."}
                         </span>
                       </div>
                     </div>

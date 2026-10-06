@@ -409,7 +409,7 @@ export async function POST(request: Request) {
   // anything is written rather than record pesos Financials would read as $.
   if (currency === "PHP" && (payment_method || feeAmount > 0) && exchangeRate == null) {
     return Response.json(
-      { error: "This VA is paid in pesos. Enter the exchange rate (₱ per $1), or set a default Peso Rate in Settings." },
+      { error: "This VA is paid in pesos. Enter the exchange rate (₱ per $1), or set a default Peso Rate on the Financial tab." },
       { status: 400 }
     );
   }
