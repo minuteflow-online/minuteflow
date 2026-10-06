@@ -11,6 +11,7 @@ import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import Section from "@/components/ui/Section";
+import { formatPayMoney, taskPayCurrency } from "@/lib/payroll";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "active", label: "Active" },
@@ -77,10 +78,11 @@ type StoredFixedPayFilters = {
 };
 
 
-function formatRate(rate: number | string | null | undefined) {
+/** A task's rate in its owner's currency (see taskPayCurrency); no currency = a bare number. */
+function formatRate(rate: number | string | null | undefined, currency?: string | null) {
   const parsed = typeof rate === "number" ? rate : Number(rate ?? NaN);
   if (Number.isNaN(parsed)) return "—";
-  return `$${parsed.toFixed(2)}`;
+  return currency === undefined ? parsed.toFixed(2) : formatPayMoney(parsed, currency);
 }
 
 function formatTimestamp(value: string | null) {
@@ -1176,7 +1178,7 @@ export default function FixedPayTasksTab() {
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (
-                          <td className="px-3 py-3 text-[13px] font-medium text-walnut">{formatRate(task.rate)}</td>
+                          <td className="px-3 py-3 text-[13px] font-medium text-walnut">{formatRate(task.rate, taskPayCurrency(task))}</td>
                         )}
                         {!hiddenColumns.has("start_date") && (
                           <td className="px-3 py-3 text-[13px] text-walnut">{formatDateOnly(task.start_date)}</td>

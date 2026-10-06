@@ -16,7 +16,7 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 const TASK_SELECT =
   "id, task_name, account, category, project, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, review_required, paid_manually, paid_at, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
 
-type ProfileSummary = { id: string; full_name: string; username: string };
+type ProfileSummary = { id: string; full_name: string; username: string; pay_currency: string | null };
 
 async function getAuthedProfile() {
   const supabase = await createServerClient();
@@ -114,7 +114,7 @@ async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: F
   if (profileIds.length > 0) {
     const { data: profiles } = await client
       .from("profiles")
-      .select("id, full_name, username")
+      .select("id, full_name, username, pay_currency")
       .in("id", profileIds);
 
     profileMap = Object.fromEntries((profiles ?? []).map((profile: ProfileSummary) => [profile.id, profile]));

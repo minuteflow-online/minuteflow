@@ -5,6 +5,8 @@ import type { ReactElement } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { DUE_DATE_FINISHED_STATUSES } from "@/lib/taskSchedule";
 import type { AssignedTask, FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
+import { formatPayMoney } from "@/lib/payroll";
+import { usePayCurrency } from "@/hooks/usePayCurrency";
 
 function formatClaimedAt(claimedAt: string | null) {
   if (!claimedAt) return "";
@@ -92,6 +94,8 @@ export default function AvailableTasksWidget({
     fixedPayOnly || canSeeFixedPay ? "fixed_pay" : "hourly"
   );
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
+  // Tasks already assigned to this VA are priced in this VA's currency.
+  const payCurrency = usePayCurrency(currentUserId);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
   const [hourlyTasks, setHourlyTasks] = useState<AssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -479,7 +483,7 @@ export default function AvailableTasksWidget({
                     <div className="flex items-center gap-1 shrink-0">
                       {rate != null && (
                         <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
-                          ${Number(rate).toFixed(2)}
+                          {formatPayMoney(Number(rate), payCurrency)}
                         </span>
                       )}
                       <button
@@ -593,7 +597,8 @@ export default function AvailableTasksWidget({
                           </span>
                           <div className="flex items-center gap-1 shrink-0">
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
-                              ${Number(task.rate).toFixed(2)}
+                              {/* Claiming makes this VA the owner, so show what they'd be paid. */}
+                              {formatPayMoney(Number(task.rate), payCurrency)}
                             </span>
                             <button
                               type="button"
