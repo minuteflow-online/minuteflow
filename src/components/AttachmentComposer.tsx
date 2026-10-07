@@ -167,10 +167,14 @@ export function useAttachmentComposer() {
         await fetch("/api/message-attachments", { method: "POST", body: form }).catch(() => {});
       }
       if (link.trim()) {
+        // The API only accepts a full http(s) URL, and the message body is
+        // already saved by now — a bare "www.youtube.com" used to be rejected
+        // silently, leaving "Shared a link" with no link. Add the scheme here.
+        const url = /^https?:\/\//i.test(link.trim()) ? link.trim() : `https://${link.trim()}`;
         await fetch("/api/message-attachments", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ targetType, targetId: String(targetId), kind: "link", url: link.trim() }),
+          body: JSON.stringify({ targetType, targetId: String(targetId), kind: "link", url }),
         }).catch(() => {});
       }
       reset();
