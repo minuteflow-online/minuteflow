@@ -84,19 +84,20 @@ export async function POST(request: Request) {
     };
     const targetType = parseTargetType(body.targetType ?? null);
     const targetId = body.targetId?.trim();
-    const url = body.url?.trim();
+    const rawUrl = body.url?.trim();
     if (!targetType || !targetId) {
       return Response.json({ error: "targetType and targetId are required" }, { status: 400 });
     }
-    if (!url) return Response.json({ error: "url is required" }, { status: 400 });
+    if (!rawUrl) return Response.json({ error: "url is required" }, { status: 400 });
+    // A link typed without a scheme ("www.youtube.com") is still a link —
+    // add https:// rather than rejecting it. Anything with another scheme
+    // (javascript:, ftp:, ...) still fails the http(s) check below.
+    const url = /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
     try {
-      // new URL() rejects anything that isn't a well-formed absolute URL —
-      // "google.com" with no scheme included, same as the plain <input> Link
-      // field elsewhere (TaskEditor, SubmitWorkModal) expects "https://...".
       const parsed = new URL(url);
       if (!/^https?:$/.test(parsed.protocol)) throw new Error("not http(s)");
     } catch {
-      return Response.json({ error: "Enter a full link starting with https://" }, { status: 400 });
+      return Response.json({ error: "Enter a valid link" }, { status: 400 });
     }
 
     if (!(await canAccessMessageTarget(admin, profile, user.id, targetType, targetId))) {
