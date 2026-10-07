@@ -206,9 +206,17 @@ export async function GET(request: Request) {
   if (claimedIds.length > 0) {
     const { data: mirrorRows } = await readClient
       .from("assigned_tasks")
-      .select("id, fixed_pay_task_id, status, assigned_task_assignees(va_id, status)")
+      .select("id, fixed_pay_task_id, status, revision_count, assigned_task_assignees(va_id, status)")
       .in("fixed_pay_task_id", claimedIds);
     const claimedById = Object.fromEntries(rows.map((t) => [t.id, t.claimed_by]));
+    // Same R badge the time-based table shows, next to the same mirrored
+    // status above — a VA sent back for revision should see the count here
+    // too, not just on the dashboard they no longer rework from.
+    const revisionCountByTaskId = Object.fromEntries(
+      ((mirrorRows ?? []) as unknown as Array<{ fixed_pay_task_id: string | number; revision_count: number | null }>).map(
+        (r) => [r.fixed_pay_task_id, r.revision_count ?? 0]
+      )
+    );
     const statusByTaskId = Object.fromEntries(
       (
         (mirrorRows ?? []) as unknown as Array<{
@@ -222,7 +230,11 @@ export async function GET(request: Request) {
         return [r.fixed_pay_task_id, assigneeStatus ?? r.status];
       })
     );
-    rows = rows.map((t) => (statusByTaskId[t.id] ? { ...t, status: statusByTaskId[t.id] as FixedPayTaskWithClaimer["status"] } : t));
+    rows = rows.map((t) => ({
+      ...t,
+      ...(statusByTaskId[t.id] ? { status: statusByTaskId[t.id] as FixedPayTaskWithClaimer["status"] } : {}),
+      revision_count: revisionCountByTaskId[t.id] ?? 0,
+    }));
   }
 
   if (!isPermitted && !scopedToProject) {

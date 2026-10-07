@@ -12,6 +12,7 @@ import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPref
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import Section from "@/components/ui/Section";
 import { formatPayMoney, taskPayCurrency } from "@/lib/payroll";
+import RevisionBadge from "@/components/RevisionBadge";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "active", label: "Active" },
@@ -1172,8 +1173,11 @@ export default function FixedPayTasksTab() {
                         )}
                         {!hiddenColumns.has("status") && (
                           <td className="px-3 py-3 text-[13px] text-walnut">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                              {STATUS_LABELS[task.status]}
+                            <span className="flex items-center gap-1.5">
+                              <RevisionBadge count={task.revision_count ?? 0} />
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                {STATUS_LABELS[task.status]}
+                              </span>
                             </span>
                           </td>
                         )}
@@ -1337,7 +1341,10 @@ export default function FixedPayTasksTab() {
                   />
                   <div className="flex flex-wrap items-start gap-6">
                     <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Status</div>
+                      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone">
+                        Status
+                        <RevisionBadge count={selectedTask.revision_count ?? 0} />
+                      </div>
                       <span className={`mt-1 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
                         {STATUS_LABELS[selectedTask.status]}
                       </span>

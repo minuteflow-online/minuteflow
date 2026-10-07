@@ -815,6 +815,9 @@ export interface FixedPayTaskWithClaimer {
   claimed_by_me?: boolean;
   /** The assigned_tasks.id linked to this fixed-pay task for the current VA (VA responses only) */
   assigned_task_id?: number | null;
+  /** Mirrored from the linked assigned_tasks row once claimed — same count the
+   *  RevisionBadge shows on the time-based table (see GET /api/fixed-pay-tasks). */
+  revision_count?: number;
 }
 
 export type ProjectKind = "objective" | "operation";
