@@ -8,13 +8,21 @@ export const dynamic = "force-dynamic";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"]);
-// Statuses a VA may set on their own claimed task. Revision Needed, Completed,
-// Cancelled, and Paid are review/payroll actions — admin only.
+// Statuses a VA may set on their own claimed task. Completed, Cancelled, and
+// Paid are review/payroll actions — admin only. Revision Needed is also
+// excluded here (a VA can't declare their own submission back under review),
+// but it's handled separately below for field edits — see FIELD_EDIT_STATUSES.
 const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted"]);
+// Same as VA_EDITABLE_STATUSES, plus Revision Needed: once a reviewer sends a
+// task back, the VA needs to actually fix it — change the date, the detail
+// text, the attachment — not just flip the status back to On Queue with the
+// old (wrong) values still in place (Toni's call, 2026-10-07). Completed/
+// Cancelled/Paid stay excluded: those are genuinely done, nothing left to fix.
+const FIELD_EDIT_STATUSES = new Set([...VA_EDITABLE_STATUSES, "revision_needed"]);
 // Fields a VA may edit on their own task, and only while it's still in a
-// VA_EDITABLE_STATUSES state — once admin has moved it into review/payroll
-// (revision_needed/completed/cancelled/paid), the rate and details are
-// locked so a VA can't retroactively change what they're being paid for.
+// FIELD_EDIT_STATUSES state — once admin has moved it into payroll
+// (completed/cancelled/paid), the rate and details are locked so a VA can't
+// retroactively change what they're being paid for.
 // assigned_by is on this list (unlike assigned_to) because it's a record of
 // who actually handed the VA the work, not a claim/routing field — a VA
 // self-logging a task Toni assigned verbally needs to be able to say so.
@@ -174,7 +182,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (existing.claimed_by !== auth.userId) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (isFieldEdit && !VA_EDITABLE_STATUSES.has(existing.status)) {
+    if (isFieldEdit && !FIELD_EDIT_STATUSES.has(existing.status)) {
       return Response.json({ error: "This task has already been reviewed and can no longer be edited" }, { status: 403 });
     }
 
@@ -228,6 +236,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       await admin
         .from("assigned_tasks")
         .update({ status: updates.status, updated_at: new Date().toISOString() })
+        .eq("fixed_pay_task_id", taskId)
+        .is("deleted_at", null);
+    }
+
+    // Same mirror, for the schedule. Without this a VA editing their own
+    // Start/End/Due date here (e.g. after a revision) changed fixed_pay_tasks
+    // only — the Calendar's Day/Week view reads assigned_tasks, so the task
+    // kept showing on its old date there even though Month view (which reads
+    // fixed_pay_tasks directly) had already moved (Toni's call, 2026-10-07).
+    if (updates.start_date !== undefined || updates.due_date !== undefined || updates.end_date !== undefined) {
+      const scheduleSync: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (updates.start_date !== undefined) scheduleSync.start_date = updates.start_date;
+      if (updates.due_date !== undefined) scheduleSync.due_date = updates.due_date;
+      if (updates.end_date !== undefined) scheduleSync.end_date = updates.end_date;
+      await admin
+        .from("assigned_tasks")
+        .update(scheduleSync)
         .eq("fixed_pay_task_id", taskId)
         .is("deleted_at", null);
     }
@@ -388,6 +413,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     await admin
       .from("assigned_tasks")
       .update({ paid_at: updates.paid_at, paid_manually: updates.paid_manually, updated_at: now })
+      .eq("fixed_pay_task_id", taskId)
+      .is("deleted_at", null);
+  }
+
+  // Same mirror, for the schedule. The Calendar's Day/Week/Range views read
+  // assigned_tasks (GET /api/assigned-tasks), not fixed_pay_tasks, so a
+  // Start/End/Due date changed only here never moved on those views — Month
+  // view (fixedItems, reading fixed_pay_tasks directly) already had it right,
+  // which is what made this look like stale caching rather than a real gap.
+  if (updates.start_date !== undefined || updates.due_date !== undefined || updates.end_date !== undefined) {
+    const scheduleSync: Record<string, unknown> = { updated_at: now };
+    if (updates.start_date !== undefined) scheduleSync.start_date = updates.start_date;
+    if (updates.due_date !== undefined) scheduleSync.due_date = updates.due_date;
+    if (updates.end_date !== undefined) scheduleSync.end_date = updates.end_date;
+    await admin
+      .from("assigned_tasks")
+      .update(scheduleSync)
       .eq("fixed_pay_task_id", taskId)
       .is("deleted_at", null);
   }

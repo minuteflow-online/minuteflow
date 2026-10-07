@@ -691,17 +691,19 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     [fetchTasks, panelMode, createMode, closePanel]
   );
 
-  // Mirrors the server-side check in the PATCH/DELETE routes: a VA may only
-  // edit or delete a task they claimed, and only before it's been reviewed.
-  // Admins/managers can edit any fixed-pay/output-based task (the PATCH API
-  // already accepts their edits on any field/status via its admin path). VAs
-  // stay restricted to their own claimed task while it's still in a
-  // VA-editable status.
+  // Mirrors the server-side field-edit check in the PATCH route (FIELD_EDIT_STATUSES
+  // there): a VA may only edit a task they claimed, and only before it's moved
+  // into a payroll status. Admins/managers can edit any fixed-pay/output-based
+  // task (the PATCH API already accepts their edits on any field/status via its
+  // admin path). Revision Needed is included (unlike VA_STATUS_OPTIONS, which
+  // gates the narrower status-only dropdown above) so a VA can actually fix
+  // what a reviewer sent back — the date, the detail text, the attachment —
+  // instead of only being able to flip the status (Toni's call, 2026-10-07).
   const canEditSelectedTask = Boolean(
     selectedTask &&
     (isAdminOrManager ||
       ((selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
-        VA_STATUS_OPTIONS.includes(selectedTask.status)))
+        (VA_STATUS_OPTIONS.includes(selectedTask.status) || selectedTask.status === "revision_needed")))
   );
 
   // Mirrors the grab route's own eligibility check — an unclaimed, still-active
