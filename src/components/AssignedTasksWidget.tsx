@@ -163,12 +163,12 @@ export default function AssignedTasksWidget({
           ...row,
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
-        // revision_needed has to stay in this list: this widget is the only
-        // place a VA can Rework -> Start -> Submit again. Dropping it (as the
-        // Jul 14 "on_queue and in_progress only" change did) leaves a sent-back
-        // task with no way to resubmit it.
+        // revision_needed is deliberately excluded (Toni's call, 2026-10-07):
+        // the way back in is now the Needs Revision list on the Assignment
+        // page, where the VA moves the task to On Queue themselves — it
+        // reappears here once that happens, same as any other on_queue task.
         const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = [
-            'on_queue', 'in_progress', 'revision_needed',
+            'on_queue', 'in_progress',
           ];
         const visible = collapseRecurringSeriesBy(
           data.filter((t) => VA_VISIBLE_STATUSES.includes(t.status)),
@@ -682,16 +682,6 @@ export default function AssignedTasksWidget({
                             className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-[#a85840] cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {isUpdating ? "Accepting..." : "Accept"}
-                          </button>
-                        )}
-
-                        {effectiveStatus === "revision_needed" && (
-                          <button
-                            onClick={() => updateStatus(task, "on_queue")}
-                            disabled={isUpdating}
-                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-[#a85840] cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {isUpdating ? "Queuing..." : "Rework"}
                           </button>
                         )}
 

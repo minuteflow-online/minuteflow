@@ -14,6 +14,8 @@ import TaskEditor, { type TeamMemberOption } from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { formatPayMoney, taskPayCurrency } from "@/lib/payroll";
+import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
+import RevisionBadge from "@/components/RevisionBadge";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "submitted" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "active", label: "Active" },
@@ -64,9 +66,6 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   paid: "bg-plum-soft text-plum",
 };
 
-// A VA can't change a Revision Needed status from this table — the way back in
-// is the Rework button on the dashboard's Assigned Tasks, so say so here.
-const REWORK_HINT = "Sent back for revision. Use Rework on your dashboard's Assigned Tasks to resubmit it.";
 // Shown above the edit form when the server would refuse the save — the form
 // used to open fully editable and only fail after Save Changes was clicked.
 const REWORK_EDIT_HINT = "This task was sent back for revision, so it's locked for editing. Click Rework on your dashboard's Assigned Tasks to reopen it, then make your changes.";
@@ -537,6 +536,40 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     []
   );
 
+  /**
+   * Moves a task the VA owns back to On Queue after a revision — the
+   * self-service replacement for the dashboard's old Rework button (removed
+   * 2026-10-07, Toni's call). Deliberately NOT handleStatusChange: that PATCHes
+   * fixed_pay_tasks and only mirrors assigned_tasks.status, never the
+   * assigned_task_assignees row GET /api/fixed-pay-tasks actually reads back —
+   * a VA using it to leave Revision Needed would look like it saved and then
+   * silently reverted to Revision Needed on the next load. setAssignedTaskStatus
+   * is the one path that writes the assignee row too (same one the dashboard's
+   * Rework button used), so it's the only safe way to make this transition.
+   */
+  const handleRequeue = useCallback(
+    async (task: FixedPayTaskWithClaimer) => {
+      if (task.assigned_task_id == null || !currentUserId) return;
+      setStatusSaving(true);
+      setMessage(null);
+      try {
+        const ok = await setAssignedTaskStatus({
+          assignedTaskId: task.assigned_task_id,
+          status: "on_queue",
+          vaId: currentUserId,
+        });
+        if (!ok) throw new Error("Unable to move this task back to the queue.");
+        setTasks((current) => current.map((t) => (t.id === task.id ? { ...t, status: "on_queue" } : t)));
+        setSelectedTask((current) => (current && current.id === task.id ? { ...current, status: "on_queue" } : current));
+      } catch (error) {
+        setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to update status." });
+      } finally {
+        setStatusSaving(false);
+      }
+    },
+    [currentUserId]
+  );
+
   // Marking paid is its own action, not a status value — it never touches
   // `status`, so a task paid while still under review keeps showing exactly
   // where it actually stands.
@@ -658,17 +691,19 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     [fetchTasks, panelMode, createMode, closePanel]
   );
 
-  // Mirrors the server-side check in the PATCH/DELETE routes: a VA may only
-  // edit or delete a task they claimed, and only before it's been reviewed.
-  // Admins/managers can edit any fixed-pay/output-based task (the PATCH API
-  // already accepts their edits on any field/status via its admin path). VAs
-  // stay restricted to their own claimed task while it's still in a
-  // VA-editable status.
+  // Mirrors the server-side field-edit check in the PATCH route (FIELD_EDIT_STATUSES
+  // there): a VA may only edit a task they claimed, and only before it's moved
+  // into a payroll status. Admins/managers can edit any fixed-pay/output-based
+  // task (the PATCH API already accepts their edits on any field/status via its
+  // admin path). Revision Needed is included (unlike VA_STATUS_OPTIONS, which
+  // gates the narrower status-only dropdown above) so a VA can actually fix
+  // what a reviewer sent back — the date, the detail text, the attachment —
+  // instead of only being able to flip the status (Toni's call, 2026-10-07).
   const canEditSelectedTask = Boolean(
     selectedTask &&
     (isAdminOrManager ||
       ((selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
-        VA_STATUS_OPTIONS.includes(selectedTask.status)))
+        (VA_STATUS_OPTIONS.includes(selectedTask.status) || selectedTask.status === "revision_needed")))
   );
 
   // Mirrors the grab route's own eligibility check — an unclaimed, still-active
@@ -690,7 +725,10 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const renderStatusField = (task: FixedPayTaskWithClaimer) => (
               <>
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
+                  <label className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone">
+                    Status
+                    <RevisionBadge count={task.revision_count ?? 0} />
+                  </label>
                   {isAdminOrManager ? (
                     /* Admins change status straight from the details panel.
                        It used to render a static badge for them, so the only
@@ -728,15 +766,24 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         </option>
                       ))}
                     </select>
-                  ) : (
-                    <>
+                  ) : task.status === "revision_needed" && (task.claimed_by_me || task.claimed_by === currentUserId) ? (
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
                         {STATUS_LABELS[task.status]}
                       </span>
-                      {task.status === "revision_needed" && (task.claimed_by_me || task.claimed_by === currentUserId) && (
-                        <p className="mt-1.5 text-[11px] leading-snug text-stone">{REWORK_HINT}</p>
-                      )}
-                    </>
+                      <button
+                        type="button"
+                        onClick={() => void handleRequeue(task)}
+                        disabled={statusSaving}
+                        className="rounded-full bg-terracotta px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:opacity-50"
+                      >
+                        {statusSaving ? "Moving..." : "Move to Queue"}
+                      </button>
+                    </div>
+                  ) : (
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                      {STATUS_LABELS[task.status]}
+                    </span>
                   )}
                 </div>
                 {isAdminOrManager && (
@@ -1202,34 +1249,44 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                              stopPropagation because the row opens the details
                              panel on click. */
                           <td className="px-3 py-3 text-[13px] text-walnut" onClick={(event) => event.stopPropagation()}>
-                            {isAdminOrManager ? (
-                              <select
-                                value={task.status}
-                                disabled={statusSaving}
-                                onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
-                                className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
-                              >
-                                {(STATUS_OPTIONS.includes(task.status)
-                                  ? STATUS_OPTIONS
-                                  : [task.status, ...STATUS_OPTIONS]
-                                ).map((status) => (
-                                  <option key={status} value={status}>
-                                    {STATUS_LABELS[status]}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <span
-                                title={
-                                  task.status === "revision_needed" && (task.claimed_by_me || task.claimed_by === currentUserId)
-                                    ? REWORK_HINT
-                                    : undefined
-                                }
-                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}
-                              >
-                                {STATUS_LABELS[task.status]}
-                              </span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <RevisionBadge count={task.revision_count ?? 0} />
+                              {isAdminOrManager ? (
+                                <select
+                                  value={task.status}
+                                  disabled={statusSaving}
+                                  onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                                  className={`rounded-full border-0 px-2 py-0.5 text-[11px] font-semibold outline-none disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
+                                >
+                                  {(STATUS_OPTIONS.includes(task.status)
+                                    ? STATUS_OPTIONS
+                                    : [task.status, ...STATUS_OPTIONS]
+                                  ).map((status) => (
+                                    <option key={status} value={status}>
+                                      {STATUS_LABELS[status]}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : task.status === "revision_needed" && (task.claimed_by_me || task.claimed_by === currentUserId) ? (
+                                <>
+                                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                    {STATUS_LABELS[task.status]}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleRequeue(task)}
+                                    disabled={statusSaving}
+                                    className="rounded-full bg-terracotta px-2 py-0.5 text-[10px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:opacity-50"
+                                  >
+                                    {statusSaving ? "Moving..." : "Move to Queue"}
+                                  </button>
+                                </>
+                              ) : (
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                                  {STATUS_LABELS[task.status]}
+                                </span>
+                              )}
+                            </div>
                           </td>
                         )}
                         {!hiddenColumns.has("rate") && (
