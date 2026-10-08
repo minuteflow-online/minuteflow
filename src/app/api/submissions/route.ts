@@ -607,9 +607,25 @@ export async function GET(request: Request) {
       );
   // If the main query fails below we return early; don't leave this unhandled.
   expectedPromise.catch(() => {});
-  const [{ data: profile }, { data, error }] = await Promise.all([
+  // Same idea, for the non-admin visibility filter below: which tasks the
+  // viewer is actually an assignee of. Only needed for a non-admin, so this
+  // is wasted work for an admin viewer, but it's one small indexed query
+  // against a boolean the profile fetch already has to resolve first either
+  // way — not worth a second serial round-trip to skip it.
+  const myTaskIdsPromise: Promise<Set<number>> = profilePromise.then(({ data: p }) =>
+    isAdminProfile(p)
+      ? Promise.resolve(new Set<number>())
+      : admin
+          .from("assigned_task_assignees")
+          .select("assigned_task_id")
+          .eq("va_id", user.id)
+          .then(({ data: assigneeRows }) => new Set((assigneeRows ?? []).map((r) => r.assigned_task_id as number)))
+  );
+  myTaskIdsPromise.catch(() => {});
+  const [{ data: profile }, { data, error }, myTaskIds] = await Promise.all([
     profilePromise,
     fetchAllPages((rangeFrom, rangeTo) => buildQuery().range(rangeFrom, rangeTo)),
+    myTaskIdsPromise,
   ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -645,13 +661,24 @@ export async function GET(request: Request) {
   let rows = (data ?? []) as unknown as Row[];
 
   // Everyone can open this page. Someone without admin access sees their own
-  // submissions plus anything submitted on a task they assigned — assigned_by
-  // is the person who reviews it, so they need to see what's waiting on them.
+  // submissions, anything submitted on a task they assigned (assigned_by is
+  // the person who reviews it, so they need to see what's waiting on them),
+  // and — the one that was missing — the rest of the thread on a task they're
+  // the assignee of. A flag, a revision request, an approval, a plain comment:
+  // all of those are written by the REVIEWER, so `user_id` is never the VA's
+  // own id, and an output-based task usually has no `assigned_by` at all. Without
+  // myTaskIds here, a VA saw their own submission land but never saw the
+  // reviewer's response to it — confirmed live on 2026-10-08, where Rexinne
+  // Manguiat's own "Alligator Chase – Outside Shot" thread silently dropped
+  // both Toni's flag and her revision request.
   // Filtered here rather than in the query because it's an OR across an
   // embedded table, which PostgREST can't express.
   if (!isAdminEquivalent) {
     rows = rows.filter(
-      (r) => r.user_id === user.id || r.assigned_tasks?.assigned_by === user.id
+      (r) =>
+        r.user_id === user.id ||
+        r.assigned_tasks?.assigned_by === user.id ||
+        (r.assigned_tasks && myTaskIds.has(r.assigned_tasks.id))
     );
   } else if (va && va !== "all") {
     // Previously a query-side .eq(), which needed `profile` before the query
