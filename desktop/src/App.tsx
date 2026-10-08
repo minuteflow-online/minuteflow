@@ -8,7 +8,7 @@ import NotificationBell from "./components/NotificationBell";
 import SubmitWorkModal from "./components/SubmitWorkModal";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
-import { fetchAssignedTasks, fetchAvailableTasks, reorderAssignedTasks, setAssignedTaskStatus, todoLabel, type VAAssignedTask, type AssignedTaskStatus, type TaskTodo } from "./lib/tasks";
+import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, todoLabel, type VAAssignedTask, type AssignedTaskStatus, type TaskTodo } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 import { startAutoCapture } from "./lib/autoCapture";
@@ -32,13 +32,9 @@ export default function App() {
 
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
-  const [availableTasks, setAvailableTasks] = useState<VAAssignedTask[]>([]);
-  const [availableLoading, setAvailableLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<VAAssignedTask | null>(null);
-  const [acceptingId, setAcceptingId] = useState<number | null>(null);
   const [startingId, setStartingId] = useState<number | null>(null);
   const [playingTodoId, setPlayingTodoId] = useState<number | null>(null);
-  const [reworkingId, setReworkingId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
@@ -104,29 +100,12 @@ export default function App() {
       // them one at a time after the create), so selecting it right away
       // could freeze on the zero-to-dos snapshot forever, even once the
       // to-dos existed server-side. `?? prev` leaves it alone when the
-      // selected task isn't in this particular list (e.g. it's pending, so
-      // it only lives in availableTasks).
+      // selected task isn't in this list for some other reason.
       setSelectedTask((prev) => (prev ? (rows.find((t) => t.id === prev.id) ?? prev) : prev));
     } catch {
       // Non-critical — leave the previous list showing rather than blank it.
     } finally {
       setTasksLoading(false);
-    }
-  }, []);
-
-  // Separate fetch, separate tab — mirrors web keeping AssignedTasksWidget
-  // and AvailableTasksWidget as two different cards rather than one mixed
-  // list (see tasks.ts's fetchAvailableTasks comment for why).
-  const loadAvailableTasks = useCallback(async (uid: string) => {
-    setAvailableLoading(true);
-    try {
-      const rows = await fetchAvailableTasks(uid);
-      setAvailableTasks(rows);
-      setSelectedTask((prev) => (prev ? (rows.find((t) => t.id === prev.id) ?? prev) : prev));
-    } catch {
-      // Non-critical — leave the previous list showing rather than blank it.
-    } finally {
-      setAvailableLoading(false);
     }
   }, []);
 
@@ -136,15 +115,11 @@ export default function App() {
       const session = await auth.ensureAuth();
       if (session) {
         setUserId(session.user.id);
-        await Promise.all([
-          loadForUser(session.user.id),
-          loadTasks(session.user.id),
-          loadAvailableTasks(session.user.id),
-        ]);
+        await Promise.all([loadForUser(session.user.id), loadTasks(session.user.id)]);
       }
       setCheckingAuth(false);
     })();
-  }, [loadForUser, loadTasks, loadAvailableTasks]);
+  }, [loadForUser, loadTasks]);
 
   // Poll session + tasks so a clock-in/task change made on the web app or the
   // extension shows up here too, same idea as the extension's own poll loop.
@@ -155,13 +130,12 @@ export default function App() {
     }, SESSION_POLL_MS);
     const tasksTimer = setInterval(() => {
       loadTasks(userId);
-      loadAvailableTasks(userId);
     }, TASKS_POLL_MS);
     return () => {
       clearInterval(sessionTimer);
       clearInterval(tasksTimer);
     };
-  }, [userId, loadTasks, loadAvailableTasks]);
+  }, [userId, loadTasks]);
 
   // Tells the main process whether to warn before quitting — see
   // electron/main.js's close handler. Also clears the flag on sign-out
@@ -187,9 +161,9 @@ export default function App() {
     async (email: string, password: string) => {
       const session = await auth.signIn(email, password);
       setUserId(session.user.id);
-      await Promise.all([loadForUser(session.user.id), loadTasks(session.user.id), loadAvailableTasks(session.user.id)]);
+      await Promise.all([loadForUser(session.user.id), loadTasks(session.user.id)]);
     },
-    [loadForUser, loadTasks, loadAvailableTasks]
+    [loadForUser, loadTasks]
   );
 
   const handleLogout = useCallback(async () => {
@@ -198,7 +172,6 @@ export default function App() {
     setProfile(null);
     setSessionRow(null);
     setTasks([]);
-    setAvailableTasks([]);
     setSelectedTask(null);
   }, []);
 
@@ -296,61 +269,6 @@ export default function App() {
       }
     },
     [userId, profile, sessionRow, orgTimezone, playingTodoId, loadTasks]
-  );
-
-  // Accept: a newly assigned task moves from pending to on_queue, same single
-  // write path as Rework/Start. Mirrors AssignedTasksWidget's
-  // updateStatus(task, "on_queue") for the pending case.
-  const handleAccept = useCallback(
-    async (task: VAAssignedTask) => {
-      if (!userId || acceptingId != null) return;
-      setAcceptingId(task.id);
-      try {
-        const ok = await setAssignedTaskStatus({
-          assignedTaskId: task.assigned_tasks.id,
-          status: "on_queue",
-          vaId: userId,
-        });
-        if (!ok) {
-          alert("Couldn't accept this task. Try again in a moment.");
-          return;
-        }
-        // It moves from the Available tab's list to the Assigned tab's —
-        // both need refreshing, or it'd look like it vanished rather than
-        // relocated.
-        await Promise.all([loadTasks(userId), loadAvailableTasks(userId)]);
-      } finally {
-        setAcceptingId(null);
-      }
-    },
-    [userId, acceptingId, loadTasks, loadAvailableTasks]
-  );
-
-  // Rework: a task sent back for revision goes back on the queue, from where
-  // Start -> Submit works as normal. Mirrors AssignedTasksWidget's
-  // updateStatus(task, "on_queue") — same single write path as Start. No
-  // optimistic revision_count bump: it's incremented server-side when the
-  // revision is issued, so bumping again would show R2 for a single revision.
-  const handleRework = useCallback(
-    async (task: VAAssignedTask) => {
-      if (!userId || reworkingId != null) return;
-      setReworkingId(task.id);
-      try {
-        const ok = await setAssignedTaskStatus({
-          assignedTaskId: task.assigned_tasks.id,
-          status: "on_queue",
-          vaId: userId,
-        });
-        if (!ok) {
-          alert("Couldn't move this task back to your queue. Try again in a moment.");
-          return;
-        }
-        await loadTasks(userId);
-      } finally {
-        setReworkingId(null);
-      }
-    },
-    [userId, reworkingId, loadTasks]
   );
 
   // Submit: mirrors AssignedTasksWidget's SubmitWorkModal wiring. The server
@@ -505,16 +423,10 @@ export default function App() {
           <TasksPanel
             tasks={tasks}
             loading={tasksLoading}
-            availableTasks={availableTasks}
-            availableLoading={availableLoading}
             selectedId={selectedTask?.id ?? null}
             onSelect={setSelectedTask}
-            acceptingId={acceptingId}
-            onAccept={handleAccept}
             startingId={startingId}
             onStart={handleStart}
-            reworkingId={reworkingId}
-            onRework={handleRework}
             onSubmit={setSubmitTarget}
             onReorder={handleReorder}
           />
@@ -547,10 +459,7 @@ export default function App() {
             <TodoPanel
               task={selectedTask}
               onTodosChanged={() => {
-                if (userId) {
-                  loadTasks(userId);
-                  loadAvailableTasks(userId);
-                }
+                if (userId) loadTasks(userId);
               }}
               userId={userId}
               activeAssignedTaskId={sessionRow?.active_task?.assignedTaskId ?? null}
