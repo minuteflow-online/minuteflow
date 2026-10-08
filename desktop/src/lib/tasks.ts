@@ -3,12 +3,13 @@
 // comment at the top of db.ts for why. This mirrors the exact select shape
 // the API route uses for a VA (`vaSelectString` in
 // src/app/api/assigned-tasks/route.ts) and AssignedTasksWidget's VA-visible
-// status filter (on_queue, in_progress, revision_needed) — NOT pending.
-// Pending tasks are deliberately a separate fetch (fetchAvailableTasks
-// below): mirrors AvailableTasksWidget.tsx, a completely separate "Available
-// Tasks" card on web, not folded into the Assigned Tasks widget. Mixing the
-// two in one list (tried once, reverted) is confusing the moment a VA has
-// more than a couple of pending tasks sitting alongside their active work.
+// status filter: on_queue, in_progress — NOT pending, NOT revision_needed.
+// Both are deliberately excluded here, matching web exactly (Toni's call,
+// 2026-10-07/08): a newly-assigned task is accepted on web, not here, and a
+// sent-back task drops out of this list until it's back on_queue, moved
+// there from the Needs Revision list on web's Assignment page — not a button
+// in this app. Desktop used to show both as a separate Available tab +
+// Rework button (PR #269, #252); both were removed to match.
 //
 // Reads bypass the API route; writes (status changes, submissions) go
 // through it with a bearer token in place of the cookie session it normally
@@ -82,10 +83,7 @@ const VA_SELECT =
   "id,va_id,status,log_id,notes,assigned_at,updated_at,sort_order," +
   "assigned_tasks(id,account,project,task_name,task_detail,task_notes,instructions,review_required,due_date,archived_at,deleted_at,fixed_pay_task_id,revision_count,fixed_pay_tasks(rate),task_todos(id,text,sort_order))";
 
-// revision_needed has to stay in this list: the tasks panel is the only place
-// a VA can Rework -> Start -> Submit again. Without it a sent-back task just
-// disappears (the mistake AssignedTasksWidget's Jul 14 change made, then fixed).
-const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = ["on_queue", "in_progress", "revision_needed"];
+const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = ["on_queue", "in_progress"];
 
 const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
   pending: -1,
@@ -116,7 +114,7 @@ function todoLabel(sortOrder: number): string {
 }
 export { todoLabel };
 
-/** On-queue, in-progress and revision-needed tasks assigned to this VA, ordered the same way
+/** On-queue and in-progress tasks assigned to this VA, ordered the same way
  *  the web dashboard's Assigned Tasks widget shows them. */
 export async function fetchAssignedTasks(userId: string): Promise<VAAssignedTask[]> {
   const statusList = VA_VISIBLE_STATUSES.join(",");
@@ -134,37 +132,6 @@ export async function fetchAssignedTasks(userId: string): Promise<VAAssignedTask
       },
     }))
     .sort(compareTasks);
-}
-
-/**
- * Newly assigned tasks waiting on this VA to Accept — mirrors
- * AvailableTasksWidget.tsx's "Assigned to You" section. Hourly only
- * (fixed_pay_task_id null): fixed-pay tasks have their own claim flow
- * (/api/fixed-pay-tasks/:id/grab) desktop doesn't support yet — same reason
- * Start and Cancel Grab are fixed-pay-gated elsewhere in this app. The open
- * "unassigned" pool (grabbable by any VA) isn't ported either, same reason.
- */
-export async function fetchAvailableTasks(userId: string): Promise<VAAssignedTask[]> {
-  const rows = await query<VAAssignedTask[]>("assigned_task_assignees", {
-    filters: `va_id=eq.${userId}&status=eq.pending&select=${VA_SELECT}`,
-  });
-
-  return rows
-    .filter(
-      (t) =>
-        t.assigned_tasks &&
-        !t.assigned_tasks.archived_at &&
-        !t.assigned_tasks.deleted_at &&
-        t.assigned_tasks.fixed_pay_task_id == null
-    )
-    .map((t) => ({
-      ...t,
-      assigned_tasks: {
-        ...t.assigned_tasks,
-        task_todos: [...(t.assigned_tasks.task_todos ?? [])].sort((a, b) => a.sort_order - b.sort_order),
-      },
-    }))
-    .sort((a, b) => a.assigned_at.localeCompare(b.assigned_at));
 }
 
 /**

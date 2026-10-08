@@ -13,36 +13,31 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `src/app/(app)/dashboard/page.tsx` and `src/contexts/SessionContext.tsx`,
   including the duplicate-active-log guard and the overnight-log-capping
   safety net (see `src/lib/clock.ts` for the file-by-file mapping).
-- **Assigned Tasks** — a two-tab card: **Assigned** (`on_queue` / `in_progress`
-  / `revision_needed`) and **Available** (newly assigned `pending` tasks
-  awaiting Accept). Kept as two tabs on one card rather than one mixed list —
-  mirrors web keeping `AssignedTasksWidget.tsx` and `AvailableTasksWidget.tsx`
-  as two entirely separate widgets; a first pass folded `pending` straight
-  into the Assigned list and it got unreadable the moment a VA had more than
-  a couple of pending tasks sitting alongside active work. Available only
-  shows hourly tasks (`fixed_pay_task_id` null) — fixed-pay ones have their
-  own claim flow (`/api/fixed-pay-tasks/:id/grab`) this app doesn't support
-  yet, and web's "open pool" of unclaimed tasks (grabbable by any VA, not
-  just ones already assigned to you) isn't ported either, same reason. See
-  `src/lib/tasks.ts`'s `fetchAvailableTasks`. Each tab shows its own per-task
-  to-do list (TD1, TD2, …), same visual pattern as `AssignedTasksWidget.tsx`.
-  A task sent back for revision
-  shows an amber "Revision Needed" badge, the red **R / R2 / R3** revision
-  count badge, and a **Rework** button that puts it back on your queue (same
-  `setAssignedTaskStatus` write path as Start) so you can Start it again;
-  fixed-pay tasks also show their `$rate` badge. Long task names wrap under
-  the badges instead of being squeezed. **Not ported: Cancel Grab** for
-  fixed-pay tasks (`DELETE /api/fixed-pay-tasks/:id/grab` has no bearer-token
-  or CORS support yet — same treatment the other desktop routes got). **Start** on an `on_queue` task closes whatever
-  log is currently open, begins tracking a new one for it, and flips the
-  assignee row to `in_progress` — mirrors `handlePlayAssignedTask` +
-  `startTask()` in the web dashboard for the standard (non-fixed-pay) case;
-  see `src/lib/startTask.ts`. Fixed-pay tasks aren't supported yet (Start is
-  disabled for them — their web flow is a different instant one-shot log with
-  no timer). **Drag-to-reorder** within a status group on the Assigned tab
-  (the Available tab isn't reorderable — no `sort_order` concept for pending
-  tasks on web either), same as the web widget (grip handle, same
-  `/api/assigned-tasks/reorder` endpoint) — see
+- **Assigned Tasks** — a single list, `on_queue` and `in_progress` only.
+  Mirrors web's `AssignedTasksWidget.tsx` exactly as of its 2026-10-07 rework
+  (Toni's call): a newly-assigned (`pending`) task is accepted on web, not
+  here, and a task sent back for revision (`revision_needed`) drops out of
+  this list entirely until a VA moves it back to `on_queue` from the Needs
+  Revision list on web's Assignment page — there's no Accept or Rework button
+  in this app. (Desktop briefly had both, as a two-tab Assigned/Available
+  card with a Rework button — removed to match once web dropped them too;
+  see git history on `tasks.ts`/`TasksPanel.tsx` if that era's details ever
+  matter again.) The red **R / R2 / R3** revision badge still shows on a
+  reworked task once it's back `on_queue`/`in_progress` — `revision_count` is
+  a historical counter that doesn't reset, so the badge is just evidence this
+  one's been sent back before, not a live status. Each task shows its own
+  per-task to-do list (TD1, TD2, …), same visual pattern as
+  `AssignedTasksWidget.tsx`; fixed-pay tasks also show their `$rate` badge.
+  Long task names wrap under the badges instead of being squeezed. **Start**
+  on an `on_queue` task closes whatever log is currently open, begins
+  tracking a new one for it, and flips the assignee row to `in_progress` —
+  mirrors `handlePlayAssignedTask` + `startTask()` in the web dashboard for
+  the standard (non-fixed-pay) case; see `src/lib/startTask.ts`. Fixed-pay
+  tasks aren't supported yet (Start is disabled for them — their web flow is
+  a different instant one-shot log with no timer, and neither Accept for a
+  fixed-pay pending task nor Cancel Grab is ported, same reason).
+  **Drag-to-reorder** within a status group, same as the web widget (grip
+  handle, same `/api/assigned-tasks/reorder` endpoint) — see
   `src/lib/tasks.ts`'s `compareTasks`/`reorderAssignedTasks`. **Submit** on an
   `in_progress` task opens the same checklist + word-count-bar modal as web's
   `SubmitWorkModal.tsx` (attach files, a message, a link, or any combination —
@@ -57,10 +52,7 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   was the one actively being clocked, its open log is closed the same way
   Start/clock-out already do (no task-switch wizard here, same simplification
   as Break — see `src/contexts/SessionContext.tsx`'s comment on the
-  dashboard's memo-collection wizard this skips). **Accept** on the Available
-  tab moves a `pending` task to `on_queue` (where it then shows under
-  Assigned) — the same `setAssignedTaskStatus` write path as Rework/Start, so
-  no new backend work was needed. **To-do editing** — Add/Edit/Delete on each
+  dashboard's memo-collection wizard this skips). **To-do editing** — Add/Edit/Delete on each
   to-do item, right in the To-Do panel. Ported from `TaskEditor.tsx`'s
   checklist (`src/lib/taskTodos.ts`'s `addTodo`/`updateTodo`/`deleteTodo`) —
   not from `AssignedTasksWidget.tsx`, which doesn't have this either; it only
