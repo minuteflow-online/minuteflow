@@ -93,9 +93,9 @@ app.on("before-quit", () => {
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 900,
+    width: 1030,
     height: 640,
-    minWidth: 720,
+    minWidth: 810,
     minHeight: 520,
     backgroundColor: "#faf7f2", // --color-cream, avoids a white flash on load
     autoHideMenuBar: true,

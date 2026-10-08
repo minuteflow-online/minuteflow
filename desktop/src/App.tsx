@@ -410,7 +410,7 @@ export default function App() {
 
       {/* Body — matches the wireframe: left column timer+tasks, right column to-do+description */}
       <div className="flex flex-1 min-h-0 gap-4 p-4">
-        <div className="flex w-[320px] shrink-0 flex-col gap-4 min-h-0">
+        <div className="flex w-[450px] shrink-0 flex-col gap-4 min-h-0">
           <ClockPanel
             state={clockState}
             clockInTime={sessionRow?.clock_in_time ?? null}
