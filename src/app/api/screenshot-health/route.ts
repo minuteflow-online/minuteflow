@@ -97,7 +97,10 @@ export async function GET(request: NextRequest) {
 
   // Allow unauthenticated health checks; cron calls will have the Authorization header
   // but we don't gate on it — the endpoint is read-only and non-destructive.
-  const isCron = request.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
+  // An unset CRON_SECRET must never count as a match: "Bearer undefined" would
+  // otherwise pass as the scheduled job and trigger the alert email/Telegram note.
+  const cronSecret = process.env.CRON_SECRET;
+  const isCron = Boolean(cronSecret) && request.headers.get("authorization") === `Bearer ${cronSecret}`;
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
