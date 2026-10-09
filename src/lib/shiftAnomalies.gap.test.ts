@@ -7,12 +7,28 @@ import { checkShiftAnomalies, type ShiftLogRow } from "@/lib/shiftAnomalies";
 // plain sum of durations had no way to notice; this is the check that does.
 
 /** Minimal chainable fake covering exactly the calls checkShiftAnomalies
- *  makes: one query against time_logs (resolves with the row set), and one
- *  count-only query against task_screenshots per gap found (resolves with a
- *  count keyed by whichever log_id was queried). */
-function fakeSupabase(rows: ShiftLogRow[], screenshotCountsByLogId: Record<number, number> = {}) {
+ *  makes: one query against time_logs (resolves with the row set), one
+ *  count-only query against task_submissions for the day (resolves with
+ *  `submissionCount`), and one count-only query against task_screenshots per
+ *  gap found (resolves with a count keyed by whichever log_id was queried). */
+function fakeSupabase(
+  rows: ShiftLogRow[],
+  screenshotCountsByLogId: Record<number, number> = {},
+  submissionCount = 0
+) {
   return {
     from(table: string) {
+      if (table === "task_submissions") {
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          is: () => builder,
+          gte: () => builder,
+          lte: () => builder,
+          then: (resolve: (v: { count: number }) => void) => resolve({ count: submissionCount }),
+        };
+        return builder;
+      }
       if (table === "time_logs") {
         return {
           select: () => ({
@@ -146,5 +162,13 @@ describe("checkShiftAnomalies — gaps", () => {
     ];
     const result = await checkShiftAnomalies(fakeSupabase(rows), "u1", "2026-09-09");
     expect(result.clean).toBe(true);
+  });
+
+  it("reports how many submissions were handed in that day", async () => {
+    const rows = [
+      row({ id: 1, start_time: "2026-09-09T14:42:00.000Z", end_time: "2026-09-09T15:00:00.000Z" }),
+    ];
+    const result = await checkShiftAnomalies(fakeSupabase(rows, {}, 3), "u1", "2026-09-09");
+    expect(result.submissionCount).toBe(3);
   });
 });
