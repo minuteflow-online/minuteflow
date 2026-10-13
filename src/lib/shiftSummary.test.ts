@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { summarize, humanDuration, money, formatSummaryLine } from "@/lib/shiftSummary";
+import { summarize, humanDuration, money, formatSummaryLine, shiftSummaryLine } from "@/lib/shiftSummary";
 
 const NOW = new Date("2026-08-27T23:00:00.000Z").getTime();
 
@@ -171,5 +171,39 @@ describe("formatSummaryLine", () => {
       "⏱ Total <b>2h</b> · Billable <b>2h</b> · Break/personal <b>0m</b>\n" +
         "📦 Output-based: <b>1</b> task · <b>$13.75</b>"
     );
+  });
+});
+
+describe("shiftSummaryLine scoping", () => {
+  // Records the filters applied, and resolves with the given rows.
+  function fakeDb(rows: unknown[]) {
+    const calls: [string, string, unknown][] = [];
+    const q: Record<string, unknown> = {};
+    for (const m of ["eq", "gte", "lte"]) {
+      q[m] = (col: string, val: unknown) => (calls.push([m, col, val]), q);
+    }
+    q.select = () => q;
+    q.is = () => q;
+    q.then = (res: (v: unknown) => unknown) => res({ data: rows });
+    return { db: { from: () => q } as never, calls };
+  }
+
+  // An overnight shift: logs carry two session_dates, so the window, not the
+  // date, has to decide what counts.
+  it("uses the clock-in/out window and not session_date when the times are known", async () => {
+    const { db, calls } = fakeDb([log()]);
+    await shiftSummaryLine(db, "u1", "2026-10-12", {
+      clockInTime: "2026-10-12T02:53:00.000Z",
+      clockOutTime: "2026-10-12T12:01:00.000Z",
+    });
+    expect(calls.some(([m, c]) => m === "eq" && c === "session_date")).toBe(false);
+    expect(calls).toContainEqual(["gte", "start_time", "2026-10-12T02:51:00.000Z"]);
+    expect(calls).toContainEqual(["lte", "start_time", "2026-10-12T12:01:00.000Z"]);
+  });
+
+  it("falls back to session_date when there is no clock-in time", async () => {
+    const { db, calls } = fakeDb([log()]);
+    await shiftSummaryLine(db, "u1", "2026-10-12");
+    expect(calls).toContainEqual(["eq", "session_date", "2026-10-12"]);
   });
 });

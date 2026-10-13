@@ -147,19 +147,40 @@ export function formatSummaryLine(summary: ShiftSummary): string | null {
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
-/** Reads the day's logs and returns the alert lines, or null. */
+/** A log can start a moment before the session row records the clock-in. */
+const SHIFT_START_SLACK_MS = 2 * 60 * 1000;
+
+/**
+ * Reads the shift's logs and returns the alert lines, or null.
+ *
+ * Scoped by the shift's own clock-in/clock-out window when it is known, not by
+ * session_date. A shift that crosses the overnight cutoff gets logs stamped
+ * with two different session_dates (Charinade's 12:45–8:01 AM ET shift on
+ * 2026-10-12 reported 48m against 7h 16m worked), so a single-date filter
+ * only sees the slice that happens to share the session's date.
+ */
 export async function shiftSummaryLine(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: ReturnType<typeof createServiceClient<any>>,
   userId: string,
-  sessionDate: string
+  sessionDate: string,
+  shift?: { clockInTime?: string | null; clockOutTime?: string | null }
 ): Promise<string | null> {
-  const { data } = await supabase
+  let query = supabase
     .from("time_logs")
     .select("category, billable, billing_type, task_rate, start_time, end_time, duration_ms")
     .eq("user_id", userId)
-    .eq("session_date", sessionDate)
     .is("deleted_at", null);
 
+  const clockIn = shift?.clockInTime ? new Date(shift.clockInTime).getTime() : NaN;
+  if (Number.isFinite(clockIn)) {
+    query = query.gte("start_time", new Date(clockIn - SHIFT_START_SLACK_MS).toISOString());
+    const clockOut = shift?.clockOutTime ? new Date(shift.clockOutTime).getTime() : NaN;
+    if (Number.isFinite(clockOut)) query = query.lte("start_time", new Date(clockOut).toISOString());
+  } else {
+    query = query.eq("session_date", sessionDate);
+  }
+
+  const { data } = await query;
   return formatSummaryLine(summarize((data ?? []) as unknown as SummaryRow[]));
 }

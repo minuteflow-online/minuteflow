@@ -22,6 +22,7 @@ export const dynamic = "force-dynamic";
 type SessionRow = {
   user_id?: string;
   clocked_in?: boolean;
+  clock_in_time?: string | null;
   clock_out_time?: string | null;
   session_date?: string | null;
   active_task?: { isBreak?: boolean; category?: string } | null;
@@ -245,7 +246,10 @@ export async function POST(request: Request) {
   // actually work?" used to mean opening the admin panel every time. Private
   // to this chat — hours are between Toni and the person, not team reading.
   if (event === "clock_out" && userId && payload.record?.session_date) {
-    const summary = await shiftSummaryLine(admin, userId, payload.record.session_date);
+    const summary = await shiftSummaryLine(admin, userId, payload.record.session_date, {
+      clockInTime: payload.record.clock_in_time,
+      clockOutTime: payload.record.clock_out_time,
+    });
     if (summary) lines.push(summary);
   }
 
