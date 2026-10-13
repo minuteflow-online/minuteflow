@@ -230,7 +230,10 @@ export async function POST(request: Request, { params }: RouteContext) {
 
 /**
  * DELETE /api/assigned-tasks/[id]/attachments?attachmentId=<id>
- * Delete a specific attachment. Admin/manager (and permission-granted VAs) only.
+ * Delete a specific attachment. Same access rule as GET/POST: admin/manager
+ * (and permission-granted VAs) on any task, or a VA on a task assigned to
+ * them. It used to be admin-only, so a VA could attach a file to their own
+ * task but got a 403 ("Couldn't delete that attachment") trying to remove it.
  */
 export async function DELETE(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -245,16 +248,22 @@ export async function DELETE(request: Request, { params }: RouteContext) {
     .eq("id", user.id)
     .single();
 
-  if (!isAdminEquivalent(profile)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
+  const { id } = await params;
+
+  try {
+    const allowed = await canAccessAttachments(supabase, id, user.id, profile);
+    if (!allowed) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to verify access" }, { status: 500 });
   }
 
-  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
-  // RLS check (role stays "va"), so use the service-role client here once
-  // the app-layer check above has already cleared the caller.
+  // Plain VAs and permission-granted ones don't pass the DB's
+  // is_admin_or_manager() RLS check (role stays "va"), so use the service-role
+  // client here once the app-layer check above has already cleared the caller.
   const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
 
-  const { id } = await params;
   const { searchParams } = new URL(request.url);
   const attachmentId = searchParams.get("attachmentId");
 
