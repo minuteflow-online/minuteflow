@@ -247,7 +247,6 @@ export async function POST(request: Request) {
   // to this chat — hours are between Toni and the person, not team reading.
   if (event === "clock_out" && userId && payload.record?.session_date) {
     const summary = await shiftSummaryLine(admin, userId, payload.record.session_date, {
-      clockInTime: payload.record.clock_in_time,
       clockOutTime: payload.record.clock_out_time,
     });
     if (summary) lines.push(summary);

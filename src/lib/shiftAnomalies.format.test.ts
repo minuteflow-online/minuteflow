@@ -219,6 +219,17 @@ describe("formatShiftMessage", () => {
     expect(clean).not.toContain("▸");
   });
 
+  it("uses the Time Log's day total when given, instead of the session_date slice", () => {
+    // An overnight shift: logs here is only the slice sharing the session_date.
+    const msg = formatShiftMessage(
+      "Charinade Liezel David",
+      "2026-10-13",
+      { clean: true, findings: [], logs, submissionCount: 0 },
+      { billableMs: (8 * 60 + 5) * 60_000, entries: 12 }
+    );
+    expect(msg).toContain("Day: <b>8h5m</b> billable · 12 entries · 0 submissions");
+  });
+
   it("prints the whole thing for eyeballing", () => {
     console.log("\n" + message.replace(/<\/?b>/g, "").replace(/<\/?i>/g, "") + "\n");
     expect(message.length).toBeGreaterThan(0);

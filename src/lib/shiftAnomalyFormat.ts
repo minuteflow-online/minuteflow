@@ -85,16 +85,21 @@ function contextFor(finding: ShiftAnomalyFinding, logs: ShiftLogRow[]): ShiftLog
 export function formatShiftMessage(
   vaName: string,
   sessionDate: string,
-  result: ShiftAnomalyResult
+  result: ShiftAnomalyResult,
+  // The Time Log's own total for the day. When given it replaces the totals
+  // taken from result.logs, which are scoped by session_date and so miss part
+  // of an overnight shift.
+  day?: { billableMs: number; entries: number }
 ): string {
   // duration_ms is 0 on a good number of rows even where start and end are
   // half an hour apart, so the totals are computed rather than summed. The
   // first live alert reported a 26-minute billed break as "0 min" — the number
   // that made it look like nothing was the number being flagged.
-  const billableMs = result.logs
-    .filter((row) => row.billable)
-    .reduce((sum, row) => sum + entryDurationMs(row), 0);
-  const footer = `Day: <b>${compactDuration(billableMs)}</b> billable · ${result.logs.length} entries · ${result.submissionCount} submission${result.submissionCount === 1 ? "" : "s"}`;
+  const billableMs =
+    day?.billableMs ??
+    result.logs.filter((row) => row.billable).reduce((sum, row) => sum + entryDurationMs(row), 0);
+  const entryCount = day?.entries ?? result.logs.length;
+  const footer = `Day: <b>${compactDuration(billableMs)}</b> billable · ${entryCount} entries · ${result.submissionCount} submission${result.submissionCount === 1 ? "" : "s"}`;
 
   if (result.clean) {
     return [`✅ <b>${vaName}</b> — ${sessionDate}`, "", "Shift looks clean.", "", footer].join("\n");

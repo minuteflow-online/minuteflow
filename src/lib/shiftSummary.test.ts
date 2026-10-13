@@ -188,20 +188,19 @@ describe("shiftSummaryLine scoping", () => {
     return { db: { from: () => q } as never, calls };
   }
 
-  // An overnight shift: logs carry two session_dates, so the window, not the
-  // date, has to decide what counts.
-  it("uses the clock-in/out window and not session_date when the times are known", async () => {
+  // The Time Log's Day view totals the Eastern calendar day by start time, and
+  // Telegram has to agree with it: an overnight shift has entries stamped with
+  // two session_dates, so the date can't be what decides what counts.
+  it("counts the Eastern calendar day of the clock-out, not session_date", async () => {
     const { db, calls } = fakeDb([log()]);
-    await shiftSummaryLine(db, "u1", "2026-10-12", {
-      clockInTime: "2026-10-12T02:53:00.000Z",
-      clockOutTime: "2026-10-12T12:01:00.000Z",
-    });
+    // Clock-out 8:19 AM EDT on Oct 13 (12:19 UTC).
+    await shiftSummaryLine(db, "u1", "2026-10-12", { clockOutTime: "2026-10-13T12:19:00.000Z" });
     expect(calls.some(([m, c]) => m === "eq" && c === "session_date")).toBe(false);
-    expect(calls).toContainEqual(["gte", "start_time", "2026-10-12T02:51:00.000Z"]);
-    expect(calls).toContainEqual(["lte", "start_time", "2026-10-12T12:01:00.000Z"]);
+    expect(calls).toContainEqual(["gte", "start_time", "2026-10-13T04:00:00.000Z"]);
+    expect(calls).toContainEqual(["lte", "start_time", "2026-10-14T03:59:59.999Z"]);
   });
 
-  it("falls back to session_date when there is no clock-in time", async () => {
+  it("falls back to session_date when there is no clock-out time", async () => {
     const { db, calls } = fakeDb([log()]);
     await shiftSummaryLine(db, "u1", "2026-10-12");
     expect(calls).toContainEqual(["eq", "session_date", "2026-10-12"]);

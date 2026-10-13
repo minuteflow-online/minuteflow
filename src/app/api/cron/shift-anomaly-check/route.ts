@@ -2,6 +2,7 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import { sendTelegram, chatIdFor, esc } from "@/lib/telegram";
 import { checkShiftAnomalies, formatShiftMessage } from "@/lib/shiftAnomalies";
+import { dayTotalsForDate } from "@/lib/shiftSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -103,7 +104,8 @@ export async function GET(request: NextRequest) {
 
     const who = prof.full_name || prof.username || "Someone";
     const result = await checkShiftAnomalies(supabase, s.user_id as string, s.session_date as string);
-    const message = formatShiftMessage(esc(who), (s.session_date as string) ?? "", result);
+    const day = await dayTotalsForDate(supabase, s.user_id as string, s.session_date as string);
+    const message = formatShiftMessage(esc(who), (s.session_date as string) ?? "", result, day);
 
     // The finance chat, not a DM. These are billing questions, and they
     // belong where the invoices and paystubs are already discussed.
