@@ -1,4 +1,6 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { getDayBoundsInTimezone } from "@/lib/utils";
+import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 /**
  * The day's totals, appended to a clock-out alert in Toni's private chat.
@@ -147,24 +149,22 @@ export function formatSummaryLine(summary: ShiftSummary): string | null {
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
-/** A log can start a moment before the session row records the clock-in. */
-const SHIFT_START_SLACK_MS = 2 * 60 * 1000;
-
 /**
- * Reads the shift's logs and returns the alert lines, or null.
+ * Reads the day's logs and returns the alert lines, or null.
  *
- * Scoped by the shift's own clock-in/clock-out window when it is known, not by
- * session_date. A shift that crosses the overnight cutoff gets logs stamped
- * with two different session_dates (Charinade's 12:45–8:01 AM ET shift on
- * 2026-10-12 reported 48m against 7h 16m worked), so a single-date filter
- * only sees the slice that happens to share the session's date.
+ * Counts the Eastern calendar day the clock-out falls on, by each entry's
+ * start time. That is exactly how the Time Log's Day view totals a day, so the
+ * number in Telegram is the number Toni sees there. It is deliberately not
+ * session_date: that keeps an overnight shift on its clock-in day until 6 AM
+ * ET, so Charinade's 12:14–8:19 AM ET stretch on 2026-10-13 (8h 5m in the Time
+ * Log) reported 1h 37m — only the entries after the 6 AM cutoff.
  */
 export async function shiftSummaryLine(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: ReturnType<typeof createServiceClient<any>>,
   userId: string,
   sessionDate: string,
-  shift?: { clockInTime?: string | null; clockOutTime?: string | null }
+  shift?: { clockOutTime?: string | null }
 ): Promise<string | null> {
   let query = supabase
     .from("time_logs")
@@ -172,15 +172,39 @@ export async function shiftSummaryLine(
     .eq("user_id", userId)
     .is("deleted_at", null);
 
-  const clockIn = shift?.clockInTime ? new Date(shift.clockInTime).getTime() : NaN;
-  if (Number.isFinite(clockIn)) {
-    query = query.gte("start_time", new Date(clockIn - SHIFT_START_SLACK_MS).toISOString());
-    const clockOut = shift?.clockOutTime ? new Date(shift.clockOutTime).getTime() : NaN;
-    if (Number.isFinite(clockOut)) query = query.lte("start_time", new Date(clockOut).toISOString());
+  const clockOut = shift?.clockOutTime ? new Date(shift.clockOutTime).getTime() : NaN;
+  if (Number.isFinite(clockOut)) {
+    const { start, end } = getDayBoundsInTimezone(new Date(clockOut), ORG_TIMEZONE);
+    query = query.gte("start_time", start).lte("start_time", end);
   } else {
     query = query.eq("session_date", sessionDate);
   }
 
   const { data } = await query;
   return formatSummaryLine(summarize((data ?? []) as unknown as SummaryRow[]));
+}
+
+/**
+ * Billable time and entry count for one Eastern calendar day, counted the way
+ * the Time Log's Day view counts it (by each entry's start time). The daily
+ * review uses this for its "Day:" footer so an overnight shift isn't cut at the
+ * 6 AM session_date cutoff and reported as a fraction of the day.
+ */
+export async function dayTotalsForDate(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: ReturnType<typeof createServiceClient<any>>,
+  userId: string,
+  date: string
+): Promise<{ billableMs: number; entries: number }> {
+  const { start, end } = getDayBoundsInTimezone(new Date(`${date}T12:00:00Z`), ORG_TIMEZONE);
+  const { data } = await supabase
+    .from("time_logs")
+    .select("billable, start_time, end_time, duration_ms")
+    .eq("user_id", userId)
+    .is("deleted_at", null)
+    .gte("start_time", start)
+    .lte("start_time", end);
+  const rows = (data ?? []) as unknown as { billable: boolean | null; start_time: string; end_time: string | null; duration_ms: number | null }[];
+  const billableMs = rows.filter((r) => r.billable).reduce((sum, r) => sum + entryDurationMs(r), 0);
+  return { billableMs, entries: rows.length };
 }
