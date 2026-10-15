@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import type { TimeLog, Profile, TaskScreenshot } from "@/types/database";
-import { normalizePosition } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -709,11 +708,9 @@ export default function TimeLogPage() {
     const BREAK_EXCLUSION_DAY = "2026-07-06";
     logs.forEach((l) => {
       totalMs += l.duration_ms || 0;
-      // For Full Time VAs on/after July 6, breaks are never billable regardless of the flag
-      const logProfile = profiles.find((p) => p.id === l.user_id);
-      const isFullTimeVa = normalizePosition(logProfile?.position) === "Full Time";
+      // On/after July 6, breaks are never billable for any VA regardless of the flag
       const logDate = l.start_time ? l.start_time.slice(0, 10) : "";
-      const breakExcluded = l.category === "Break" && isFullTimeVa && logDate >= BREAK_EXCLUSION_DAY;
+      const breakExcluded = l.category === "Break" && logDate >= BREAK_EXCLUSION_DAY;
       if (l.billable && !breakExcluded) billableMs += l.duration_ms || 0;
       wizardMs += l.form_fill_ms || 0;
 
@@ -751,7 +748,7 @@ export default function TimeLogPage() {
       .map(([name, ms]) => ({ name, formatted: formatDuration(ms) }));
 
     return { totalMs, billableMs, wizardMs, entryCount, categories, fixedCount, hourlyCount, inProgressCount, completedCount, onHoldCount };
-  }, [profiles]);
+  }, []);
 
   const daySummary = useMemo(() => computeSummary(filteredLogs), [computeSummary, filteredLogs]);
 
