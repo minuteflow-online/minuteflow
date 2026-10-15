@@ -1,5 +1,3 @@
-import { normalizePosition } from "@/types/database";
-
 /**
  * The one place that decides which logged minutes a VA gets PAID for.
  *
@@ -25,12 +23,16 @@ export interface PayrollLog {
 
 export function isPayrollEligible(
   log: PayrollLog,
-  position: string | null | undefined
+  // Kept so callers don't change; break no longer depends on position.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _position?: string | null
 ): boolean {
   if (!log.duration_ms) return false;
   const category = (log.category || "").trim().toLowerCase();
   if (category === "personal" || category === "clock out") return false;
-  if (category === "break" && normalizePosition(position) === "Full Time") {
+  // Break is unpaid for every VA, not just Full Time — part-timers' paystubs
+  // were still paying it while their time log showed it as non-billable.
+  if (category === "break") {
     const dateKey = log.session_date || log.start_time.split("T")[0];
     if (dateKey >= PAYROLL_BREAK_EXCLUSION_DATE) return false;
   }

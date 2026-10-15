@@ -10,7 +10,7 @@ type AnySupabase = any;
 
 export interface PaystubComputation {
   payRate: number;
-  /** ms worked per local date (personal/clock-out excluded; break excluded for full-timers after cutoff). */
+  /** ms worked per local date (personal/clock-out excluded; break excluded for every VA after cutoff). */
   byDate: Record<string, number>;
   /** by_date carrying the per-day rate — the snapshot shape portal/print expect. */
   byDateWithRates: Record<string, { ms: number; rate: number }>;

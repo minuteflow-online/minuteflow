@@ -150,7 +150,7 @@ export async function POST(request: Request) {
   const entries = logs ?? [];
 
   // Group by session_date (local date) — matches Financial tab logic.
-  // Eligibility (personal/clock-out excluded, break excluded for Full Time VAs
+  // Eligibility (personal/clock-out excluded, break excluded for every VA
   // on/after the cutoff) lives in one place now — lib/payrollHours.ts — shared
   // with every other page that shows "how many hours does this person get
   // paid for" so they can't drift from what this route actually pays out.
