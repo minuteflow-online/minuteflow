@@ -1,5 +1,6 @@
 "use client";
 
+import { fixedTaskBelongsTo } from "@/lib/fixedPayCalendar";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -489,15 +490,16 @@ export default function ProductivityCalendarPage() {
         category: string | null;
         status: string;
         claimed_by: string | null;
+        assigned_to: string | null;
         planned_minutes: number | null;
         rate: number | string | null;
         task_detail: string | null;
       }>;
       let filtered = rows.filter((t) => t.due_date || t.start_date);
       if (!isAdminOrManager || scope === "__self__") {
-        filtered = filtered.filter((t) => t.claimed_by === userId);
+        filtered = filtered.filter((t) => fixedTaskBelongsTo(t, userId));
       } else if (scope !== "__all__") {
-        filtered = filtered.filter((t) => t.claimed_by === scope);
+        filtered = filtered.filter((t) => fixedTaskBelongsTo(t, scope));
       }
       // Same span-expansion as assignedDueItems: one dot per day in
       // [start_date, end_date], with the exact due_date day marked "due".
