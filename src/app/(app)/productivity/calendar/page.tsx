@@ -1,6 +1,7 @@
 "use client";
 
-import { fixedTaskBelongsTo } from "@/lib/fixedPayCalendar";
+import { fixedTaskBelongsTo, outputTasksForDay } from "@/lib/fixedPayCalendar";
+import { formatPayMoney, taskPayCurrency } from "@/lib/payroll";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -87,6 +88,20 @@ type ActualSpan = {
   minutes: number;
 };
 
+// Matches AssignedTasksWidget's status badge palette, so a status reads the
+// same color everywhere it appears in the app.
+const OUTPUT_STATUS_BADGE: Record<string, string> = {
+  pending: "bg-stone/10 text-stone border-stone/20",
+  on_queue: "bg-stone/10 text-stone border-stone/20",
+  in_progress: "bg-amber-50 text-amber-500 border-amber-200",
+  submitted: "bg-sky-50 text-sky-600 border-sky-200",
+  reviewing: "bg-violet-50 text-violet-600 border-violet-200",
+  revision_needed: "bg-amber-50 text-amber-600 border-amber-200",
+  approved: "bg-emerald-50 text-emerald-600 border-emerald-200",
+  completed: "bg-sage-soft text-sage border-sage/20",
+  paid: "bg-purple-50 text-purple-600 border-purple-200",
+};
+
 type DueItem = {
   id: string;
   // The underlying assigned_tasks/fixed_pay_tasks row id — id itself carries a
@@ -104,6 +119,10 @@ type DueItem = {
   category: string | null;
   projectId: string | null;
   isRecurring: boolean;
+  // Output Based only: the task's rate in its owner's currency, and its first
+  // day, for the Month view's hover card.
+  rate?: string | null;
+  startDate?: string | null;
   // True for the per-day items of a multi-day span (start_date..end_date) —
   // rendered in Month view as a connected line across the days rather than a
   // single dot.
@@ -491,6 +510,9 @@ export default function ProductivityCalendarPage() {
         status: string;
         claimed_by: string | null;
         assigned_to: string | null;
+        claimed_by_profile?: { pay_currency?: string | null } | null;
+        assigned_to_profile?: { pay_currency?: string | null } | null;
+        created_by_profile?: { pay_currency?: string | null } | null;
         planned_minutes: number | null;
         rate: number | string | null;
         task_detail: string | null;
@@ -513,6 +535,8 @@ export default function ProductivityCalendarPage() {
           category: t.category,
           projectId: null,
           isRecurring: false,
+          rate: Number.isFinite(Number(t.rate)) && t.rate !== null && t.rate !== "" ? formatPayMoney(Number(t.rate), taskPayCurrency(t)) : null,
+          startDate: t.start_date,
         };
         const out: DueItem[] = [];
         if (t.start_date) {
@@ -3237,12 +3261,14 @@ export default function ProductivityCalendarPage() {
               const isCurrentMonth = Number(dateStr.slice(5, 7)) - 1 === monthMonth;
               const isToday = dateStr === todayStr;
               const items = dueItemsByDate[dateStr] ?? [];
+              const outputTasks = outputTasksForDay(items);
+              const columnIndex = monthGrid.indexOf(dateStr) % 7;
               return (
                 <button
                   key={dateStr}
                   type="button"
                   onClick={() => openDay(dateStr)}
-                  className={`min-h-[84px] rounded-lg border p-1.5 text-left align-top transition-colors cursor-pointer ${
+                  className={`group relative min-h-[84px] rounded-lg border p-1.5 text-left align-top transition-colors cursor-pointer ${
                     isCurrentMonth ? "border-sand bg-white hover:bg-cream" : "border-transparent bg-parchment/40"
                   } ${isToday ? "ring-2 ring-terracotta" : ""}`}
                 >
@@ -3301,6 +3327,31 @@ export default function ProductivityCalendarPage() {
                       )}
                     </div>
                   </div>
+                  {/* Output Based tasks starting or due this day. Output work has no
+                      hour block, so the dots are all the grid shows; this names them.
+                      Days with none show nothing extra. */}
+                  {outputTasks.length > 0 && (
+                    <div
+                      className={`pointer-events-none absolute top-full z-30 mt-1 hidden w-60 space-y-1.5 rounded-lg border border-sand bg-white p-2.5 shadow-sm group-hover:block ${columnIndex >= 4 ? "right-0" : "left-0"}`}
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">Output Based</p>
+                      {outputTasks.slice(0, 3).map(({ item, label }) => (
+                        <div key={item.taskId} className="space-y-0.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="min-w-0 break-words text-[11px] font-semibold leading-tight text-espresso">{item.title}</span>
+                            {item.rate && <span className="shrink-0 text-[11px] font-medium text-walnut">{item.rate}</span>}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${OUTPUT_STATUS_BADGE[item.status] ?? "bg-stone/10 text-stone border-stone/20"}`}>
+                              {statusLabel(item.status)}
+                            </span>
+                            <span className="text-[10px] text-stone/80">{label}</span>
+                          </div>
+                        </div>
+                      ))}
+                      {outputTasks.length > 3 && <p className="text-[10px] text-stone">+{outputTasks.length - 3} more</p>}
+                    </div>
+                  )}
                 </button>
               );
             })}
