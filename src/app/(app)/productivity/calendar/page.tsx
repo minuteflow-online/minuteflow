@@ -1,7 +1,7 @@
 "use client";
 
-import { fixedTaskBelongsTo, outputTasksForDay } from "@/lib/fixedPayCalendar";
-import { formatPayMoney, taskPayCurrency } from "@/lib/payroll";
+import { fixedTaskBelongsTo, outputTasksForDay, formatOutputRateUsd } from "@/lib/fixedPayCalendar";
+import { parsePhpPerUsd, taskPayCurrency } from "@/lib/payroll";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -119,9 +119,10 @@ type DueItem = {
   category: string | null;
   projectId: string | null;
   isRecurring: boolean;
-  // Output Based only: the task's rate in its owner's currency, and its first
+  // Output Based only: the task's rate and its owner's currency, and its first
   // day, for the Month view's hover card.
-  rate?: string | null;
+  rateAmount?: number | null;
+  rateCurrency?: string | null;
   startDate?: string | null;
   // True for the per-day items of a multi-day span (start_date..end_date) —
   // rendered in Month view as a connected line across the days rather than a
@@ -219,6 +220,9 @@ export default function ProductivityCalendarPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("va");
   const [orgTimezone, setOrgTimezone] = useState("UTC");
+  // Pesos per dollar, from the Financial tab. Converts a peso-paid task's rate
+  // to dollars on the Month view's hover card.
+  const [phpPerUsd, setPhpPerUsd] = useState<number | null>(null);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [ready, setReady] = useState(false);
 
@@ -444,10 +448,11 @@ export default function ProductivityCalendarPage() {
 
       const { data: org } = await supabase
         .from("organization_settings")
-        .select("timezone")
+        .select("timezone, php_per_usd")
         .limit(1)
         .single();
       if (org?.timezone) setOrgTimezone(org.timezone);
+      setPhpPerUsd(parsePhpPerUsd(org?.php_per_usd));
       setReady(true);
     })();
   }, [supabase]);
@@ -535,7 +540,8 @@ export default function ProductivityCalendarPage() {
           category: t.category,
           projectId: null,
           isRecurring: false,
-          rate: Number.isFinite(Number(t.rate)) && t.rate !== null && t.rate !== "" ? formatPayMoney(Number(t.rate), taskPayCurrency(t)) : null,
+          rateAmount: t.rate !== null && t.rate !== "" && Number.isFinite(Number(t.rate)) ? Number(t.rate) : null,
+          rateCurrency: taskPayCurrency(t),
           startDate: t.start_date,
         };
         const out: DueItem[] = [];
@@ -3339,7 +3345,10 @@ export default function ProductivityCalendarPage() {
                         <div key={item.taskId} className="space-y-0.5">
                           <div className="flex items-start justify-between gap-2">
                             <span className="min-w-0 break-words text-[11px] font-semibold leading-tight text-espresso">{item.title}</span>
-                            {item.rate && <span className="shrink-0 text-[11px] font-medium text-walnut">{item.rate}</span>}
+                            {(() => {
+                              const rate = formatOutputRateUsd(item.rateAmount ?? null, item.rateCurrency, phpPerUsd);
+                              return rate ? <span className="shrink-0 text-[11px] font-medium text-walnut">{rate}</span> : null;
+                            })()}
                           </div>
                           <div className="flex items-center gap-1.5">
                             <span className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${OUTPUT_STATUS_BADGE[item.status] ?? "bg-stone/10 text-stone border-stone/20"}`}>

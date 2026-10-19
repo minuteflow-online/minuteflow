@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fixedTaskBelongsTo, outputTasksForDay } from "@/lib/fixedPayCalendar";
+import { fixedTaskBelongsTo, outputTasksForDay, formatOutputRateUsd } from "@/lib/fixedPayCalendar";
 
 describe("fixedTaskBelongsTo", () => {
   it("includes a task claimed by the person", () => {
@@ -50,5 +50,23 @@ describe("outputTasksForDay", () => {
 
   it("ignores time-based tasks", () => {
     expect(outputTasksForDay([item({ source: "assigned" })])).toEqual([]);
+  });
+});
+
+describe("formatOutputRateUsd", () => {
+  it("shows a dollar-paid task's rate as is", () => {
+    expect(formatOutputRateUsd(10, "USD", 58.5)).toBe("$10.00");
+  });
+
+  it("converts a peso-paid task's rate to dollars at the Peso Rate", () => {
+    expect(formatOutputRateUsd(585, "PHP", 58.5)).toBe("$10.00");
+  });
+
+  it("shows the peso amount, not a wrong dollar figure, when no Peso Rate is set", () => {
+    expect(formatOutputRateUsd(250, "PHP", null)).toBe("₱250.00");
+  });
+
+  it("shows nothing when the task has no rate", () => {
+    expect(formatOutputRateUsd(null, "USD", 58.5)).toBeNull();
   });
 });

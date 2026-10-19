@@ -1,3 +1,5 @@
+import { formatPayMoney, normalizePayCurrency, toUsd } from "@/lib/payroll";
+
 /**
  * Whether an Output Based task belongs on a given person's Calendar.
  *
@@ -44,4 +46,20 @@ export function outputTasksForDay<T extends OutputDayItem>(items: T[]): OutputDa
     if (!seen || label === "Due") byTask.set(item.taskId, { item, label });
   }
   return [...byTask.values()];
+}
+
+/**
+ * A task's rate for the hover card, in dollars. A peso-paid owner's rate is
+ * stored in pesos, so it is converted at the Financial tab's Peso Rate. With no
+ * rate set there is no honest dollar figure, so it shows the peso amount rather
+ * than relabel pesos as dollars.
+ */
+export function formatOutputRateUsd(
+  amount: number | null,
+  currency: string | null | undefined,
+  phpPerUsd: number | null
+): string | null {
+  if (amount == null || !Number.isFinite(amount)) return null;
+  const usd = toUsd(amount, currency, phpPerUsd);
+  return usd == null ? formatPayMoney(amount, normalizePayCurrency(currency)) : formatPayMoney(usd, "USD");
 }
