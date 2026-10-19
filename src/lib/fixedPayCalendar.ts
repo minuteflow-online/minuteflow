@@ -1,3 +1,5 @@
+import { formatPayMoney, normalizePayCurrency, toUsd } from "@/lib/payroll";
+
 /**
  * Whether an Output Based task belongs on a given person's Calendar.
  *
@@ -13,4 +15,51 @@ export function fixedTaskBelongsTo(
 ): boolean {
   if (task.claimed_by) return task.claimed_by === vaId;
   return task.assigned_to === vaId;
+}
+
+/** What the Month view's hover card needs from an Output Based due item. */
+export interface OutputDayItem {
+  taskId: number;
+  source: "assigned" | "fixed";
+  title: string;
+  date: string;
+  dateType: "due" | "start";
+  startDate?: string | null;
+}
+
+export type OutputDayEntry<T extends OutputDayItem> = { item: T; label: "Starts" | "Due" };
+
+/**
+ * The Output Based tasks to list on one day of the Month view: the ones that
+ * start or are due that day. A multi-day task also puts an item on every day in
+ * between (drawn as a bar); those are left out so the card doesn't repeat the
+ * task on each day of its span. A task that starts and is due the same day is
+ * listed once, as Due.
+ */
+export function outputTasksForDay<T extends OutputDayItem>(items: T[]): OutputDayEntry<T>[] {
+  const byTask = new Map<number, OutputDayEntry<T>>();
+  for (const item of items) {
+    if (item.source !== "fixed") continue;
+    const label = item.dateType === "due" ? "Due" : item.startDate === item.date ? "Starts" : null;
+    if (!label) continue;
+    const seen = byTask.get(item.taskId);
+    if (!seen || label === "Due") byTask.set(item.taskId, { item, label });
+  }
+  return [...byTask.values()];
+}
+
+/**
+ * A task's rate for the hover card, in dollars. A peso-paid owner's rate is
+ * stored in pesos, so it is converted at the Financial tab's Peso Rate. With no
+ * rate set there is no honest dollar figure, so it shows the peso amount rather
+ * than relabel pesos as dollars.
+ */
+export function formatOutputRateUsd(
+  amount: number | null,
+  currency: string | null | undefined,
+  phpPerUsd: number | null
+): string | null {
+  if (amount == null || !Number.isFinite(amount)) return null;
+  const usd = toUsd(amount, currency, phpPerUsd);
+  return usd == null ? formatPayMoney(amount, normalizePayCurrency(currency)) : formatPayMoney(usd, "USD");
 }
