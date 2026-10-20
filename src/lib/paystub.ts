@@ -134,6 +134,10 @@ export interface PaidOutputItem {
   amount: number;
   /** When the task was created, as a date in org time (e.g. "Sep 7, 2026"). */
   created_label: string | null;
+  /** The task's actual title — "Client Detail" on the Output Based Tasks table. */
+  title: string | null;
+  /** Client memos from the time logs worked against this task, oldest first. */
+  memos: string[];
 }
 
 /**
@@ -152,17 +156,49 @@ export async function fetchPaidOutputByLabel(
   if (wanted.length === 0) return byLabel;
   const { data } = await admin
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, rate, paid_period_label, created_at")
+    .select("id, task_name, task_detail, account, rate, paid_period_label, created_at")
     .eq("claimed_by", userId)
     .in("paid_period_label", wanted)
     .not("paid_at", "is", null)
     .is("deleted_at", null)
     .order("created_at", { ascending: true });
+  const tasks = (data ?? []) as Array<{ id: number; task_name: string | null; task_detail: string | null; account: string | null; rate: number | string | null; paid_period_label: string; created_at: string | null }>;
   // Dates are shown in org time, never the server's (UTC) — a task created
   // late in the evening would otherwise print as the next day.
   const { data: org } = await admin.from("organization_settings").select("timezone").limit(1).single();
   const timeZone = org?.timezone || "UTC";
-  for (const t of (data ?? []) as Array<{ id: number; task_name: string | null; account: string | null; rate: number | string | null; paid_period_label: string; created_at: string | null }>) {
+
+  // Memos live on the VA's time logs, which point at the claimed task's
+  // assigned_tasks mirror rather than at fixed_pay_tasks directly.
+  const memosByTask = new Map<number, string[]>();
+  if (tasks.length > 0) {
+    const { data: mirrors } = await admin
+      .from("assigned_tasks")
+      .select("id, fixed_pay_task_id")
+      .in("fixed_pay_task_id", tasks.map((t) => t.id));
+    const taskByMirror = new Map<number, number>(
+      ((mirrors ?? []) as Array<{ id: number; fixed_pay_task_id: number }>).map((m) => [m.id, Number(m.fixed_pay_task_id)])
+    );
+    if (taskByMirror.size > 0) {
+      const { data: logs } = await admin
+        .from("time_logs")
+        .select("assigned_task_id, client_memo")
+        .eq("user_id", userId)
+        .in("assigned_task_id", [...taskByMirror.keys()])
+        .not("client_memo", "is", null)
+        .order("start_time", { ascending: true });
+      for (const log of (logs ?? []) as Array<{ assigned_task_id: number; client_memo: string | null }>) {
+        const taskId = taskByMirror.get(log.assigned_task_id);
+        const memo = log.client_memo?.trim();
+        if (taskId == null || !memo) continue;
+        const list = memosByTask.get(taskId) ?? [];
+        if (!list.includes(memo)) list.push(memo);
+        memosByTask.set(taskId, list);
+      }
+    }
+  }
+
+  for (const t of tasks) {
     const list = byLabel.get(t.paid_period_label) ?? [];
     list.push({
       id: t.id,
@@ -172,6 +208,8 @@ export async function fetchPaidOutputByLabel(
       created_label: t.created_at
         ? new Date(t.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone })
         : null,
+      title: t.task_detail?.trim() || null,
+      memos: memosByTask.get(t.id) ?? [],
     });
     byLabel.set(t.paid_period_label, list);
   }

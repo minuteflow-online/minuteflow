@@ -94,7 +94,7 @@ interface PaystubSnapshot {
   /** Everything paid for this period, advances included — see /api/paystub/history. */
   total_paid?: number | null;
   /** Output Based Tasks this paystub settled — see /api/paystub/history. */
-  output_items?: Array<{ id: number; task_name: string; account: string; amount: number; created_label: string | null }>;
+  output_items?: Array<{ id: number; task_name: string; account: string; amount: number; created_label: string | null; title: string | null; memos: string[] }>;
   output_total?: number;
   payment_method: string | null;
   confirmation_number: string | null;
@@ -2038,19 +2038,29 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                         <thead>
                                           <tr className="text-bark/40 border-b border-linen">
                                             <th className="text-left pb-1 font-semibold">Created</th>
-                                            <th className="text-left pb-1 font-semibold">Task</th>
+                                            <th className="text-left pb-1 font-semibold">Task · Memo</th>
                                             <th className="text-right pb-1 font-semibold">Amount</th>
                                           </tr>
                                         </thead>
                                         <tbody>
                                           {outputItems.map((t) => (
-                                            <tr key={t.id} className="border-b border-linen/40">
-                                              <td className="py-1 pr-2 text-bark/70 whitespace-nowrap">{t.created_label ?? "—"}</td>
-                                              <td className="py-1 text-bark/70">
-                                                {t.task_name}
-                                                {t.account && <span className="text-bark/40"> · {t.account}</span>}
+                                            <tr key={t.id} className="border-b border-linen/40 align-top">
+                                              <td className="py-1.5 pr-2 text-bark/70 whitespace-nowrap">{t.created_label ?? "—"}</td>
+                                              <td className="py-1.5 pr-2">
+                                                <div className="font-medium text-espresso">{t.title || t.task_name}</div>
+                                                <div className="text-bark/40">
+                                                  {t.task_name}
+                                                  {t.account && <> · {t.account}</>}
+                                                </div>
+                                                {t.memos.length > 0 ? (
+                                                  t.memos.map((m, i) => (
+                                                    <div key={i} className="mt-0.5 italic text-bark/70 whitespace-pre-line">&ldquo;{m}&rdquo;</div>
+                                                  ))
+                                                ) : (
+                                                  <div className="mt-0.5 text-bark/30">No memo</div>
+                                                )}
                                               </td>
-                                              <td className="py-1 text-right text-bark/70">{snapMoney(t.amount)}</td>
+                                              <td className="py-1.5 text-right text-bark/70">{snapMoney(t.amount)}</td>
                                             </tr>
                                           ))}
                                           <tr className="font-semibold text-bark">
