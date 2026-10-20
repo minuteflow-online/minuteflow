@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { findCaptureGaps, formatGapMinutes } from "@/lib/screenshotGaps";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -2314,6 +2315,9 @@ function TaskScreenshotCard({
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
   const unchangedCount = group.shots.filter((s) => s.unchanged).length;
+  // Stretches with neither a screenshot nor a marker: capture wasn't running or
+  // couldn't report, which is different from a slot that recorded a reason.
+  const gaps = findCaptureGaps(group.shots.map((s) => s.captureTime), group.log);
   // "Idle" is a claim about the person; everything else is a claim about the
   // browser. Counting them together reads as an accusation the data does not
   // support — a VA in a Zoom meeting produces "could not capture" all hour.
@@ -2362,6 +2366,20 @@ function TaskScreenshotCard({
           {group.shots.length} shot{group.shots.length !== 1 ? "s" : ""}
         </span>
       </div>
+
+      {gaps.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+          {gaps.map((gap) => (
+            <span
+              key={gap.start}
+              className="rounded-full border border-amber/20 bg-amber-soft px-2 py-[1px] text-[9px] font-semibold text-amber"
+              title="Neither a screenshot nor a reason was recorded for this stretch, so capture was not running or could not report (for example the capture extension was signed out or off, the browser or desktop app was closed, the computer was asleep, or screen sharing was not started). Not a claim about the person."
+            >
+              No capture record · {formatCaptureTime(gap.start, orgTimezone)} – {formatCaptureTime(gap.end, orgTimezone)} ({formatGapMinutes(gap.minutes)})
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {group.shots.map((ss) => {
