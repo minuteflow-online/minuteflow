@@ -2373,7 +2373,7 @@ function TaskScreenshotCard({
             <span
               key={gap.start}
               className="rounded-full border border-amber/20 bg-amber-soft px-2 py-[1px] text-[9px] font-semibold text-amber"
-              title="Neither a screenshot nor a reason was recorded for this stretch, so capture was not running or could not report (for example the Dashboard tab was left or closed, the app or Chrome was closed, the computer was asleep, or the person was signed out). Not a claim about the person."
+              title="Neither a screenshot nor a reason was recorded for this stretch, so capture was not running or could not report (for example the capture extension was signed out or off, the browser or desktop app was closed, the computer was asleep, or screen sharing was not started). Not a claim about the person."
             >
               No capture record · {formatCaptureTime(gap.start, orgTimezone)} – {formatCaptureTime(gap.end, orgTimezone)} ({formatGapMinutes(gap.minutes)})
             </span>
