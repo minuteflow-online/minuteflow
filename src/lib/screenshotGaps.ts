@@ -25,18 +25,29 @@ export interface CaptureGap {
  * @param shotTimes  when each screenshot or marker of the task was recorded
  * @param log        the task's own start and end. An open task has no end, so
  *                   nothing is claimed about time after its last record.
+ * @param loaded     the span (ms) the page actually has records for. The task's
+ *                   start/end are ignored outside it, so a task cut off by the
+ *                   date filter is not reported as having a gap at the cut.
  */
 export function findCaptureGaps(
   shotTimes: string[],
   log: { start_time: string | null; end_time: string | null; category?: string | null } | null,
-  thresholdMs: number = CAPTURE_GAP_MS
+  thresholdMs: number = CAPTURE_GAP_MS,
+  loaded?: { start: number; end: number } | null
 ): CaptureGap[] {
   // A break is deliberately not captured, so a quiet break is not a gap.
   if (log?.category === "Break") return [];
 
   const points = shotTimes.map((t) => new Date(t).getTime()).filter((t) => Number.isFinite(t));
-  if (log?.start_time) points.push(new Date(log.start_time).getTime());
-  if (log?.end_time) points.push(new Date(log.end_time).getTime());
+  // The task's own start and end only count when the page actually loaded records
+  // that far. A date filter (or the 500-row limit) can cut a task in the middle:
+  // its earlier shots exist but are not on screen, and reading the task's start
+  // as "nothing was recorded since then" would invent a gap. Anything before the
+  // oldest loaded record, or after the newest, is outside what the page can judge.
+  const logStart = log?.start_time ? new Date(log.start_time).getTime() : NaN;
+  const logEnd = log?.end_time ? new Date(log.end_time).getTime() : NaN;
+  if (Number.isFinite(logStart) && (!loaded || logStart >= loaded.start)) points.push(logStart);
+  if (Number.isFinite(logEnd) && (!loaded || logEnd <= loaded.end)) points.push(logEnd);
   const sorted = points.filter((t) => Number.isFinite(t)).sort((a, b) => a - b);
 
   const gaps: CaptureGap[] = [];

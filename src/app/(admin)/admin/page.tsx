@@ -1044,7 +1044,7 @@ export default function AdminPage() {
    * `orderedScreenshots` is the same set flattened in exactly the rendered order,
    * so the lightbox arrows walk the grid the way it looks on screen.
    */
-  const { screenshotDays, orderedScreenshots } = useMemo(() => {
+  const { screenshotDays, orderedScreenshots, loadedWindow } = useMemo(() => {
     const withCapture: CapturedScreenshot[] = filteredScreenshots.map((ss) => {
       const fromFilename = screenshotCaptureTime(ss.filename);
       return {
@@ -1116,9 +1116,15 @@ export default function AdminPage() {
     days.forEach((d) => d.tasks.sort((a, b) => startedAt(a) - startedAt(b)));
     days.sort((a, b) => startedAt(b.tasks[0]) - startedAt(a.tasks[0]));
 
+    // The span the page really has records for. The date filter and the 500-row
+    // limit can cut a task off, so the gap labels judge nothing outside it.
+    const times = withCapture.map((ss) => new Date(ss.captureTime).getTime()).filter((n) => Number.isFinite(n));
+    const loadedWindow = times.length > 0 ? { start: Math.min(...times), end: Math.max(...times) } : null;
+
     return {
       screenshotDays: days,
       orderedScreenshots: days.flatMap((d) => d.tasks.flatMap((t) => t.shots)),
+      loadedWindow,
     };
   }, [filteredScreenshots, screenshotLogMap, orgTimezone]);
 
@@ -1725,6 +1731,7 @@ export default function AdminPage() {
               profiles={profiles}
               profileMap={profileMap}
               screenshotDays={screenshotDays}
+              loadedWindow={loadedWindow}
               totalScreenshots={filteredScreenshots.length}
               screenshotFilter={screenshotFilter}
               setScreenshotFilter={setScreenshotFilter}
@@ -2150,6 +2157,7 @@ function ScreenshotsTab({
   profiles,
   profileMap,
   screenshotDays,
+  loadedWindow,
   totalScreenshots,
   screenshotFilter,
   setScreenshotFilter,
@@ -2167,6 +2175,7 @@ function ScreenshotsTab({
   profiles: Profile[];
   profileMap: Map<string, Profile>;
   screenshotDays: ScreenshotPersonDay[];
+  loadedWindow: { start: number; end: number } | null;
   totalScreenshots: number;
   screenshotFilter: string;
   setScreenshotFilter: (v: string) => void;
@@ -2281,6 +2290,7 @@ function ScreenshotsTab({
                         screenshotUrls={screenshotUrls}
                         setSelectedScreenshot={setSelectedScreenshot}
                         orgTimezone={orgTimezone}
+                        loadedWindow={loadedWindow}
                       />
                     ))}
                   </div>
@@ -2305,19 +2315,21 @@ function TaskScreenshotCard({
   screenshotUrls,
   setSelectedScreenshot,
   orgTimezone,
+  loadedWindow,
 }: {
   group: ScreenshotTaskGroup;
   vaName: string;
   screenshotUrls: Record<number, string>;
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
   orgTimezone: string;
+  loadedWindow: { start: number; end: number } | null;
 }) {
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
   const unchangedCount = group.shots.filter((s) => s.unchanged).length;
   // Stretches with neither a screenshot nor a marker: capture wasn't running or
   // couldn't report, which is different from a slot that recorded a reason.
-  const gaps = findCaptureGaps(group.shots.map((s) => s.captureTime), group.log);
+  const gaps = findCaptureGaps(group.shots.map((s) => s.captureTime), group.log, undefined, loadedWindow);
   // "Idle" is a claim about the person; everything else is a claim about the
   // browser. Counting them together reads as an accusation the data does not
   // support — a VA in a Zoom meeting produces "could not capture" all hour.
