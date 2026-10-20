@@ -416,16 +416,19 @@ export async function GET(request: Request) {
           <tr>
             <th>Created</th>
             <th>Task</th>
-            <th>Account</th>
+            <th>Client Memo</th>
             <th class="text-right">Amount</th>
           </tr>
         </thead>
         <tbody>
           ${outputItems.map((t) => `
-          <tr>
+          <tr style="vertical-align:top;">
             <td style="white-space:nowrap;">${esc(t.created_label ?? "—")}</td>
-            <td>${esc(t.task_name)}</td>
-            <td>${esc(t.account)}</td>
+            <td>
+              <div style="font-weight:600;">${esc(t.task_name)}</div>
+              ${t.account ? `<div style="font-size:11px;color:#9e9080;">${esc(t.account)}</div>` : ""}
+            </td>
+            <td style="white-space:pre-line;">${t.client_memo ? esc(t.client_memo) : `<span style="color:#c4b8a8;">—</span>`}</td>
             <td class="text-right">${formatCurrency(t.amount)}</td>
           </tr>`).join("")}
           <tr>
