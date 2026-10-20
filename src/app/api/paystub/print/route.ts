@@ -415,7 +415,8 @@ export async function GET(request: Request) {
         <thead>
           <tr>
             <th>Created</th>
-            <th>Task · Memo</th>
+            <th>Task</th>
+            <th>Client Memo</th>
             <th class="text-right">Amount</th>
           </tr>
         </thead>
@@ -424,16 +425,14 @@ export async function GET(request: Request) {
           <tr style="vertical-align:top;">
             <td style="white-space:nowrap;">${esc(t.created_label ?? "—")}</td>
             <td>
-              <div style="font-weight:600;">${esc(t.title || t.task_name)}</div>
-              <div style="font-size:11px;color:#9e9080;">${esc(t.task_name)}${t.account ? ` · ${esc(t.account)}` : ""}</div>
-              ${t.memos.length > 0
-                ? t.memos.map((m) => `<div style="font-size:12px;font-style:italic;color:#6b5e52;margin-top:2px;white-space:pre-line;">&ldquo;${esc(m)}&rdquo;</div>`).join("")
-                : `<div style="font-size:11px;color:#c4b8a8;margin-top:2px;">No memo</div>`}
+              <div style="font-weight:600;">${esc(t.task_name)}</div>
+              ${t.account ? `<div style="font-size:11px;color:#9e9080;">${esc(t.account)}</div>` : ""}
             </td>
+            <td style="white-space:pre-line;">${t.client_memo ? esc(t.client_memo) : `<span style="color:#c4b8a8;">—</span>`}</td>
             <td class="text-right">${formatCurrency(t.amount)}</td>
           </tr>`).join("")}
           <tr>
-            <td colspan="2" style="font-weight:600;">Total Output Work</td>
+            <td colspan="3" style="font-weight:600;">Total Output Work</td>
             <td class="text-right" style="font-weight:600;">${formatCurrency(outputTotal)}</td>
           </tr>
         </tbody>
