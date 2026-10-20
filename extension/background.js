@@ -700,6 +700,30 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether the person is clocked in, when this worker has just woken up and its
+ * in-memory flag cannot be trusted. Asks the server; if that fails, falls back to
+ * the flag the last session poll saved. Only an answer of "yes" lets a capture
+ * proceed — with neither, the slot is skipped as before, so someone who is off
+ * the clock is never photographed on a guess.
+ */
+async function stillClockedIn(userId) {
+  try {
+    const rows = await DB.query('sessions', {
+      filters: `user_id=eq.${userId}&select=clocked_in&limit=1`,
+    });
+    if (Array.isArray(rows) && rows[0]) {
+      const clockedIn = !!rows[0].clocked_in;
+      isClockedIn = clockedIn;
+      return clockedIn;
+    }
+  } catch (err) {
+    console.warn('[MinuteFlow] Clocked-in check failed, using the saved flag:', err.message);
+  }
+  const saved = await chrome.storage.local.get('mf_clocked_in');
+  return saved.mf_clocked_in === true;
+}
+
+/**
  * One scheduled slot. Every 5 minutes while the VA is clocked in, this produces
  * exactly one row: a screenshot, or a marker saying why there isn't one.
  *
@@ -709,10 +733,15 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
  * extension having crashed. That silence is the thing this exists to remove.
  */
 async function runScheduledCapture() {
-  if (!isClockedIn) return; // Off the clock — nothing to account for.
-
   const session = await DB.getSession();
   if (!session) return;
+
+  // Off the clock — nothing to account for. isClockedIn lives in memory, and
+  // this alarm is exactly what wakes a sleeping service worker: it arrives with
+  // the flag blank, reads it as "clocked out", and skips the slot with no
+  // screenshot and no marker. So an in-memory "no" is only trusted after the
+  // server and the saved flag have both been asked.
+  if (!isClockedIn && !(await stillClockedIn(session.user.id))) return;
 
   // A break is time away from work, and photographing someone's screen through
   // it is not something a time tracker should do. Checked against the server
@@ -741,8 +770,14 @@ async function runScheduledCapture() {
   await queueMarker(session.user.id, null, 'Clocked in — no active task');
 }
 
-/** Start (or restart) the 5-minute capture alarm for the running task. */
-function startCaptureSchedule() {
+/** Start the 5-minute capture alarm for the running task, unless it is already running. */
+async function startCaptureSchedule() {
+  // chrome.alarms.create with an existing name REPLACES that alarm and restarts
+  // its countdown. A service worker that restarts more often than the delay
+  // (6.5 minutes) kept pushing the next capture back and it rarely fired. An
+  // alarm that is already running keeps its place; only a missing one is made.
+  const existing = await chrome.alarms.get('minuteflow-capture');
+  if (existing) return;
   chrome.alarms.create('minuteflow-capture', {
     periodInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
     delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES + CONFIG.CAPTURE_OFFSET_MINUTES,
@@ -798,10 +833,9 @@ async function onTaskStart(logId) {
   // One repeating capture every 5 minutes for the life of the task. Replaces the
   // old 1-minute, 3-minute and random 3-8 minute alarms, which stacked on top of
   // the app's own in-page schedule and produced several times the intended volume.
-  chrome.alarms.create('minuteflow-capture', {
-    periodInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
-    delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES + CONFIG.CAPTURE_OFFSET_MINUTES,
-  });
+  // Not re-created if already running, so starting a task does not reset the
+  // countdown to the next capture.
+  await startCaptureSchedule();
 }
 
 async function onTaskEnd(logId) {
@@ -1025,7 +1059,10 @@ async function runSessionCheck() {
     // leaves an unexplained silence until the next one starts.
     const wasClockedIn = isClockedIn;
     isClockedIn = !!userSession.clocked_in;
-    if (isClockedIn && !wasClockedIn) startCaptureSchedule();
+    // Saved so a worker that wakes up with blank memory can still tell (see
+    // stillClockedIn), and so the capture alarm is not skipped as "clocked out".
+    await chrome.storage.local.set({ mf_clocked_in: isClockedIn });
+    if (isClockedIn && !wasClockedIn) await startCaptureSchedule();
     if (!isClockedIn && wasClockedIn) cancelCaptureSchedule();
 
     // lastActiveTaskId is claimed BEFORE awaiting the handlers, not after. Both
@@ -1034,7 +1071,13 @@ async function runSessionCheck() {
     // value visible to the next poll, which re-ran the same transition; that is
     // where the duplicate start/end pairs 4-5 seconds apart came from.
     if (activeTask && parsedLogId) {
-      if (parsedLogId !== lastActiveTaskId) {
+      if (lastActiveTaskId === null && parsedLogId === currentTaskLogId) {
+        // The worker restarted: its memory is blank but the task it saved is the
+        // one the server still says is running. It resumed; it did not start. A
+        // "start" here took a bogus screenshot in the middle of the task and
+        // restarted the capture countdown on every wake.
+        lastActiveTaskId = parsedLogId;
+      } else if (parsedLogId !== lastActiveTaskId) {
         const previous = lastActiveTaskId;
         lastActiveTaskId = parsedLogId;
         if (previous) {
