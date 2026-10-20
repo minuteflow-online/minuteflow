@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { hasFinancialAccess } from "@/lib/financialAccess";
-import { formatPayMoney } from "@/lib/payroll";
+import { formatPayMoney, normalizePayCurrency, parsePhpPerUsd, toUsd } from "@/lib/payroll";
 
 // /admin/paystub-review/[id] — review an auto-generated paystub DRAFT, see the
 // daily breakdown, then approve (which sends the VA their paystub via the
@@ -67,10 +67,18 @@ export default function PaystubReviewPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [done, setDone] = useState(false);
+  // Pesos per $1 for this paycheck (peso-paid VAs) — starts at the Financial
+  // tab's default, saved on the payment so Financials can show it in dollars.
+  const [exchangeRate, setExchangeRate] = useState("");
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("paystub_snapshots").select("*").eq("id", id).single();
+    const [{ data }, { data: org }] = await Promise.all([
+      supabase.from("paystub_snapshots").select("*").eq("id", id).single(),
+      supabase.from("organization_settings").select("php_per_usd").limit(1).maybeSingle(),
+    ]);
     setSnap(data as SnapshotRow | null);
+    const defaultRate = parsePhpPerUsd(org?.php_per_usd);
+    setExchangeRate((prev) => prev || (defaultRate != null ? String(defaultRate) : ""));
     setLoading(false);
   }, [id, supabase]);
 
@@ -101,7 +109,9 @@ export default function PaystubReviewPage() {
     })
     .sort((a, b) => a.date.localeCompare(b.date));
   const alreadySent = snap.status === "sent" || done;
-  const canApprove = !!confInput.trim() && !!method && !busy && !alreadySent;
+  const isPeso = normalizePayCurrency(snap.currency) === "PHP";
+  const pesoRate = isPeso ? parsePhpPerUsd(exchangeRate) : null;
+  const canApprove = !!confInput.trim() && !!method && !busy && !alreadySent && (!isPeso || pesoRate != null);
 
   const approve = async () => {
     if (!canApprove) return;
@@ -118,6 +128,7 @@ export default function PaystubReviewPage() {
           payment_method: method,
           confirmation_number: confInput.trim(),
           payment_date: payDate,
+          exchange_rate: pesoRate,
         }),
       });
       const json = await res.json();
@@ -230,6 +241,25 @@ export default function PaystubReviewPage() {
                   className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
               </div>
             </div>
+            {isPeso && (() => {
+              const usd = toUsd(Number(snap.gross_pay) || 0, "PHP", pesoRate);
+              return (
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">
+                    Exchange Rate (₱ per $1) <span className="normal-case font-normal text-bark/60">— for Financials only, the VA sees pesos</span>
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input type="number" step="0.01" min="0" value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)} placeholder="e.g. 61.82"
+                      className="w-32 rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+                    <span className="text-[12px] text-bark/70">
+                      {usd != null
+                        ? <>{fmtMoney(Number(snap.gross_pay))} ≈ <span className="font-semibold text-espresso">{formatPayMoney(usd, "USD")}</span> in Financials</>
+                        : "Enter this paycheck's rate."}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
             <button
               onClick={approve}
               disabled={!canApprove}
@@ -238,6 +268,7 @@ export default function PaystubReviewPage() {
               {busy ? "Sending…" : "Approve & send paystub"}
             </button>
             {!confInput.trim() && <p className="text-[11px] text-bark/60">Send stays locked until a confirmation # is entered.</p>}
+            {isPeso && pesoRate == null && <p className="text-[11px] text-bark/60">Send stays locked until this paycheck&apos;s exchange rate is entered.</p>}
           </>
         )}
       </div>
