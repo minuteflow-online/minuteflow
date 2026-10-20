@@ -93,6 +93,9 @@ interface PaystubSnapshot {
   amount_paid: number;
   /** Everything paid for this period, advances included — see /api/paystub/history. */
   total_paid?: number | null;
+  /** Output Based Tasks this paystub settled — see /api/paystub/history. */
+  output_items?: Array<{ id: number; task_name: string; account: string; amount: number }>;
+  output_total?: number;
   payment_method: string | null;
   confirmation_number: string | null;
   payment_date: string | null;
@@ -1973,6 +1976,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     const isExpanded = expandedId === snap.id;
                     const totalHrs = snap.total_hours_ms / 3_600_000;
                     const snapMoney = (n: number) => formatCurrency(n, snap.currency);
+                    const outputItems = snap.output_items ?? [];
+                    const outputTotal = snap.output_total ?? 0;
+                    const earned = snap.gross_pay + outputTotal;
                     return (
                       <React.Fragment key={snap.id}>
                         <tr
@@ -1986,7 +1992,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right text-bark/70">{totalHrs.toFixed(2)} hrs</td>
-                          <td className="px-4 py-3 text-right text-bark/70">{snapMoney(snap.gross_pay)}</td>
+                          <td className="px-4 py-3 text-right text-bark/70">{snapMoney(earned)}</td>
                           <td className="px-4 py-3 text-right font-semibold text-terracotta">{snapMoney(snap.total_paid ?? snap.amount_paid)}</td>
                           <td className="px-4 py-3 text-right text-bark/50 hidden sm:table-cell capitalize">
                             {snap.payment_method ? snap.payment_method.replace(/_/g, " ") : "—"}
@@ -2024,6 +2030,35 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                         ))}
                                     </tbody>
                                   </table>
+
+                                  {outputItems.length > 0 && (
+                                    <>
+                                      <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mt-4 mb-2">Output Based Work Paid</div>
+                                      <table className="w-full text-xs">
+                                        <thead>
+                                          <tr className="text-bark/40 border-b border-linen">
+                                            <th className="text-left pb-1 font-semibold">Task</th>
+                                            <th className="text-right pb-1 font-semibold">Amount</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {outputItems.map((t) => (
+                                            <tr key={t.id} className="border-b border-linen/40">
+                                              <td className="py-1 text-bark/70">
+                                                {t.task_name}
+                                                {t.account && <span className="text-bark/40"> · {t.account}</span>}
+                                              </td>
+                                              <td className="py-1 text-right text-bark/70">{snapMoney(t.amount)}</td>
+                                            </tr>
+                                          ))}
+                                          <tr className="font-semibold text-bark">
+                                            <td className="pt-1">{outputItems.length} task{outputItems.length === 1 ? "" : "s"}</td>
+                                            <td className="pt-1 text-right">{snapMoney(outputTotal)}</td>
+                                          </tr>
+                                        </tbody>
+                                      </table>
+                                    </>
+                                  )}
                                 </div>
 
                                 {/* Payment details */}
@@ -2038,9 +2073,21 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <span className="text-bark/40">Total Hours</span>
                                       <span>{totalHrs.toFixed(2)} hrs</span>
                                     </div>
+                                    {outputTotal > 0 && (
+                                      <>
+                                        <div className="flex justify-between">
+                                          <span className="text-bark/40">Time-based Pay</span>
+                                          <span>{snapMoney(snap.gross_pay)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-bark/40">Output Based Work</span>
+                                          <span>{snapMoney(outputTotal)}</span>
+                                        </div>
+                                      </>
+                                    )}
                                     <div className="flex justify-between font-semibold border-t border-linen pt-1 mt-1">
                                       <span>Gross Pay</span>
-                                      <span>{snapMoney(snap.gross_pay)}</span>
+                                      <span>{snapMoney(earned)}</span>
                                     </div>
                                     <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
                                       <span>Amount Paid</span>
