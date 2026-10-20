@@ -42,6 +42,42 @@ describe("findCaptureGaps", () => {
   });
 });
 
+describe("findCaptureGaps when the date filter cuts a task", () => {
+  const t = (iso: string) => new Date(iso).getTime();
+
+  it("does not call the hidden part before the first loaded shot a gap", () => {
+    // Task started 8:03 PM; "Today" only loaded records from midnight on.
+    const shots = ["2026-10-20T04:02:11.000Z", "2026-10-20T04:02:56.000Z"];
+    const log = { start_time: "2026-10-20T00:03:18.000Z", end_time: null };
+    const loaded = { start: t("2026-10-20T04:02:11.000Z"), end: t("2026-10-20T04:02:56.000Z") };
+    expect(findCaptureGaps(shots, log, undefined, loaded)).toEqual([]);
+    // Without the loaded span the same input is flagged: the bug this guards against.
+    expect(findCaptureGaps(shots, log)).toHaveLength(1);
+  });
+
+  it("still flags a real gap at the start of a task the page fully loaded", () => {
+    const shots = ["2026-09-30T10:31:46.000Z"];
+    const log = { start_time: "2026-09-30T07:46:04.000Z", end_time: "2026-09-30T10:38:39.000Z" };
+    const loaded = { start: t("2026-09-01T00:00:00.000Z"), end: t("2026-10-19T00:00:00.000Z") };
+    const gaps = findCaptureGaps(shots, log, undefined, loaded);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].minutes).toBe(166); // 7:46:04 -> 10:31:46 = 165m42s
+  });
+
+  it("ignores a task end that falls after the newest loaded record", () => {
+    const shots = ["2026-10-19T20:00:00.000Z"];
+    const log = { start_time: "2026-10-19T20:00:00.000Z", end_time: "2026-10-19T23:00:00.000Z" };
+    const loaded = { start: t("2026-10-19T00:00:00.000Z"), end: t("2026-10-19T20:00:00.000Z") };
+    expect(findCaptureGaps(shots, log, undefined, loaded)).toEqual([]);
+  });
+
+  it("still finds gaps between two shots inside a cut task", () => {
+    const shots = ["2026-10-20T04:00:00.000Z", "2026-10-20T04:30:00.000Z"];
+    const loaded = { start: t("2026-10-20T04:00:00.000Z"), end: t("2026-10-20T04:30:00.000Z") };
+    expect(findCaptureGaps(shots, { start_time: "2026-10-20T00:00:00.000Z", end_time: null }, undefined, loaded)).toHaveLength(1);
+  });
+});
+
 describe("formatGapMinutes", () => {
   it("reads like the rest of the page", () => {
     expect(formatGapMinutes(114)).toBe("1h 54m");
