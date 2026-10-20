@@ -414,7 +414,7 @@ export async function GET(request: Request) {
       <table class="breakdown">
         <thead>
           <tr>
-            <th>Created</th>
+            <th>First Submitted</th>
             <th>Task</th>
             <th>Client Memo</th>
             <th class="text-right">Amount</th>
@@ -423,7 +423,7 @@ export async function GET(request: Request) {
         <tbody>
           ${outputItems.map((t) => `
           <tr style="vertical-align:top;">
-            <td style="white-space:nowrap;">${esc(t.created_label ?? "—")}</td>
+            <td style="white-space:nowrap;">${t.submitted_label ? esc(t.submitted_label) : "Not submitted"}</td>
             <td>
               <div style="font-weight:600;">${esc(t.task_name)}</div>
               ${t.account ? `<div style="font-size:11px;color:#9e9080;">${esc(t.account)}</div>` : ""}

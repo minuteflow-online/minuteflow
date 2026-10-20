@@ -96,7 +96,7 @@ interface PaystubSnapshot {
   /** Everything paid for this period, advances included — see /api/paystub/history. */
   total_paid?: number | null;
   /** Output Based Tasks this paystub settled — see /api/paystub/history. */
-  output_items?: Array<{ id: number; task_name: string; account: string; amount: number; created_label: string | null; client_memo: string | null }>;
+  output_items?: Array<{ id: number; task_name: string; account: string; amount: number; submitted_label: string | null; client_memo: string | null }>;
   output_total?: number;
   payment_method: string | null;
   confirmation_number: string | null;
@@ -152,7 +152,9 @@ function OutputTaskRow({
           {statusLabel(item.status)}
         </span>
       </td>
-      <td className="py-1.5 text-bark/70">{item.date ? formatDateLabel(item.date.split("T")[0]) : "—"}</td>
+      <td className="py-1.5 text-bark/70">
+        {item.date ? formatDateLabel(item.date.split("T")[0]) : <span className="text-bark/30">Not submitted</span>}
+      </td>
       <td className="py-1.5 text-right text-bark/70">{formatCurrency(item.amount, currency)}</td>
       <td className="py-1.5 text-right">
         {!isCompleted && (
@@ -1349,7 +1351,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           <th className="text-left pb-1.5 font-semibold w-6"></th>
                           <th className="text-left pb-1.5 font-semibold">Task</th>
                           <th className="text-left pb-1.5 font-semibold">Status</th>
-                          <th className="text-left pb-1.5 font-semibold">Date</th>
+                          <th className="text-left pb-1.5 font-semibold">First Submitted</th>
                           <th className="text-right pb-1.5 font-semibold">Amount</th>
                           <th className="text-right pb-1.5 font-semibold"></th>
                         </tr>
@@ -1400,7 +1402,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                 <th className="text-left pb-1.5 font-semibold w-6"></th>
                                 <th className="text-left pb-1.5 font-semibold">Task</th>
                                 <th className="text-left pb-1.5 font-semibold">Status</th>
-                                <th className="text-left pb-1.5 font-semibold">Date</th>
+                                <th className="text-left pb-1.5 font-semibold">First Submitted</th>
                                 <th className="text-right pb-1.5 font-semibold">Amount</th>
                                 <th className="text-right pb-1.5 font-semibold"></th>
                               </tr>
@@ -2269,7 +2271,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                   <table className="w-full text-xs">
                                     <thead>
                                       <tr className="text-bark/40 border-b border-linen">
-                                        <th className="text-left pb-1 font-semibold">Created</th>
+                                        <th className="text-left pb-1 font-semibold">First Submitted</th>
                                         <th className="text-left pb-1 font-semibold">Task</th>
                                         <th className="text-left pb-1 font-semibold">Client Memo</th>
                                         <th className="text-right pb-1 font-semibold">Amount</th>
@@ -2278,7 +2280,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                     <tbody>
                                       {outputItems.map((t) => (
                                         <tr key={t.id} className="border-b border-linen/40 align-top">
-                                          <td className="py-1.5 pr-2 text-bark/70 whitespace-nowrap">{t.created_label ?? "—"}</td>
+                                          <td className="py-1.5 pr-2 text-bark/70 whitespace-nowrap">{t.submitted_label ?? <span className="text-bark/30">Not submitted</span>}</td>
                                           <td className="py-1.5 pr-2">
                                             <div className="font-medium text-espresso">{t.task_name}</div>
                                             {t.account && <div className="text-bark/40">{t.account}</div>}

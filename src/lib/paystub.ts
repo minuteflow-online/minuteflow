@@ -127,13 +127,59 @@ export async function computePaystubData(
   };
 }
 
+/** The org's timezone — every date MinuteFlow shows is in org time. */
+async function orgTimeZone(admin: AnySupabase): Promise<string> {
+  const { data } = await admin.from("organization_settings").select("timezone").limit(1).maybeSingle();
+  return data?.timezone || "UTC";
+}
+
+/**
+ * When each Output Based Task (fixed_pay_tasks id) was FIRST submitted, as a
+ * YYYY-MM-DD date in org time. Pay is by first submission: a revision is
+ * included in the reel's rate, so later resubmissions and status changes
+ * must not move the date. Submissions hang off the claimed task's
+ * assigned_tasks mirror; a task never submitted is absent from the map.
+ */
+export async function fetchFirstSubmittedDates(
+  admin: AnySupabase,
+  fixedPayTaskIds: number[],
+  timeZone?: string
+): Promise<Map<number, string>> {
+  const firstByTask = new Map<number, string>();
+  const ids = [...new Set(fixedPayTaskIds)];
+  if (ids.length === 0) return firstByTask;
+  const { data: mirrors } = await admin
+    .from("assigned_tasks")
+    .select("id, fixed_pay_task_id")
+    .in("fixed_pay_task_id", ids);
+  const taskByMirror = new Map<number, number>(
+    ((mirrors ?? []) as Array<{ id: number; fixed_pay_task_id: number | string }>).map((m) => [Number(m.id), Number(m.fixed_pay_task_id)])
+  );
+  if (taskByMirror.size === 0) return firstByTask;
+  const { data: subs } = await admin
+    .from("task_submissions")
+    .select("assigned_task_id, created_at")
+    .in("assigned_task_id", [...taskByMirror.keys()])
+    .eq("message_type", "submission")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true });
+  const tz = timeZone ?? (await orgTimeZone(admin));
+  for (const s of (subs ?? []) as Array<{ assigned_task_id: number; created_at: string }>) {
+    const taskId = taskByMirror.get(Number(s.assigned_task_id));
+    if (taskId == null || firstByTask.has(taskId)) continue;
+    // en-CA formats as YYYY-MM-DD.
+    firstByTask.set(taskId, new Date(s.created_at).toLocaleDateString("en-CA", { timeZone: tz }));
+  }
+  return firstByTask;
+}
+
 export interface PaidOutputItem {
   id: number;
   task_name: string;
   account: string;
   amount: number;
-  /** When the task was created, as a date in org time (e.g. "Sep 7, 2026"). */
-  created_label: string | null;
+  /** First submission date, in org time (e.g. "Sep 7, 2026"); null if never submitted. */
+  submitted_label: string | null;
   /** The client memo — "Client Detail" on the Output Based Tasks table, kept
    *  in sync with the time-log memo by syncTaskDetailFromMemo. */
   client_memo: string | null;
@@ -162,20 +208,22 @@ export async function fetchPaidOutputByLabel(
     .is("deleted_at", null)
     .order("created_at", { ascending: true });
   const tasks = (data ?? []) as Array<{ id: number; task_name: string | null; task_detail: string | null; account: string | null; rate: number | string | null; paid_period_label: string; created_at: string | null }>;
-  // Dates are shown in org time, never the server's (UTC) — a task created
-  // late in the evening would otherwise print as the next day.
-  const { data: org } = await admin.from("organization_settings").select("timezone").limit(1).single();
-  const timeZone = org?.timezone || "UTC";
+  const firstSubmitted = await fetchFirstSubmittedDates(admin, tasks.map((t) => t.id));
 
-  for (const t of tasks) {
+  // Listed in first-submission order; never-submitted tasks go last.
+  const ordered = [...tasks].sort((a, b) =>
+    (firstSubmitted.get(a.id) ?? "9999").localeCompare(firstSubmitted.get(b.id) ?? "9999")
+  );
+  for (const t of ordered) {
     const list = byLabel.get(t.paid_period_label) ?? [];
+    const day = firstSubmitted.get(t.id);
     list.push({
       id: t.id,
       task_name: t.task_name ?? "Output Based Task",
       account: t.account ?? "",
       amount: Number(t.rate) || 0,
-      created_label: t.created_at
-        ? new Date(t.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone })
+      submitted_label: day
+        ? new Date(day + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
         : null,
       client_memo: t.task_detail?.trim() || null,
     });
