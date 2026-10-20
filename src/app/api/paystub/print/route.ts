@@ -414,6 +414,7 @@ export async function GET(request: Request) {
       <table class="breakdown">
         <thead>
           <tr>
+            <th>Created</th>
             <th>Task</th>
             <th>Account</th>
             <th class="text-right">Amount</th>
@@ -422,12 +423,13 @@ export async function GET(request: Request) {
         <tbody>
           ${outputItems.map((t) => `
           <tr>
+            <td style="white-space:nowrap;">${esc(t.created_label ?? "—")}</td>
             <td>${esc(t.task_name)}</td>
             <td>${esc(t.account)}</td>
             <td class="text-right">${formatCurrency(t.amount)}</td>
           </tr>`).join("")}
           <tr>
-            <td colspan="2" style="font-weight:600;">Total Output Work</td>
+            <td colspan="3" style="font-weight:600;">Total Output Work</td>
             <td class="text-right" style="font-weight:600;">${formatCurrency(outputTotal)}</td>
           </tr>
         </tbody>

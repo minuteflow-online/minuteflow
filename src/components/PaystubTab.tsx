@@ -94,7 +94,7 @@ interface PaystubSnapshot {
   /** Everything paid for this period, advances included — see /api/paystub/history. */
   total_paid?: number | null;
   /** Output Based Tasks this paystub settled — see /api/paystub/history. */
-  output_items?: Array<{ id: number; task_name: string; account: string; amount: number }>;
+  output_items?: Array<{ id: number; task_name: string; account: string; amount: number; created_label: string | null }>;
   output_total?: number;
   payment_method: string | null;
   confirmation_number: string | null;
@@ -2037,6 +2037,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <table className="w-full text-xs">
                                         <thead>
                                           <tr className="text-bark/40 border-b border-linen">
+                                            <th className="text-left pb-1 font-semibold">Created</th>
                                             <th className="text-left pb-1 font-semibold">Task</th>
                                             <th className="text-right pb-1 font-semibold">Amount</th>
                                           </tr>
@@ -2044,6 +2045,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                         <tbody>
                                           {outputItems.map((t) => (
                                             <tr key={t.id} className="border-b border-linen/40">
+                                              <td className="py-1 pr-2 text-bark/70 whitespace-nowrap">{t.created_label ?? "—"}</td>
                                               <td className="py-1 text-bark/70">
                                                 {t.task_name}
                                                 {t.account && <span className="text-bark/40"> · {t.account}</span>}
@@ -2052,7 +2054,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                             </tr>
                                           ))}
                                           <tr className="font-semibold text-bark">
-                                            <td className="pt-1">{outputItems.length} task{outputItems.length === 1 ? "" : "s"}</td>
+                                            <td className="pt-1" colSpan={2}>{outputItems.length} task{outputItems.length === 1 ? "" : "s"}</td>
                                             <td className="pt-1 text-right">{snapMoney(outputTotal)}</td>
                                           </tr>
                                         </tbody>
