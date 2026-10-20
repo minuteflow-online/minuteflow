@@ -3,7 +3,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { normalizeByDateValue, isFixedPeriodRate, formatPayMoney, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 import { esc } from "@/lib/approvalPages";
-import { fetchPaidOutputByLabel } from "@/lib/paystub";
+import { fetchPaidOutputByLabel, fetchPeriodPayments } from "@/lib/paystub";
 
 export const dynamic = "force-dynamic";
 
@@ -78,16 +78,17 @@ export async function GET(request: Request) {
   // period part-settled by an advance otherwise printed $145.00 against
   // $196.50 actually received, and showed a balance still owing when the VA
   // had in fact been overpaid.
-  const { data: periodPayments } = await adminClient
-    .from("va_payments")
-    .select("amount")
-    .eq("va_id", snap.user_id)
-    .eq("period_start", snap.period_start)
-    .eq("period_end", snap.period_end);
-  const paidForPeriod = (periodPayments ?? []).reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const amountPaid = periodPayments && periodPayments.length > 0
-    ? paidForPeriod
-    : (snap.amount_paid as number);
+  // Split into what was sent earlier (advances) and what this paystub paid,
+  // so the stub shows both rather than one blended figure.
+  const periodPayments = await fetchPeriodPayments(adminClient, snap.user_id as string, {
+    period_start: snap.period_start as string,
+    period_end: snap.period_end as string,
+    pay_period_label: snap.pay_period_label as string,
+    amount_paid: snap.amount_paid as number,
+  });
+  const paidThisStub = Number(snap.amount_paid || 0);
+  const earlierPayments = periodPayments.earlier;
+  const amountPaid = paidThisStub + earlierPayments.reduce((sum, p) => sum + p.amount, 0);
   const remainingBalance = grossPay - amountPaid;
   const isFixedPeriod = isFixedPeriodRate(snap.pay_rate_type as string | null);
   const formatCurrency = (amount: number) => formatPayMoney(amount, snap.currency as string | null);
@@ -471,10 +472,26 @@ export async function GET(request: Request) {
           <td>Gross Pay</td>
           <td>${formatCurrency(grossPay)}</td>
         </tr>
+        ${earlierPayments.length > 0 ? `
+        <tr>
+          <td colspan="2" style="padding-top:10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#9e9080;">Sent Earlier</td>
+        </tr>
+        ${earlierPayments.map((p) => `<tr>
+          <td style="font-size:12px;">${p.payment_date ? formatDate(p.payment_date) : "—"}${p.payment_method ? ` · ${esc(PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method)}` : ""}${p.confirmation_number ? ` · ${esc(p.confirmation_number)}` : ""}</td>
+          <td style="font-size:12px;">${formatCurrency(p.amount)}</td>
+        </tr>`).join("")}
+        <tr class="amount-paid-row">
+          <td>Paid on This Paystub</td>
+          <td>${formatCurrency(paidThisStub)}</td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;">Total Paid for Period</td>
+          <td style="font-weight:600;">${formatCurrency(amountPaid)}</td>
+        </tr>` : `
         <tr class="amount-paid-row">
           <td>Amount Paid</td>
           <td>${formatCurrency(amountPaid)}</td>
-        </tr>
+        </tr>`}
         ${remainingBalance > 0.005 ? `<tr>
           <td style="color:#6b5e52;font-size:12px;">Remaining Balance</td>
           <td style="color:#6b5e52;font-size:12px;">${formatCurrency(remainingBalance)}</td>
