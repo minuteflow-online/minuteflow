@@ -303,7 +303,7 @@ export async function POST(request: Request) {
   // "Output Based Assignments" section on the paystub so they show up together.
   const { data: fixedPayTasksRaw } = await adminClient
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, category, rate, status, updated_at")
+    .select("id, task_name, task_detail, account, category, rate, status, updated_at")
     .eq("claimed_by", user_id)
     .neq("status", "cancelled")
     .is("paid_at", null)
@@ -317,7 +317,7 @@ export async function POST(request: Request) {
   // covered 19 paid tasks worth $135.38 and listed none of them.
   const { data: paidOutputRaw } = await adminClient
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, category, rate, status, updated_at")
+    .select("id, task_name, task_detail, account, category, rate, status, updated_at")
     .eq("claimed_by", user_id)
     .not("paid_at", "is", null)
     .is("deleted_at", null)
@@ -328,6 +328,7 @@ export async function POST(request: Request) {
     id: t.id as number,
     task_name: (t.task_name as string) ?? "Output Based Task",
     account: (t.account as string) ?? "",
+    client_memo: ((t.task_detail as string | null) ?? "").trim() || null,
     rate: Number(t.rate) || 0,
     amount: Number(t.rate) || 0,
     settled_on: (t.updated_at as string)?.slice(0, 10) ?? null,
@@ -338,6 +339,7 @@ export async function POST(request: Request) {
     id: t.id as number,
     task_name: (t.task_name as string) ?? "Output Based Task",
     account: (t.account as string) ?? "",
+    client_memo: ((t.task_detail as string | null) ?? "").trim() || null,
     project: (t.category as string) ?? "",
     rate: Number(t.rate) || 0,
     quantity: 1,
@@ -674,6 +676,8 @@ interface PreviousPayment {
 interface FixedAssignment {
   id: number;
   task_name: string;
+  /** The task's Client Detail (kept equal to the client memo) — fixed_pay_tasks only. */
+  client_memo?: string | null;
   account: string;
   project: string;
   rate: number;
@@ -702,7 +706,7 @@ interface PaystubData {
   monthWeekdays?: number;
   attendance?: AttendancePay | null;
   taskBreakdown?: Array<{ task: string; ms: number; entries: number; firstDate: string }>;
-  paidOutputItems?: Array<{ id: number; task_name: string; account: string; rate: number; amount: number; settled_on: string | null }>;
+  paidOutputItems?: Array<{ id: number; task_name: string; client_memo: string | null; account: string; rate: number; amount: number; settled_on: string | null }>;
   paidOutputTotal?: number;
   grossPay: number;
   rateByDate: Record<string, number>;
@@ -758,7 +762,7 @@ function buildPaystubEmail(data: PaystubData): string {
 
   const fixedRowsHtml = fixedAssignments.map((a) => `
     <tr>
-      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${a.task_name}${a.account ? ` <span style="color:#9e9080; font-size:11px;">· ${a.account}</span>` : ""}</td>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${a.task_name}${a.account ? ` <span style="color:#9e9080; font-size:11px;">· ${a.account}</span>` : ""}${a.client_memo ? `<div style="color:#6b5e52; font-size:12px; margin-top:2px;">${esc(a.client_memo)}</div>` : ""}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px;">${a.date ? formatDateLabel(a.date.split("T")[0]) : "—"}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency(a.amount)}</td>
@@ -858,7 +862,7 @@ function buildPaystubEmail(data: PaystubData): string {
           <tbody>
             ${(paidOutputItems ?? []).map((t) => `
             <tr>
-              <td style="padding: 9px 12px; font-size: 12px; color: #3d2b1f; border-bottom: 1px solid #f0e8dc;">${t.task_name}</td>
+              <td style="padding: 9px 12px; font-size: 12px; color: #3d2b1f; border-bottom: 1px solid #f0e8dc;">${t.task_name}${t.client_memo ? `<div style="color:#6b5e52; font-size:11px; margin-top:2px;">${esc(t.client_memo)}</div>` : ""}</td>
               <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; border-bottom: 1px solid #f0e8dc;">${t.settled_on ?? "—"}</td>
               <td style="padding: 9px 12px; font-size: 12px; color: #6b5e52; text-align: right; border-bottom: 1px solid #f0e8dc;">${formatCurrency(t.amount)}</td>
             </tr>`).join("")}

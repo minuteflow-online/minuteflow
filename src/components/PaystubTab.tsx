@@ -27,6 +27,8 @@ interface PreviousPayment {
 interface FixedAssignment {
   id: number;
   task_name: string;
+  /** Client Detail (kept equal to the client memo) — Output Based Tasks only. */
+  client_memo?: string | null;
   account: string;
   project: string;
   rate: number;
@@ -62,7 +64,7 @@ interface PreviewData {
   /** What was worked on in the period: task, how many times, how long. */
   taskBreakdown?: Array<{ task: string; ms: number; entries: number; firstDate: string }>;
   /** Output work already settled inside the period — shown, never re-paid. */
-  paidOutputItems?: Array<{ id: number; task_name: string; account: string; rate: number; amount: number; settled_on: string | null }>;
+  paidOutputItems?: Array<{ id: number; task_name: string; client_memo?: string | null; account: string; rate: number; amount: number; settled_on: string | null }>;
   paidOutputTotal?: number;
   byDate: Record<string, number>;
   rateByDate?: Record<string, number>;
@@ -143,6 +145,7 @@ function OutputTaskRow({
       <td className="py-1.5 text-bark/70">
         {item.task_name}
         {item.account && <span className="text-bark/40 ml-1">· {item.account}</span>}
+        {item.client_memo && <div className="text-[11px] text-bark/60 whitespace-pre-line">{item.client_memo}</div>}
       </td>
       <td className="py-1.5">
         <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusBadgeClasses(item.status)}`}>
@@ -1283,7 +1286,10 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <tbody>
                       {(preview.paidOutputItems ?? []).map((t) => (
                         <tr key={t.id} className="border-b border-linen/50">
-                          <td className="py-1.5 text-bark/70">{t.task_name}</td>
+                          <td className="py-1.5 text-bark/70">
+                            {t.task_name}
+                            {t.client_memo && <div className="text-[11px] text-bark/60 whitespace-pre-line">{t.client_memo}</div>}
+                          </td>
                           <td className="py-1.5 text-right text-bark/40 whitespace-nowrap">{t.settled_on ?? "—"}</td>
                           <td className="py-1.5 text-right text-bark/70 w-20">{previewMoney(t.amount)}</td>
                         </tr>
