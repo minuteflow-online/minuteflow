@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { BillingType } from "@/types/database";
 import { countWords } from "@/lib/utils";
 import { autoCategoryForTask } from "@/lib/taskSchedule";
+import { isLogActivityCategoryDisabled, usableCategory } from "@/lib/logActivityCategories";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -105,7 +106,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const [projectTagId, setProjectTagId] = useState<number | null>(null);
   const [taskName, setTaskName] = useState("");
   const [clientMemo, setClientMemo] = useState("");
-  const [category, setCategory] = useState("Task");
+  // No default: "Task" is disabled on this form, so the VA picks a category.
+  const [category, setCategory] = useState("");
   const [client, setClient] = useState("");
   const [selectedBillingType, setSelectedBillingType] = useState<BillingType>("hourly");
   const [selectedTaskRate, setSelectedTaskRate] = useState<number | null>(null);
@@ -197,7 +199,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
         );
         if (match) setProjectTagId(match.id);
       }
-      if (detail.category) setCategory(detail.category);
+      if (detail.category) setCategory((prev) => usableCategory(detail.category, prev));
       if (detail.task_name) setTaskName(detail.task_name);
       if (detail.client_memo) setClientMemo(detail.client_memo);
       if (detail.client_name) {
@@ -262,6 +264,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const getValidationErrors = (): string[] => {
     const errors: string[] = [];
     if (!taskName.trim()) errors.push("Task is required");
+    if (!category) errors.push("Category is required");
     if (!isPersonalOrBreak) {
       if (!account) errors.push("Account is required");
       if (!project.trim()) errors.push("Project is required");
@@ -325,7 +328,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
 
     // Reset everything
     setTaskName("");
-    setCategory("Task");
+    setCategory("");
     setAccount("");
     setClient("");
     setProject("");
@@ -382,7 +385,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
 
     // Reset everything
     setTaskName("");
-    setCategory("Task");
+    setCategory("");
     setAccount("");
     setClient("");
     setProject("");
@@ -450,7 +453,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       setProject(match.project_name);
       setProjectTagId(match.id);
       const autoCategory = autoCategoryForTask(account, match.project_name, taskName);
-      if (autoCategory) setCategory(autoCategory);
+      if (autoCategory) setCategory((prev) => usableCategory(autoCategory, prev));
     }
   };
 
@@ -465,7 +468,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     // value is the task_name directly
     setTaskName(value);
     const autoCategory = autoCategoryForTask(account, project, value);
-    if (autoCategory) setCategory(autoCategory);
+    if (autoCategory) setCategory((prev) => usableCategory(autoCategory, prev));
     // Look up billing_type and task_rate from the selected task
     const selectedTask = filteredTasks.find((t) => t.task_name === value);
     if (selectedTask) {
@@ -622,21 +625,30 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
             )}
           </div>
 
-          {/* ─── Row 3: Category Pills (default: Task) ─── */}
+          {/* ─── Row 3: Category Pills (Task is disabled here, see logActivityCategories) ─── */}
           <div className="mb-3.5">
             <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
               Category
             </label>
             <div className="flex flex-wrap gap-1.5">
-              {CATEGORIES.map((cat) => (
-                <button
-                  key={cat.value}
-                  onClick={() => setCategory(cat.value)}
-                  className={`py-1.5 px-3.5 rounded-full text-xs font-medium cursor-pointer transition-all ${categoryChipColor(cat.value, category === cat.value)}`}
-                >
-                  {cat.label}
-                </button>
-              ))}
+              {CATEGORIES.map((cat) => {
+                const disabled = isLogActivityCategoryDisabled(cat.value);
+                return (
+                  <button
+                    key={cat.value}
+                    onClick={() => setCategory(cat.value)}
+                    disabled={disabled}
+                    title={disabled ? "Not available here" : undefined}
+                    className={
+                      disabled
+                        ? "py-1.5 px-3.5 rounded-full text-xs font-medium border border-sand bg-parchment text-stone opacity-60 cursor-not-allowed"
+                        : `py-1.5 px-3.5 rounded-full text-xs font-medium cursor-pointer transition-all ${categoryChipColor(cat.value, category === cat.value)}`
+                    }
+                  >
+                    {cat.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
