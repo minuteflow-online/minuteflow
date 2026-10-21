@@ -15,6 +15,7 @@ import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSid
 import DashboardMessagePanel from "@/components/DashboardMessagePanel";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import TaskWidgetsTabs from "@/components/TaskWidgetsTabs";
+import { postBreakGapDecision } from "@/lib/postBreakGapCheck";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import GapFillModal from "@/components/GapFillModal";
@@ -1014,9 +1015,12 @@ export default function DashboardPage() {
   const postBreakGapCheckedRef = useRef(false);
   useEffect(() => {
     if (!userId || !profile || !session) return;
-    if (postBreakGapCheckedRef.current) return;
-    if (!session.clocked_in || session.active_task) return;
-    postBreakGapCheckedRef.current = true;
+    // One look per page load, at the first session seen (see postBreakGapDecision).
+    // Marking it only after the "no active task" test let it fire later, mid
+    // task-switch, and open the "Welcome Back!" window for no reason.
+    const decision = postBreakGapDecision(postBreakGapCheckedRef.current, session);
+    if (decision.markChecked) postBreakGapCheckedRef.current = true;
+    if (!decision.run) return;
 
     let cancelled = false;
     (async () => {
