@@ -24,3 +24,28 @@ export function usableCategory(suggested: string | null | undefined, current: st
   if (!suggested || isLogActivityCategoryDisabled(suggested)) return current;
   return suggested;
 }
+
+/**
+ * Fixed-rate (Output Based) tasks are also logged from this form and have always
+ * been recorded under Task, so Task is only blocked for ordinary hourly entries.
+ */
+export function isCategoryBlocked(category: string, isFixedRate: boolean): boolean {
+  return isLogActivityCategoryDisabled(category) && !isFixedRate;
+}
+
+/** The category after the VA picks a task from the Task dropdown. */
+export function categoryAfterTaskPick(prev: string, auto: string | null, isFixedRate: boolean): string {
+  // Fixed-rate: exactly what it was before Task was disabled. The auto-category
+  // wins, else keep what was chosen, else the old default of Task.
+  if (isFixedRate) return auto ?? (prev || "Task");
+  // Hourly: a suggestion for Task is dropped, and a Task left over from an earlier
+  // fixed-rate pick is cleared so it cannot ride along into an hourly entry.
+  const next = usableCategory(auto, prev);
+  return isLogActivityCategoryDisabled(next) ? "" : next;
+}
+
+/** The category after the VA picks a project (the task has not changed). */
+export function categoryAfterProjectPick(prev: string, auto: string | null, isFixedRate: boolean): string {
+  if (isFixedRate) return auto ?? prev;
+  return usableCategory(auto, prev);
+}

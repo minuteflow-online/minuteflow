@@ -4,7 +4,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { BillingType } from "@/types/database";
 import { countWords } from "@/lib/utils";
 import { autoCategoryForTask } from "@/lib/taskSchedule";
-import { isLogActivityCategoryDisabled, usableCategory } from "@/lib/logActivityCategories";
+import {
+  isCategoryBlocked,
+  isLogActivityCategoryDisabled,
+  categoryAfterProjectPick,
+  categoryAfterTaskPick,
+  usableCategory,
+} from "@/lib/logActivityCategories";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -264,7 +270,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const getValidationErrors = (): string[] => {
     const errors: string[] = [];
     if (!taskName.trim()) errors.push("Task is required");
-    if (!category) errors.push("Category is required");
+    if (!category || isCategoryBlocked(category, selectedBillingType === "fixed")) errors.push("Category is required");
     if (!isPersonalOrBreak) {
       if (!account) errors.push("Account is required");
       if (!project.trim()) errors.push("Project is required");
@@ -453,7 +459,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       setProject(match.project_name);
       setProjectTagId(match.id);
       const autoCategory = autoCategoryForTask(account, match.project_name, taskName);
-      if (autoCategory) setCategory((prev) => usableCategory(autoCategory, prev));
+      if (autoCategory) setCategory((prev) => categoryAfterProjectPick(prev, autoCategory, selectedBillingType === "fixed"));
     }
   };
 
@@ -463,14 +469,17 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       setTaskName("");
       setSelectedBillingType("hourly");
       setSelectedTaskRate(null);
+      // A Task left over from a fixed-rate pick goes with it.
+      setCategory((prev) => (isLogActivityCategoryDisabled(prev) ? "" : prev));
       return;
     }
     // value is the task_name directly
     setTaskName(value);
     const autoCategory = autoCategoryForTask(account, project, value);
-    if (autoCategory) setCategory((prev) => usableCategory(autoCategory, prev));
     // Look up billing_type and task_rate from the selected task
     const selectedTask = filteredTasks.find((t) => t.task_name === value);
+    const isFixedRate = selectedTask?.billing_type === "fixed";
+    setCategory((prev) => categoryAfterTaskPick(prev, autoCategory, isFixedRate));
     if (selectedTask) {
       setSelectedBillingType(selectedTask.billing_type || "hourly");
       setSelectedTaskRate(selectedTask.task_rate ?? null);
@@ -632,7 +641,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
             </label>
             <div className="flex flex-wrap gap-1.5">
               {CATEGORIES.map((cat) => {
-                const disabled = isLogActivityCategoryDisabled(cat.value);
+                // Task stays pickable for a fixed-rate task, which is logged under it.
+                const disabled = isCategoryBlocked(cat.value, selectedBillingType === "fixed");
                 return (
                   <button
                     key={cat.value}
