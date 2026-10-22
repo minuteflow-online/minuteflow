@@ -81,3 +81,28 @@ describe("Activity Log 'today' across the overnight cutoff", () => {
     expect(todayIds(logs, at("2026-10-21T18:00:00.000Z"))).toEqual([0]);
   });
 });
+
+describe("Activity Log 'today' at the exact boundaries", () => {
+  const open = [log({ user_id: "cha", start_time: "2026-10-21T03:31:00.000Z", end_time: null })];
+
+  it("bridges at the first minute after midnight Eastern (some engines report hour 24 then)", () => {
+    expect(todayIds(open, at("2026-10-21T04:00:00.000Z"))).toEqual([0]); // 12:00 AM EDT
+    expect(todayIds(open, at("2026-10-21T04:00:30.000Z"))).toEqual([0]);
+  });
+
+  it("still bridges in the last minute before the cutoff, and stops at 6:00 AM", () => {
+    expect(todayIds(open, at("2026-10-21T09:59:00.000Z"))).toEqual([0]); // 5:59 AM EDT
+    expect(todayIds(open, at("2026-10-21T10:00:00.000Z"))).toEqual([]); // 6:00 AM EDT
+  });
+
+  it("does not bridge just before midnight, when yesterday is still today", () => {
+    // 11:59 PM EDT on Oct 20: the entries are filed under Oct 20 = today, so they already show.
+    expect(todayIds(open, at("2026-10-21T03:59:00.000Z"))).toEqual([0]);
+  });
+
+  it("works across the daylight-saving change (EST after Nov 1)", () => {
+    const logs = [log({ user_id: "cha", session_date: "2026-11-01", start_time: "2026-11-02T04:31:00.000Z", end_time: null })];
+    // 1:30 AM EST on Nov 2 = 06:30Z
+    expect(todayIds(logs, at("2026-11-02T06:30:00.000Z"))).toEqual([0]);
+  });
+});
