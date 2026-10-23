@@ -6,6 +6,7 @@
 
 import { computePaystubData } from "@/lib/paystub";
 import { notifyAdmin } from "@/lib/notify";
+import { esc } from "@/lib/approvalPages";
 import { formatPayMoney, formatPayTotals, type PayCurrency } from "@/lib/payroll";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,7 +81,7 @@ export async function runPaystubDraftGeneration(
   if (notifyEmail && drafts.length > 0) {
     const rows = drafts.map((d) => `
       <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#3d2b1f;">${d.name}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#3d2b1f;">${esc(d.name)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#6b5e52;text-align:right;">${d.hours.toFixed(2)}h</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;font-size:13px;color:#3d2b1f;text-align:right;font-weight:600;">${fmtMoney(d.gross, d.currency)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e8e0d4;text-align:right;"><a href="https://minuteflow.click/admin/paystub-review/${d.snapshot_id}" style="font-size:12px;color:#2d3a4a;font-weight:600;">Review →</a></td>
