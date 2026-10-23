@@ -1271,9 +1271,8 @@ export default function AdminPage() {
       })
       .eq("user_id", targetUserId);
 
-    // Matches what forceClockOut() clears on every other automatic close, so a
-    // standing warning from before this click doesn't carry into their next
-    // session and misfire the idle check.
+    // Clear any standing idle/static-screen warning so it doesn't carry into
+    // their next session and misfire the idle check.
     await supabase
       .from("profiles")
       .update({ idle_warned_at: null, screen_static_warned_at: null })
