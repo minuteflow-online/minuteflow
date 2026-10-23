@@ -4,6 +4,7 @@
 // behavior is identical — see that route's header for the rules.
 
 import { notifyAdmin } from "@/lib/notify";
+import { esc } from "@/lib/approvalPages";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
@@ -325,7 +326,7 @@ export async function runRecurringInvoiceGeneration(
         html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
           <div style="font-size:16px;font-weight:800;color:#2d1a00;margin-bottom:8px;">Invoice draft ready for review</div>
           <div style="font-size:13px;color:#3d2b1f;">Invoice <strong>${created.invoice_number}</strong> (${isHourly ? "hourly" : "fixed"}) — draft, not sent to the client.</div>
-          <div style="font-size:13px;color:#3d2b1f;">Bill to: <strong>${source.to_name}</strong></div>
+          <div style="font-size:13px;color:#3d2b1f;">Bill to: <strong>${esc(source.to_name)}</strong></div>
           <div style="font-size:13px;color:#3d2b1f;">Period: ${periodStart} → ${periodEnd}</div>
           <div style="font-size:13px;color:#3d2b1f;">Total: <strong>${formatCurrency(finalTotal, source.currency || "USD")}</strong></div>
           ${hoursLine}${askLine}
