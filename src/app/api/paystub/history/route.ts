@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasFinancialAccess } from "@/lib/financialAccess";
-import { fetchPaidOutputByLabel } from "@/lib/paystub";
+import { fetchPaidOutputByLabel, splitPeriodPayments, type PeriodPayment } from "@/lib/paystub";
 
 export const dynamic = "force-dynamic";
 
@@ -62,13 +62,23 @@ export async function GET(request: Request) {
   // which also picks up anything recorded after the paystub went out.
   const { data: payments } = await adminClient
     .from("va_payments")
-    .select("amount, period_start, period_end")
-    .eq("va_id", userId);
+    .select("amount, period_start, period_end, payment_date, payment_method, confirmation_number, notes, created_at")
+    .eq("va_id", userId)
+    .order("payment_date", { ascending: true })
+    .order("created_at", { ascending: true });
 
-  const paidByPeriod = new Map<string, number>();
+  const paymentsByPeriod = new Map<string, PeriodPayment[]>();
   for (const payment of payments ?? []) {
     const key = `${payment.period_start}|${payment.period_end}`;
-    paidByPeriod.set(key, (paidByPeriod.get(key) ?? 0) + Number(payment.amount || 0));
+    const list = paymentsByPeriod.get(key) ?? [];
+    list.push({
+      amount: Number(payment.amount || 0),
+      payment_date: payment.payment_date ?? null,
+      payment_method: payment.payment_method ?? null,
+      confirmation_number: payment.confirmation_number ?? null,
+      notes: payment.notes ?? null,
+    });
+    paymentsByPeriod.set(key, list);
   }
 
   const outputByLabel = await fetchPaidOutputByLabel(
@@ -79,7 +89,8 @@ export async function GET(request: Request) {
 
   return Response.json(
     snapshots.map((snap) => {
-      const total = paidByPeriod.get(`${snap.period_start}|${snap.period_end}`);
+      const split = splitPeriodPayments(paymentsByPeriod.get(`${snap.period_start}|${snap.period_end}`) ?? [], snap);
+      const total = split.hasRows ? split.total : undefined;
       const outputItems = outputByLabel.get(snap.pay_period_label as string) ?? [];
       return {
         ...snap,
@@ -90,6 +101,9 @@ export async function GET(request: Request) {
         // Falls back to the snapshot's own figure when a period has no payment
         // rows at all, so older paystubs read exactly as they did before.
         total_paid: total ?? Number(snap.amount_paid || 0),
+        // Advances / earlier split payments for the period, apart from the
+        // one this paystub recorded — shown line by line on the stub.
+        earlier_payments: split.earlier,
       };
     })
   );

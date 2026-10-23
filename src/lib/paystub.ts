@@ -231,3 +231,74 @@ export async function fetchPaidOutputByLabel(
   }
   return byLabel;
 }
+
+export interface PeriodPayment {
+  amount: number;
+  payment_date: string | null;
+  payment_method: string | null;
+  confirmation_number: string | null;
+  notes: string | null;
+}
+
+/**
+ * Every va_payments row for a paystub's period, split into the one that
+ * paystub's send recorded ("Paystub for <label>", at amount_paid) and the
+ * rest — advances and earlier split payments — so a stub can show what was
+ * sent before versus what it paid now, rather than one blended total.
+ */
+export async function fetchPeriodPayments(
+  admin: AnySupabase,
+  userId: string,
+  snap: { period_start: string; period_end: string; pay_period_label: string; amount_paid: number | string | null }
+): Promise<{ earlier: PeriodPayment[]; thisPaystub: PeriodPayment | null; total: number; hasRows: boolean }> {
+  const { data } = await admin
+    .from("va_payments")
+    .select("amount, payment_date, payment_method, confirmation_number, notes, created_at")
+    .eq("va_id", userId)
+    .eq("period_start", snap.period_start)
+    .eq("period_end", snap.period_end)
+    .order("payment_date", { ascending: true })
+    .order("created_at", { ascending: true });
+  return splitPeriodPayments(
+    ((data ?? []) as Array<Record<string, unknown>>).map((p) => ({
+      amount: Number(p.amount || 0),
+      payment_date: (p.payment_date as string | null) ?? null,
+      payment_method: (p.payment_method as string | null) ?? null,
+      confirmation_number: (p.confirmation_number as string | null) ?? null,
+      notes: (p.notes as string | null) ?? null,
+    })),
+    snap
+  );
+}
+
+export function splitPeriodPayments(
+  payments: PeriodPayment[],
+  snap: { pay_period_label: string; amount_paid: number | string | null }
+): { earlier: PeriodPayment[]; thisPaystub: PeriodPayment | null; total: number; hasRows: boolean } {
+  const amountPaid = Number(snap.amount_paid || 0);
+  const ownNote = `Paystub for ${snap.pay_period_label}`;
+  // Prefer the exact row (note + amount); if the stub's amount was edited
+  // afterwards, fall back to the latest row carrying its note, so its own
+  // payment is never counted again as "sent earlier".
+  let ownIdx = -1;
+  for (let i = payments.length - 1; i >= 0; i--) {
+    if (payments[i].notes === ownNote && Math.abs(payments[i].amount - amountPaid) < 0.005) {
+      ownIdx = i;
+      break;
+    }
+  }
+  if (ownIdx < 0) {
+    for (let i = payments.length - 1; i >= 0; i--) {
+      if (payments[i].notes === ownNote) {
+        ownIdx = i;
+        break;
+      }
+    }
+  }
+  return {
+    earlier: payments.filter((_, i) => i !== ownIdx),
+    thisPaystub: ownIdx >= 0 ? payments[ownIdx] : null,
+    total: payments.reduce((sum, p) => sum + p.amount, 0),
+    hasRows: payments.length > 0,
+  };
+}

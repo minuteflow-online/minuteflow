@@ -95,6 +95,8 @@ interface PaystubSnapshot {
   amount_paid: number;
   /** Everything paid for this period, advances included — see /api/paystub/history. */
   total_paid?: number | null;
+  /** Advances / earlier split payments for the period, apart from this paystub's own — see /api/paystub/history. */
+  earlier_payments?: Array<{ amount: number; payment_date: string | null; payment_method: string | null; confirmation_number: string | null }>;
   /** Output Based Tasks this paystub settled — see /api/paystub/history. */
   output_items?: Array<{ id: number; task_name: string; account: string; amount: number; submitted_label: string | null; client_memo: string | null }>;
   output_total?: number;
@@ -1987,6 +1989,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     const outputItems = snap.output_items ?? [];
                     const outputTotal = snap.output_total ?? 0;
                     const earned = snap.gross_pay + outputTotal;
+                    const earlierPayments = snap.earlier_payments ?? [];
+                    const earlierTotal = earlierPayments.reduce((sum, p) => sum + p.amount, 0);
+                    const totalPaid = snap.amount_paid + earlierTotal;
                     return (
                       <React.Fragment key={snap.id}>
                         <tr
@@ -2001,7 +2006,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           </td>
                           <td className="px-4 py-3 text-right text-bark/70">{totalHrs.toFixed(2)} hrs</td>
                           <td className="px-4 py-3 text-right text-bark/70">{snapMoney(earned)}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-terracotta">{snapMoney(snap.total_paid ?? snap.amount_paid)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-terracotta">
+                            {snapMoney(snap.amount_paid)}
+                            {earlierTotal > 0.005 && (
+                              <div className="text-[10px] font-normal text-bark/40">+ {snapMoney(earlierTotal)} sent earlier</div>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-right text-bark/50 hidden sm:table-cell capitalize">
                             {snap.payment_method ? snap.payment_method.replace(/_/g, " ") : "—"}
                           </td>
@@ -2068,19 +2078,40 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <span>Gross Pay</span>
                                       <span>{snapMoney(earned)}</span>
                                     </div>
-                                    <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
-                                      <span>Amount Paid</span>
-                                      <span>{snapMoney(snap.total_paid ?? snap.amount_paid)}</span>
-                                    </div>
-                                    {/* Say where the total came from when an advance made it
-                                        up, so the figure can be reconciled against the stub. */}
-                                    {(snap.total_paid ?? snap.amount_paid) - snap.amount_paid > 0.005 && (
-                                      <div className="flex justify-between text-[10px] text-bark/40">
-                                        <span>on this paystub</span>
-                                        <span>
-                                          {snapMoney(snap.amount_paid)} + {snapMoney((snap.total_paid ?? 0) - snap.amount_paid)} sent earlier
-                                        </span>
+                                    {/* What was sent before vs what this paystub paid,
+                                        line by line, so the stub reconciles on its own. */}
+                                    {earlierPayments.length > 0 && (
+                                      <div className="border-t border-linen pt-1 mt-1 space-y-1">
+                                        <div className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Sent Earlier</div>
+                                        {earlierPayments.map((p, i) => (
+                                          <div key={i} className="flex justify-between gap-3">
+                                            <span className="text-bark/50">
+                                              {p.payment_date
+                                                ? new Date(p.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+                                                : "—"}
+                                              {p.payment_method && <span className="capitalize"> · {p.payment_method.replace(/_/g, " ")}</span>}
+                                              {p.confirmation_number && <span> · {p.confirmation_number}</span>}
+                                            </span>
+                                            <span>{snapMoney(p.amount)}</span>
+                                          </div>
+                                        ))}
                                       </div>
+                                    )}
+                                    <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
+                                      <span>{earlierPayments.length > 0 ? "Paid on This Paystub" : "Amount Paid"}</span>
+                                      <span>{snapMoney(snap.amount_paid)}</span>
+                                    </div>
+                                    {earlierPayments.length > 0 && (
+                                      <>
+                                        <div className="flex justify-between font-semibold">
+                                          <span>Total Paid for Period</span>
+                                          <span>{snapMoney(totalPaid)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-bark/40">{earned - totalPaid < -0.005 ? "Overpaid" : "Remaining"}</span>
+                                          <span>{snapMoney(Math.abs(earned - totalPaid))}</span>
+                                        </div>
+                                      </>
                                     )}
                                     <div className="flex justify-between pt-1">
                                       <span className="text-bark/40">Sent to</span>
