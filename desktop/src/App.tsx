@@ -441,9 +441,14 @@ export default function App() {
         <div className="px-5 pt-2 text-[11px] text-walnut shrink-0">{captureStatus}</div>
       )}
 
-      {/* Body — matches the wireframe: left column timer+tasks, right column to-do+description */}
+      {/* Body — matches the wireframe: left column timer+tasks, right column to-do+description.
+          Left column scales with the window instead of a fixed 450px: ~45%
+          of the available width, floored at 360px (the main.js minWidth of
+          810px floors out there too) and capped at 500px so a maximized
+          window doesn't stretch the clock/task list wider than they need —
+          the freed-up width goes to the right panel instead. */}
       <div className="flex flex-1 min-h-0 gap-4 p-4">
-        <div className="flex w-[450px] shrink-0 flex-col gap-4 min-h-0">
+        <div className="flex w-[45%] min-w-[360px] max-w-[500px] shrink-0 flex-col gap-4 min-h-0">
           <ClockPanel
             state={clockState}
             clockInTime={sessionRow?.clock_in_time ?? null}
