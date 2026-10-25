@@ -18,6 +18,11 @@ export interface Profile {
   department: string | null;
   position: string | null;
   clock_in_disabled: boolean;
+  /** Gates admin-only UI (the Team tab) — see team.ts. Matches the same
+   *  6-role admin-equivalent list used throughout this app and the web RLS
+   *  policies it reads against (admin/manager/coordinator/specialist/ceo/
+   *  founder) by simply checking role !== "va", same as web's dashboard. */
+  role: string;
 }
 
 export interface ActiveTask {
@@ -114,7 +119,7 @@ export function getCorrectSessionDate(
 
 export async function fetchProfile(userId: string): Promise<Profile | null> {
   const rows = await query<Profile[]>("profiles", {
-    filters: `id=eq.${userId}&select=id,username,full_name,department,position,clock_in_disabled`,
+    filters: `id=eq.${userId}&select=id,username,full_name,department,position,clock_in_disabled,role`,
   });
   return rows[0] ?? null;
 }
