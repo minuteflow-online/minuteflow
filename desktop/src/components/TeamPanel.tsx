@@ -102,7 +102,7 @@ export default function TeamPanel({ members, timeLogs, loading }: TeamPanelProps
                 )}
 
                 {isExpanded && memberLogs.length > 0 && (
-                  <div className="mt-1.5 ml-[38px] space-y-1 max-h-[160px] overflow-y-auto">
+                  <div className="mt-1.5 ml-[38px] space-y-1 max-h-[420px] overflow-y-auto">
                     {memberLogs.map((log) => {
                       const isActive = !log.end_time;
                       const duration =
