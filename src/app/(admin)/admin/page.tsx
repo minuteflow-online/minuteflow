@@ -1038,9 +1038,9 @@ export default function AdminPage() {
 
   /**
    * Screenshots grouped into one block per person per day, each block listing that
-   * day's tasks in the order they happened — clock in first, clock out last — with
-   * the shots inside each task also running oldest to newest. The whole view reads
-   * forward in time, which is how a shift is actually reviewed.
+   * day's tasks most-recent-first — so the latest activity is always the first
+   * thing on screen, no scrolling needed — with the shots inside each task
+   * running oldest to newest, reading as that one task's own progress forward.
    *
    * `orderedScreenshots` is the same set flattened in exactly the rendered order,
    * so the lightbox arrows walk the grid the way it looks on screen.
@@ -1112,9 +1112,10 @@ export default function AdminPage() {
     });
 
     const days = Array.from(byPersonDay.values());
-    // Within a day, forward in time. Across days, most recent block first so
-    // today is the first thing on screen.
-    days.forEach((d) => d.tasks.sort((a, b) => startedAt(a) - startedAt(b)));
+    // Most recent task first within a day, same as across days just below —
+    // Neil's ask: the latest capture should be the first thing you see, not
+    // something you scroll down to find.
+    days.forEach((d) => d.tasks.sort((a, b) => startedAt(b) - startedAt(a)));
     days.sort((a, b) => startedAt(b.tasks[0]) - startedAt(a.tasks[0]));
 
     // The span the page really has records for. The date filter and the 500-row
