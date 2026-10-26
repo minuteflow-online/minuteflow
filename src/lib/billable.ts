@@ -12,8 +12,11 @@
  * others from putting it back.
  */
 
-/** Never paid. Break was the one that kept getting left out. */
-const UNPAID_CATEGORIES = new Set(["Personal", "Break"]);
+/** Never paid. Break was the one that kept getting left out. Pause (added
+ *  2026-10-26, Toni's "Lean and Focused Work" policy) is deliberately in
+ *  this same set — unpaid is the one non-negotiable part of what Pause means,
+ *  same as Break. */
+const UNPAID_CATEGORIES = new Set(["Personal", "Break", "Pause"]);
 
 export function isBillableCategory(category: string | null | undefined): boolean {
   return !UNPAID_CATEGORIES.has((category ?? "").trim());

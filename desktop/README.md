@@ -13,6 +13,25 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `src/app/(app)/dashboard/page.tsx` and `src/contexts/SessionContext.tsx`,
   including the duplicate-active-log guard and the overnight-log-capping
   safety net (see `src/lib/clock.ts` for the file-by-file mapping).
+- **Pause / Resume** — Toni's "Lean and Focused Work" policy (2026-10-26):
+  step away for a quick interruption (phone, family, cooking) without it
+  counting as paid time, saving Break specifically for eating. Desktop-only
+  for now, no web equivalent button yet. Unlike this app's own Break above
+  (which only flips a display flag and never actually stops the underlying
+  `time_logs` row — see that function's own comment), Pause does the real
+  close-and-reopen: it closes whatever's running, logs an explicit
+  `category: "Pause"` row with `billable: false`, and snapshots the task
+  that was active into local state (same shape the dashboard's own
+  `preBreakTask` uses, same limitation — lost if the app restarts mid-pause)
+  so Resume can land straight back on it with a fresh `time_logs` row and no
+  prompt. See `src/lib/clock.ts`'s `startPause`/`endPause`. Pause is in the
+  same unpaid-category set as Break/Personal (`src/lib/billable.ts`, mirrored
+  here in `src/lib/billable.ts` since this app can't import across), and
+  counts as off-duty for both the 5-minute auto-capture loop and the shared
+  `/api/upload-screenshot` off-duty check — see those files and
+  `src/lib/breakState.ts`'s new `isOnPause` on the web side. Also recognized
+  by Your Team's status badges on both apps (a teammate paused from desktop
+  shows "Paused" there, not "Working").
 - **Assigned Tasks** — a single list, `on_queue` and `in_progress` only.
   Mirrors web's `AssignedTasksWidget.tsx` exactly as of its 2026-10-07 rework
   (Toni's call): a newly-assigned (`pending`) task is accepted on web, not

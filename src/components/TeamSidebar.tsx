@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Session, Profile, TimeLog } from "@/types/database";
 import { formatDuration } from "@/lib/utils";
-import { isOnBreak, isOnPersonal } from "@/lib/breakState";
+import { isOnBreak, isOnPersonal, isOnPause } from "@/lib/breakState";
 
 interface TeamMember {
   profile: Profile;
@@ -39,16 +39,17 @@ function getAvatarColor(index: number): string {
   return AVATAR_COLORS[index % AVATAR_COLORS.length];
 }
 
-function getMemberStatus(
-  session: Session | null
-): "working" | "personal" | "resting" | "away" {
+type MemberStatus = "working" | "personal" | "resting" | "paused" | "away";
+
+function getMemberStatus(session: Session | null): MemberStatus {
   if (!session || !session.clocked_in) return "away";
+  if (isOnPause(session.active_task)) return "paused";
   if (isOnBreak(session.active_task)) return "resting";
   if (isOnPersonal(session.active_task)) return "personal";
   return "working";
 }
 
-function getStatusLabel(status: "working" | "personal" | "resting" | "away"): string {
+function getStatusLabel(status: MemberStatus): string {
   switch (status) {
     case "working":
       return "Working";
@@ -56,12 +57,14 @@ function getStatusLabel(status: "working" | "personal" | "resting" | "away"): st
       return "Personal";
     case "resting":
       return "On Break";
+    case "paused":
+      return "Paused";
     default:
       return "Offline";
   }
 }
 
-function getStatusBadgeClass(status: "working" | "personal" | "resting" | "away"): string {
+function getStatusBadgeClass(status: MemberStatus): string {
   switch (status) {
     case "working":
       return "bg-sage-soft text-sage";
@@ -69,6 +72,8 @@ function getStatusBadgeClass(status: "working" | "personal" | "resting" | "away"
       return "bg-clay-rose-soft text-clay-rose";
     case "resting":
       return "bg-amber-soft text-amber";
+    case "paused":
+      return "bg-slate-blue-soft text-slate-blue";
     default:
       return "bg-parchment text-stone";
   }
