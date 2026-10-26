@@ -236,6 +236,31 @@ export function screenshotCaptureTime(filename: string | null | undefined): stri
   return null;
 }
 
+/** Known values /api/upload-screenshot and /api/screenshot-marker tag a
+ *  capture with (see those routes' `source` handling, added 2026-10-06). */
+const KNOWN_SCREENSHOT_SOURCES = ["desktop", "web", "extension"] as const;
+export type ScreenshotSource = (typeof KNOWN_SCREENSHOT_SOURCES)[number];
+
+/**
+ * Which app took this screenshot, read back out of the filename.
+ *
+ * A real upload's filename is prefixed `${source}_...` (e.g.
+ * `desktop_Neil_Pascual_...png`); a marker row (no image, just a reason) has
+ * its `filename` column set to the bare source value instead, since it has
+ * no real filename to prefix — see /api/screenshot-marker.
+ *
+ * Returns null for anything predating the tagging (filenames before
+ * 2026-10-06 carry no source at all) — callers should treat that as
+ * "unknown," not render a wrong guess.
+ */
+export function screenshotSource(filename: string | null | undefined): ScreenshotSource | null {
+  if (!filename) return null;
+  for (const source of KNOWN_SCREENSHOT_SOURCES) {
+    if (filename === source || filename.startsWith(`${source}_`)) return source;
+  }
+  return null;
+}
+
 /**
  * Get the start/end boundaries of a specific day (as represented in a given timezone)
  * for any reference Date, returned as UTC ISO strings.

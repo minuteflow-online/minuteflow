@@ -52,6 +52,7 @@ import {
   getTimezoneAbbr,
   displayRole,
   screenshotCaptureTime,
+  screenshotSource,
   formatTenure,
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
@@ -2398,6 +2399,9 @@ function TaskScreenshotCard({
           const badge = screenshotTypeBadge(ss.screenshot_type);
           // A marker slot: no image was captured, and the row says why.
           const isMarker = ss.screenshot_type === "failed" || !ss.drive_file_id;
+          // Null for anything captured before 2026-10-06 (no tag to read) —
+          // shown only when we actually know, never a guessed label.
+          const source = screenshotSource(ss.filename);
 
           return (
             <button
@@ -2437,6 +2441,14 @@ function TaskScreenshotCard({
                     title="Screen is identical to the previous capture — nothing moved"
                   >
                     Unchanged
+                  </span>
+                )}
+                {source && (
+                  <span
+                    className="absolute bottom-1.5 left-1.5 rounded bg-slate-blue-soft px-1.5 py-0.5 text-[9px] font-semibold text-slate-blue capitalize"
+                    title={`Captured by the ${source} app`}
+                  >
+                    {source}
                   </span>
                 )}
               </div>
