@@ -24,6 +24,10 @@ function isOnBreak(activeTask: clock.ActiveTask | null): boolean {
   return Boolean(activeTask.isBreak) || activeTask.category === "Personal";
 }
 
+function isPaused(activeTask: clock.ActiveTask | null): boolean {
+  return Boolean(activeTask?.isPause);
+}
+
 export default function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
@@ -39,6 +43,11 @@ export default function App() {
   const [startingId, setStartingId] = useState<number | null>(null);
   const [playingTodoId, setPlayingTodoId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
+  // The task that was active right before Pause — held in local state the
+  // same way the dashboard's preBreakTask is, so Resume can land straight
+  // back on it with no prompt (Toni's call). See clock.ts's startPause/
+  // endPause for why this can't just live on the session row instead.
+  const [pausedTask, setPausedTask] = useState<clock.ActiveTask | null>(null);
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -77,7 +86,7 @@ export default function App() {
       const task = row.active_task;
       return {
         userId,
-        isOnBreak: isOnBreak(task),
+        isOnBreak: isOnBreak(task) || isPaused(task),
         activeLogId: task?.logId ? Number(task.logId) : null,
       };
     });
@@ -206,6 +215,7 @@ export default function App() {
     setSelectedTask(null);
     setTeamMembers([]);
     setTeamTimeLogs([]);
+    setPausedTask(null);
   }, []);
 
   const handleClockIn = useCallback(async () => {
@@ -229,6 +239,7 @@ export default function App() {
     try {
       const result = await clock.clockOut(userId, orgTimezone);
       if (result.session) setSessionRow(result.session);
+      setPausedTask(null);
     } finally {
       setActionPending(false);
     }
@@ -257,6 +268,44 @@ export default function App() {
       setActionPending(false);
     }
   }, [userId, actionPending]);
+
+  // Pause: unpaid, like Break — unlike Break above, this one actually closes
+  // and reopens time_logs rather than just flipping a flag, since "unpaid"
+  // has to be a real payroll outcome here, not just a display label. See
+  // clock.ts's startPause for the full reasoning.
+  const handlePause = useCallback(async () => {
+    if (!userId || !profile || actionPending) return;
+    setActionPending(true);
+    try {
+      const result = await clock.startPause(userId, profile, sessionRow, orgTimezone);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      setPausedTask(result.resumeTask ?? null);
+      if (result.session) setSessionRow(result.session);
+    } finally {
+      setActionPending(false);
+    }
+  }, [userId, profile, sessionRow, orgTimezone, actionPending]);
+
+  // Resume: lands straight back on whatever was running before Pause, no
+  // prompt — Toni's explicit call.
+  const handleResume = useCallback(async () => {
+    if (!userId || !profile || actionPending) return;
+    setActionPending(true);
+    try {
+      const result = await clock.endPause(userId, profile, pausedTask, sessionRow, orgTimezone);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      if (result.session) setSessionRow(result.session);
+      setPausedTask(null);
+    } finally {
+      setActionPending(false);
+    }
+  }, [userId, profile, pausedTask, sessionRow, orgTimezone, actionPending]);
 
   const handleStart = useCallback(
     async (task: VAAssignedTask) => {
@@ -389,9 +438,11 @@ export default function App() {
 
   const clockState: ClockState = !sessionRow?.clocked_in
     ? "idle"
-    : isOnBreak(sessionRow.active_task)
-      ? "on-break"
-      : "clocked-in";
+    : isPaused(sessionRow.active_task)
+      ? "paused"
+      : isOnBreak(sessionRow.active_task)
+        ? "on-break"
+        : "clocked-in";
 
   return (
     <div className="flex h-full flex-col bg-cream">
@@ -457,6 +508,8 @@ export default function App() {
             onClockOut={handleClockOut}
             onStartBreak={handleStartBreak}
             onEndBreak={handleEndBreak}
+            onPause={handlePause}
+            onResume={handleResume}
           />
           <TasksPanel
             tasks={tasks}

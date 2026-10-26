@@ -4,6 +4,7 @@ import { Readable } from "stream";
 import { NextRequest } from "next/server";
 import { buildGoogleAuthClient, refreshGoogleToken } from "@/lib/google-token";
 import { verifyExtensionToken } from "@/lib/extensionAuth";
+import { isOnBreak, isOnPersonal, isOnPause } from "@/lib/breakState";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -125,10 +126,13 @@ async function makeDriveFilePublic(
 }
 
 /**
- * True while the person is on a break or on personal time.
+ * True while the person is on a break, on personal time, or paused.
  *
- * Breaks live on sessions.active_task as isBreak; Personal is a task category.
- * Both mean the same here — time the person is not working.
+ * Breaks live on sessions.active_task as isBreak; Personal and Pause (desktop
+ * only, Toni's 2026-10-26 "Lean and Focused Work" policy) are task
+ * categories. All three mean the same here — time the person is not working,
+ * so no screenshot should land for it — see @/lib/breakState for the one
+ * shared definition of each.
  *
  * Returns false when the session cannot be read. An unreadable session does not
  * prove someone is on a break, and silently dropping real captures would lose
@@ -144,9 +148,9 @@ async function isOffDuty(userId: string): Promise<boolean> {
       .select("active_task")
       .eq("user_id", userId)
       .single();
-    const task = data?.active_task as { isBreak?: boolean; category?: string } | null;
+    const task = data?.active_task as { isBreak?: boolean; isPause?: boolean; category?: string } | null;
     if (!task) return false;
-    return Boolean(task.isBreak) || task.category === "Personal";
+    return isOnBreak(task) || isOnPersonal(task) || isOnPause(task);
   } catch {
     return false;
   }
