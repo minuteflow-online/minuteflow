@@ -102,7 +102,15 @@ export default function TeamPanel({ members, timeLogs, loading }: TeamPanelProps
                 )}
 
                 {isExpanded && memberLogs.length > 0 && (
-                  <div className="mt-1.5 ml-[38px] space-y-1 max-h-[420px] overflow-y-auto">
+                  // Height tied to the window (35% of viewport height), not a
+                  // fixed px — a fixed box tall enough to look good on a big
+                  // window was also tall enough to push the outer people-list
+                  // into its own scrollbar on a smaller one, showing two
+                  // scrollbars for what should only need one. Scaling with
+                  // the window keeps this box comfortably within what's
+                  // actually left over, so the outer list only scrolls once
+                  // there are genuinely enough people to need it.
+                  <div className="mt-1.5 ml-[38px] space-y-1 max-h-[35vh] overflow-y-auto">
                     {memberLogs.map((log) => {
                       const isActive = !log.end_time;
                       const duration =
