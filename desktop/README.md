@@ -189,6 +189,20 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
     boards, @mention autocomplete *for composing* (see Personal above),
     General's own delete/pin/archive, marking a notification read, realtime
     (all four tabs poll instead — see each lib file's poll interval).
+- **Your Team** — a third tab next to To-Do/Message Board, visible only when
+  `profile.role !== "va"` (same gate web's dashboard uses for `TeamSidebar.tsx`,
+  which this ports). Every active teammate currently clocked in and working/
+  on break/on personal time, each with an avatar, their current task, and a
+  Working/Personal/On Break status badge; a "Show tasks (N)" toggle expands
+  their last 14 days of time logs. See `src/lib/team.ts`
+  (`fetchTeamRoster`/`fetchTeamTimeLogs` — table-wide reads of
+  profiles/sessions/time_logs, safe here because the RLS policies on all
+  three already scope to the same admin-equivalent role list this tab is
+  gated on) and `src/components/TeamPanel.tsx`. Named `TeamRosterMember`/
+  `fetchTeamRoster`, not `TeamMember`/`fetchTeamMembers` — `lib/conversations.ts`
+  already has a same-named, differently-shaped pair for picking a DM
+  recipient. Offline teammates aren't shown (matches web). No admin actions
+  here — this is read-only monitoring, same as web's widget.
 
 ## What it deliberately does NOT do yet
 

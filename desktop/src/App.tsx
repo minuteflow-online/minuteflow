@@ -12,9 +12,12 @@ import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, todoLa
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 import { startAutoCapture } from "./lib/autoCapture";
+import { fetchTeamRoster, fetchTeamTimeLogs, type TeamRosterMember, type TeamTimeLog } from "./lib/team";
+import TeamPanel from "./components/TeamPanel";
 
 const SESSION_POLL_MS = 15000;
 const TASKS_POLL_MS = 30000;
+const TEAM_POLL_MS = 30000;
 
 function isOnBreak(activeTask: clock.ActiveTask | null): boolean {
   if (!activeTask) return false;
@@ -39,7 +42,10 @@ export default function App() {
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
-  const [rightTab, setRightTab] = useState<"todo" | "messages">("todo");
+  const [rightTab, setRightTab] = useState<"todo" | "messages" | "team">("todo");
+  const [teamMembers, setTeamMembers] = useState<TeamRosterMember[]>([]);
+  const [teamTimeLogs, setTeamTimeLogs] = useState<TeamTimeLog[]>([]);
+  const [teamLoading, setTeamLoading] = useState(true);
   const [dmRequest, setDmRequest] = useState<{ senderId: string; nonce: number } | null>(null);
   const [launchAtStartup, setLaunchAtStartupState] = useState(false);
 
@@ -137,6 +143,31 @@ export default function App() {
     };
   }, [userId, loadTasks]);
 
+  const loadTeam = useCallback(async () => {
+    setTeamLoading(true);
+    try {
+      const [members, logs] = await Promise.all([fetchTeamRoster(), fetchTeamTimeLogs()]);
+      setTeamMembers(members);
+      setTeamTimeLogs(logs);
+    } catch {
+      // Non-critical — leave the previous list showing rather than blank it.
+    } finally {
+      setTeamLoading(false);
+    }
+  }, []);
+
+  // Team roster — admin-only (role !== "va"), same gate web's dashboard uses
+  // for TeamSidebar. Separate from the initial auth-check Promise.all since
+  // profile.role isn't known until loadForUser resolves and sets state; this
+  // fires once role becomes available (and again if it ever changes without
+  // a re-login).
+  useEffect(() => {
+    if (!userId || !profile?.role || profile.role === "va") return;
+    loadTeam();
+    const timer = setInterval(loadTeam, TEAM_POLL_MS);
+    return () => clearInterval(timer);
+  }, [userId, profile?.role, loadTeam]);
+
   // Tells the main process whether to warn before quitting — see
   // electron/main.js's close handler. Also clears the flag on sign-out
   // (userId null), so a signed-out app never warns on a stale clocked-in
@@ -173,6 +204,8 @@ export default function App() {
     setSessionRow(null);
     setTasks([]);
     setSelectedTask(null);
+    setTeamMembers([]);
+    setTeamTimeLogs([]);
   }, []);
 
   const handleClockIn = useCallback(async () => {
@@ -408,9 +441,14 @@ export default function App() {
         <div className="px-5 pt-2 text-[11px] text-walnut shrink-0">{captureStatus}</div>
       )}
 
-      {/* Body — matches the wireframe: left column timer+tasks, right column to-do+description */}
+      {/* Body — matches the wireframe: left column timer+tasks, right column to-do+description.
+          Left column scales with the window instead of a fixed 450px: ~45%
+          of the available width, floored at 360px (the main.js minWidth of
+          810px floors out there too) and capped at 500px so a maximized
+          window doesn't stretch the clock/task list wider than they need —
+          the freed-up width goes to the right panel instead. */}
       <div className="flex flex-1 min-h-0 gap-4 p-4">
-        <div className="flex w-[450px] shrink-0 flex-col gap-4 min-h-0">
+        <div className="flex w-[45%] min-w-[360px] max-w-[500px] shrink-0 flex-col gap-4 min-h-0">
           <ClockPanel
             state={clockState}
             clockInTime={sessionRow?.clock_in_time ?? null}
@@ -454,6 +492,18 @@ export default function App() {
             >
               Message Board
             </button>
+            {profile?.role && profile.role !== "va" && (
+              <button
+                onClick={() => setRightTab("team")}
+                className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                  rightTab === "team"
+                    ? "bg-terracotta-soft text-terracotta"
+                    : "text-bark hover:bg-parchment hover:text-espresso"
+                }`}
+              >
+                Team
+              </button>
+            )}
           </div>
           {rightTab === "todo" ? (
             <TodoPanel
@@ -467,8 +517,10 @@ export default function App() {
               playingTodoId={playingTodoId}
               onPlayTodo={handlePlayTodo}
             />
-          ) : (
+          ) : rightTab === "messages" ? (
             <MessageBoardPanel userId={userId} openDmRequest={dmRequest} />
+          ) : (
+            <TeamPanel members={teamMembers} timeLogs={teamTimeLogs} loading={teamLoading} />
           )}
         </div>
       </div>
