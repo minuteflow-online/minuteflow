@@ -115,6 +115,28 @@ describe("summarize", () => {
     expect(summary.awayMs).toBe(30 * 60_000);
   });
 
+  it("counts Pause as time away, not as work", () => {
+    const summary = summarize(
+      [
+        log({ duration_ms: 3 * 3_600_000 }),
+        log({ category: "Pause", billable: false, duration_ms: 45 * 60_000 }),
+        log({ category: "Break", billable: false, duration_ms: 15 * 60_000 }),
+      ],
+      NOW
+    );
+    expect(humanDuration(summary.awayMs)).toBe("1h");
+    expect(summary.billableMs).toBe(3 * 3_600_000);
+  });
+
+  it("leaves a day with no Pause exactly as before", () => {
+    const summary = summarize(
+      [log({ duration_ms: 8 * 3_600_000 }), log({ category: "Personal", billable: false, duration_ms: 20 * 60_000 })],
+      NOW
+    );
+    expect(humanDuration(summary.awayMs)).toBe("20m");
+    expect(humanDuration(summary.billableMs)).toBe("8h");
+  });
+
   it("measures an entry still open when the webhook fires", () => {
     // The clock-out writes the session row and closes the final log separately;
     // this alert can land between the two. Without the fallback that last
