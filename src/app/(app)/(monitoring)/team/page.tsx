@@ -8,6 +8,7 @@ import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/type
 import { isPayrollEligible, sumPayrollMs } from "@/lib/payrollHours";
 import { formatPayMoney, formatPayTotalUsd, formatPayWithUsd, normalizePayCurrency, parsePhpPerUsd } from "@/lib/payroll";
 import { computeTransitionMs } from "@/lib/transitionTime";
+import { isBreakLike } from "@/lib/awayCategories";
 import AddRateModal from "@/components/AddRateModal";
 import {
   formatDuration,
@@ -478,7 +479,7 @@ export default function TeamPage() {
         sessions.find((s) => s.user_id === profile.id) ?? null;
 
       const userLogs = logs.filter((l) => l.user_id === profile.id);
-      const nonBreakLogs = userLogs.filter((l) => l.category !== "Break" && l.category !== "Clock Out");
+      const nonBreakLogs = userLogs.filter((l) => !isBreakLike(l.category) && l.category !== "Clock Out");
       // Total = every logged minute, no exclusions — matches the Time Log page's definition.
       const todayHoursMs = userLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       // What the VA actually gets paid for — mirrors lib/paystub.ts, not the
@@ -500,7 +501,7 @@ export default function TeamPage() {
         .filter((l) => l.category === "Break")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const taskMs = userLogs
-        .filter((l) => !["Personal", "Planning", "Sorting", "Sorting Tasks", "Break", "Collaboration", "Meeting", "Communication", "Message", "Clock Out"].includes(l.category))
+        .filter((l) => !["Personal", "Planning", "Sorting", "Sorting Tasks", "Break", "Pause", "Collaboration", "Meeting", "Communication", "Message", "Clock Out"].includes(l.category))
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const wizardMs = userLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0);
       const collaborationMs = userLogs
@@ -1159,7 +1160,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
   );
 
   // Progress status counts
-  const nonBreakLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In" && l.category !== "Clock Out");
+  const nonBreakLogs = sortedLogs.filter(l => !isBreakLike(l.category) && l.category !== "Clock In" && l.category !== "Clock Out");
   const inProgressCount = nonBreakLogs.filter(l => l.progress === "in_progress" || (!l.end_time && !l.progress)).length;
   const completedCount = nonBreakLogs.filter(l => l.progress === "completed").length;
   const onHoldCount = nonBreakLogs.filter(l => l.progress === "on_hold").length;
@@ -1654,7 +1655,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
   );
 
   // Progress status counts (exclude breaks and clock-in entries)
-  const progressLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In" && l.category !== "Clock Out");
+  const progressLogs = sortedLogs.filter(l => !isBreakLike(l.category) && l.category !== "Clock In" && l.category !== "Clock Out");
   const inProgressCount = progressLogs.filter(l => l.progress === "in_progress" || (!l.end_time && !l.progress)).length;
   const completedCount = progressLogs.filter(l => l.progress === "completed").length;
   const onHoldCount = progressLogs.filter(l => l.progress === "on_hold").length;
@@ -1718,7 +1719,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, rangeStart, rangeEnd, on
         // above Daily Breakdown, just broken out per day instead of totaled
         // across the whole period.
         const dayOutputTotal = dayOutputItems.reduce((sum, item) => sum + (item.rate ?? 0), 0);
-        const nonBreakLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Clock Out");
+        const nonBreakLogs = dayLogs.filter(l => !isBreakLike(l.category) && l.category !== "Clock Out");
         // Total = every logged minute that day, no exclusions — matches the Time Log page.
         const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         // What the VA actually gets paid for that day — mirrors lib/payrollHours.ts.
@@ -2500,7 +2501,7 @@ function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]
             }`}
           >
             <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
-              log.category === "Break" ? "bg-stone" :
+              isBreakLike(log.category) ? "bg-stone" :
               log.category === "Personal" ? "bg-clay-rose" :
               log.category === "Planning" || log.category === "Sorting" || log.category === "Sorting Tasks" ? "bg-amber" :
               "bg-sage"
@@ -2511,7 +2512,7 @@ function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]
                   {log.task_name}
                 </span>
                 <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
-                {showProgress && pConfig && log.category !== "Break" && log.category !== "Clock In" && (
+                {showProgress && pConfig && !isBreakLike(log.category) && log.category !== "Clock In" && (
                   <span className={`inline-flex items-center gap-1 shrink-0 rounded-full px-2 py-[1px] text-[9px] font-semibold ${pConfig.bg} ${pConfig.text}`}>
                     <span className={`w-1 h-1 rounded-full ${pConfig.dot}`} />
                     {pConfig.label}
