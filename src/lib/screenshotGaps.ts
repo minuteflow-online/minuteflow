@@ -35,8 +35,9 @@ export function findCaptureGaps(
   thresholdMs: number = CAPTURE_GAP_MS,
   loaded?: { start: number; end: number } | null
 ): CaptureGap[] {
-  // A break is deliberately not captured, so a quiet break is not a gap.
-  if (log?.category === "Break") return [];
+  // A break is deliberately not captured, so a quiet break is not a gap. Pause
+  // (desktop app) is the same: no screenshots are taken while paused.
+  if (log?.category === "Break" || log?.category === "Pause") return [];
 
   const points = shotTimes.map((t) => new Date(t).getTime()).filter((t) => Number.isFinite(t));
   // The task's own start and end only count when the page actually loaded records

@@ -37,6 +37,16 @@ describe("findCaptureGaps", () => {
     expect(findCaptureGaps([at("04:00")], { start_time: at("04:00"), end_time: null })).toEqual([]);
   });
 
+  it("ignores a pause, which is not captured either", () => {
+    expect(findCaptureGaps([at("05:00")], { start_time: at("05:00"), end_time: at("06:00"), category: "Pause" })).toEqual([]);
+  });
+
+  it("still reports a gap on an ordinary task of the same length", () => {
+    const gaps = findCaptureGaps([at("05:00")], { start_time: at("05:00"), end_time: at("06:00"), category: "Task" });
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].minutes).toBe(60);
+  });
+
   it("ignores a break, which is deliberately not captured", () => {
     expect(findCaptureGaps([at("05:00")], { start_time: at("05:00"), end_time: at("06:00"), category: "Break" })).toEqual([]);
   });
