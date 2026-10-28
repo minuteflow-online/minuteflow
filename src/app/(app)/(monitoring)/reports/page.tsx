@@ -21,6 +21,7 @@ import { useUrlTab } from "@/hooks/useUrlTab";
 import { ProgressBar } from "@/components/VAPerformanceMetrics";
 import { isLate } from "@/lib/onTime";
 import { shiftHoursFromProfile, workDaysFromProfile } from "@/lib/budget";
+import { isBreakLike } from "@/lib/awayCategories";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -711,7 +712,7 @@ export default function ReportsPage() {
   const totalHoursMs = reportSummary.totalMs;
   const billableMs = reportSummary.billableMs;
   const breakMs = reportSummary.categories.find((c) => c.name === "Break")?.ms || 0;
-  const tasksCompleted = filteredLogs.filter((l) => l.end_time && l.category !== "Break").length;
+  const tasksCompleted = filteredLogs.filter((l) => l.end_time && !isBreakLike(l.category)).length;
 
   /* ── Daily chart data ────────────────────────────────────── */
 
@@ -1091,7 +1092,7 @@ export default function ReportsPage() {
     }> = {};
 
     filteredLogs
-      .filter((l) => l.end_time && l.category !== "Break")
+      .filter((l) => l.end_time && !isBreakLike(l.category))
       .forEach((l) => {
         if (!map[l.user_id]) {
           map[l.user_id] = {
@@ -1118,7 +1119,7 @@ export default function ReportsPage() {
   const projectSummary: ProjectSummaryItem[] = useMemo(() => {
     const map: Record<string, { totalMs: number; count: number }> = {};
     filteredLogs
-      .filter((l) => l.end_time && l.category !== "Break" && l.category !== "Personal")
+      .filter((l) => l.end_time && !isBreakLike(l.category) && l.category !== "Personal")
       .forEach((l) => {
         const proj = l.project || "No Project";
         if (!map[proj]) map[proj] = { totalMs: 0, count: 0 };
@@ -1133,7 +1134,7 @@ export default function ReportsPage() {
   const taskSummary: TaskSummaryItem[] = useMemo(() => {
     const map: Record<string, { totalMs: number; count: number }> = {};
     filteredLogs
-      .filter((l) => l.end_time && l.category !== "Break" && l.category !== "Personal")
+      .filter((l) => l.end_time && !isBreakLike(l.category) && l.category !== "Personal")
       .forEach((l) => {
         const task = l.task_name || "Untitled Task";
         if (!map[task]) map[task] = { totalMs: 0, count: 0 };
@@ -1240,7 +1241,7 @@ export default function ReportsPage() {
     filteredLogs.forEach((l) => {
       const cat = l.category || "Task";
       const bg =
-        cat === "Break"
+        isBreakLike(cat)
           ? "#fff3cd"
           : cat === "Personal"
             ? "#fce4ec"
@@ -1566,7 +1567,7 @@ export default function ReportsPage() {
                 );
               }
               const actionableCats = va.categories.filter(
-                (c) => c.name !== "Break" && c.name !== "Wizard Time"
+                (c) => !isBreakLike(c.name) && c.name !== "Wizard Time"
               );
               const topUp = actionableCats
                 .filter((c) => c.deltaPct > 3)
