@@ -105,6 +105,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The window hides to the tray; without this Chromium slows its timers
+      // while hidden, delaying the session poll and the 5-minute capture.
+      backgroundThrottling: false,
     },
   });
 

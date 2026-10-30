@@ -113,10 +113,19 @@ export async function ensureAuth(): Promise<AuthSession | null> {
   let session = await getSession();
   if (!session) return null;
   if (session.expires_at && Date.now() > session.expires_at - 60000) {
-    session = await refreshToken();
+    // Several queries fire at once (loadForUser runs three in parallel); each
+    // used to start its own refresh with the same refresh token. Supabase
+    // rotates it, so the losers could be rejected with a 400 — which clears
+    // the saved login and bounces the user to the sign-in screen. Share one.
+    refreshing ??= refreshToken().finally(() => {
+      refreshing = null;
+    });
+    session = await refreshing;
   }
   return session;
 }
+
+let refreshing: Promise<AuthSession | null> | null = null;
 
 interface QueryOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";

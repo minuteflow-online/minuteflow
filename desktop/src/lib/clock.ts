@@ -250,8 +250,15 @@ export async function clockIn(userId: string, profile: Profile, orgTimezone: str
 }
 
 /** Mirrors performClockOut(): closes any orphaned open logs (including a
- *  still-open break), then marks the session clocked out. */
-export async function clockOut(userId: string, orgTimezone: string): Promise<ClockInResult> {
+ *  still-open break), then marks the session clocked out and writes the
+ *  zero-duration "Clocked Out" marker log web writes (reports use it as the
+ *  shift boundary). Mood/day-rating prompts are not ported. */
+export async function clockOut(
+  userId: string,
+  orgTimezone: string,
+  profile?: Profile | null,
+  currentSession?: SessionRow | null
+): Promise<ClockInResult> {
   const now = new Date().toISOString();
   await closeOpenLogs(userId, now, orgTimezone);
 
@@ -262,11 +269,38 @@ export async function clockOut(userId: string, orgTimezone: string): Promise<Clo
     body: {
       user_id: userId,
       clocked_in: false,
+      clock_in_time: null,
       clock_out_time: now,
       active_task: null,
       updated_at: now,
     },
   });
+
+  if (profile) {
+    // Not fatal, same as web: it's a zero-duration marker, so losing it costs
+    // no tracked time and must not strand someone on the clock.
+    try {
+      await query("time_logs", {
+        method: "POST",
+        body: {
+          user_id: userId,
+          username: profile.username,
+          full_name: profile.full_name,
+          department: profile.department,
+          position: profile.position,
+          task_name: "Clocked Out",
+          category: "Clock Out",
+          start_time: now,
+          end_time: now,
+          duration_ms: 0,
+          billable: false,
+          session_date: getCorrectSessionDate(currentSession, orgTimezone),
+        },
+      });
+    } catch {
+      // see above
+    }
+  }
 
   return { ok: true, session: rows[0] };
 }
@@ -319,7 +353,11 @@ export async function startPause(
   userId: string,
   profile: Profile,
   currentSession: SessionRow | null,
-  orgTimezone: string
+  orgTimezone: string,
+  /** "Break" reuses the same close-and-reopen so desktop Break actually stops
+   *  paid time like web's does (it used to only flip a display flag). Flags
+   *  match web's break task, so web recognizes it via isOnBreak. */
+  kind: "Pause" | "Break" = "Pause"
 ): Promise<PauseResult> {
   const now = new Date().toISOString();
   await closeOpenLogs(userId, now, orgTimezone);
@@ -336,8 +374,8 @@ export async function startPause(
         full_name: profile.full_name,
         department: profile.department,
         position: profile.position,
-        task_name: "Paused",
-        category: "Pause",
+        task_name: kind === "Break" ? "Break" : "Paused",
+        category: kind,
         account: "Virtual Concierge",
         client_name: "Toni Colina",
         start_time: now,
@@ -357,8 +395,8 @@ export async function startPause(
   }
 
   const pauseTask: ActiveTask = {
-    task_name: "Paused",
-    category: "Pause",
+    task_name: kind === "Break" ? "Break" : "Paused",
+    category: kind,
     project: "",
     account: "",
     client_name: "",
@@ -369,7 +407,7 @@ export async function startPause(
     duration_ms: 0,
     logId: String(log.id),
     _startMs: Date.now(),
-    isPause: true,
+    ...(kind === "Break" ? { isBreak: true } : { isPause: true }),
   };
 
   const rows = await query<SessionRow[]>("sessions", {
@@ -460,6 +498,7 @@ export async function endPause(
     logId: String(log.id),
     _startMs: Date.now(),
     isPause: false,
+    isBreak: false,
   };
 
   const rows = await query<SessionRow[]>("sessions", {

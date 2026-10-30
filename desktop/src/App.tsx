@@ -15,7 +15,10 @@ import { startAutoCapture } from "./lib/autoCapture";
 import { fetchTeamRoster, fetchTeamTimeLogs, type TeamRosterMember, type TeamTimeLog } from "./lib/team";
 import TeamPanel from "./components/TeamPanel";
 
-const SESSION_POLL_MS = 15000;
+// Desktop has no realtime channel (no supabase-js here), so this poll is the
+// whole web -> desktop sync latency; 15s was noticeably laggy in testing. It's
+// one single-row read per user.
+const SESSION_POLL_MS = 5000;
 const TASKS_POLL_MS = 30000;
 const TEAM_POLL_MS = 30000;
 
@@ -36,6 +39,7 @@ export default function App() {
 
   const [sessionRow, setSessionRow] = useState<clock.SessionRow | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
@@ -140,15 +144,31 @@ export default function App() {
   // extension shows up here too, same idea as the extension's own poll loop.
   useEffect(() => {
     if (!userId) return;
-    const sessionTimer = setInterval(() => {
-      clock.fetchSession(userId).then(setSessionRow).catch(() => {});
-    }, SESSION_POLL_MS);
+    // A failed poll used to be swallowed silently, leaving stale clock state on
+    // screen with no hint anything was wrong; surface it, and clear on success.
+    const pollSession = () => {
+      clock
+        .fetchSession(userId)
+        .then((s) => {
+          setSessionRow(s);
+          setSyncError(null);
+        })
+        .catch((err) => {
+          setSyncError(err instanceof Error ? err.message : "unknown error");
+        });
+    };
+    const sessionTimer = setInterval(pollSession, SESSION_POLL_MS);
     const tasksTimer = setInterval(() => {
       loadTasks(userId);
     }, TASKS_POLL_MS);
+    // Catch up right away when the window is brought back (it hides to tray,
+    // where timers are slowed) instead of waiting out the next interval.
+    const onFocus = () => pollSession();
+    window.addEventListener("focus", onFocus);
     return () => {
       clearInterval(sessionTimer);
       clearInterval(tasksTimer);
+      window.removeEventListener("focus", onFocus);
     };
   }, [userId, loadTasks]);
 
@@ -237,37 +257,54 @@ export default function App() {
     if (!userId || actionPending) return;
     setActionPending(true);
     try {
-      const result = await clock.clockOut(userId, orgTimezone);
+      const result = await clock.clockOut(userId, orgTimezone, profile, sessionRow);
       if (result.session) setSessionRow(result.session);
       setPausedTask(null);
+    } catch (err) {
+      alert(`Couldn't clock you out: ${err instanceof Error ? err.message : "unknown error"}. You are still clocked in — try again.`);
     } finally {
       setActionPending(false);
     }
-  }, [userId, orgTimezone, actionPending]);
+  }, [userId, profile, sessionRow, orgTimezone, actionPending]);
 
+  // Break: same real close-and-reopen as Pause (unpaid Break log, previous
+  // task snapshotted for End Break) — it used to only flip a display flag and
+  // left the running task's log open and billable. Still no memo wizard.
   const handleStartBreak = useCallback(async () => {
-    if (!userId || actionPending) return;
+    if (!userId || !profile || actionPending) return;
     setActionPending(true);
     try {
-      await clock.startBreak(userId);
-      const s = await clock.fetchSession(userId);
-      setSessionRow(s);
+      const result = await clock.startPause(userId, profile, sessionRow, orgTimezone, "Break");
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      setPausedTask(result.resumeTask ?? null);
+      if (result.session) setSessionRow(result.session);
+    } catch (err) {
+      alert(`Couldn't start your break: ${err instanceof Error ? err.message : "unknown error"}.`);
     } finally {
       setActionPending(false);
     }
-  }, [userId, actionPending]);
+  }, [userId, profile, sessionRow, orgTimezone, actionPending]);
 
   const handleEndBreak = useCallback(async () => {
-    if (!userId || actionPending) return;
+    if (!userId || !profile || actionPending) return;
     setActionPending(true);
     try {
-      await clock.endBreak(userId);
-      const s = await clock.fetchSession(userId);
-      setSessionRow(s);
+      const result = await clock.endPause(userId, profile, pausedTask, sessionRow, orgTimezone);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      if (result.session) setSessionRow(result.session);
+      setPausedTask(null);
+    } catch (err) {
+      alert(`Couldn't end your break: ${err instanceof Error ? err.message : "unknown error"}.`);
     } finally {
       setActionPending(false);
     }
-  }, [userId, actionPending]);
+  }, [userId, profile, pausedTask, sessionRow, orgTimezone, actionPending]);
 
   // Pause: unpaid, like Break — unlike Break above, this one actually closes
   // and reopens time_logs rather than just flipping a flag, since "unpaid"
@@ -284,6 +321,8 @@ export default function App() {
       }
       setPausedTask(result.resumeTask ?? null);
       if (result.session) setSessionRow(result.session);
+    } catch (err) {
+      alert(`Couldn't pause: ${err instanceof Error ? err.message : "unknown error"}.`);
     } finally {
       setActionPending(false);
     }
@@ -302,12 +341,14 @@ export default function App() {
       }
       if (result.session) setSessionRow(result.session);
       setPausedTask(null);
+    } catch (err) {
+      alert(`Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`);
     } finally {
       setActionPending(false);
     }
   }, [userId, profile, pausedTask, sessionRow, orgTimezone, actionPending]);
 
-  const handleStart = useCallback(
+  const handleStart =useCallback(
     async (task: VAAssignedTask) => {
       if (!userId || !profile || startingId != null) return;
       setStartingId(task.id);
@@ -488,6 +529,12 @@ export default function App() {
         </div>
       </div>
 
+      {syncError && (
+        <div className="px-5 py-1.5 text-[11px] text-terracotta bg-terracotta-soft shrink-0">
+          Can&apos;t reach MinuteFlow right now ({syncError}). What you see may be out of date — retrying automatically.
+        </div>
+      )}
+
       {captureStatus && (
         <div className="px-5 pt-2 text-[11px] text-walnut shrink-0">{captureStatus}</div>
       )}
@@ -503,6 +550,7 @@ export default function App() {
           <ClockPanel
             state={clockState}
             clockInTime={sessionRow?.clock_in_time ?? null}
+            awaySince={sessionRow?.active_task?.start_time ?? null}
             actionPending={actionPending}
             onClockIn={handleClockIn}
             onClockOut={handleClockOut}

@@ -9,6 +9,8 @@ export type ClockState = "idle" | "clocked-in" | "on-break" | "paused";
 interface ClockPanelProps {
   state: ClockState;
   clockInTime: string | null;
+  /** When the current Pause/Break began (active_task.start_time). */
+  awaySince?: string | null;
   actionPending: boolean;
   onClockIn: () => void;
   onClockOut: () => void;
@@ -29,6 +31,7 @@ function formatTimer(totalSeconds: number): string {
 export default function ClockPanel({
   state,
   clockInTime,
+  awaySince,
   actionPending,
   onClockIn,
   onClockOut,
@@ -40,16 +43,21 @@ export default function ClockPanel({
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (state === "idle" || !clockInTime) {
+    // While paused or on break the shift clock stops: the timer shows how long
+    // they've been away instead (same as web's break banner), so time visibly
+    // isn't running toward the shift.
+    const away = state === "paused" || state === "on-break";
+    const since = away && awaySince ? awaySince : clockInTime;
+    if (state === "idle" || !since) {
       setElapsed(0);
       return;
     }
-    const startMs = new Date(clockInTime).getTime();
+    const startMs = new Date(since).getTime();
     const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [state, clockInTime]);
+  }, [state, clockInTime, awaySince]);
 
   const dotClass =
     state === "clocked-in"
