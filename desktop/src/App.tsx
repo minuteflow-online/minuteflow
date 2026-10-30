@@ -14,6 +14,7 @@ import { captureAndUploadScreenshot } from "./lib/screenshot";
 import { startAutoCapture } from "./lib/autoCapture";
 import { fetchTeamRoster, fetchTeamTimeLogs, type TeamRosterMember, type TeamTimeLog } from "./lib/team";
 import TeamPanel from "./components/TeamPanel";
+import ClockOutModal from "./components/ClockOutModal";
 
 // Desktop has no realtime channel (no supabase-js here), so this poll is the
 // whole web -> desktop sync latency; 15s was noticeably laggy in testing. It's
@@ -40,6 +41,7 @@ export default function App() {
   const [sessionRow, setSessionRow] = useState<clock.SessionRow | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [showClockOutModal, setShowClockOutModal] = useState(false);
 
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
@@ -253,19 +255,40 @@ export default function App() {
     }
   }, [userId, profile, orgTimezone, actionPending]);
 
+  const performClockOut = useCallback(
+    async (wizard?: clock.ClockOutWizardResult) => {
+      if (!userId) return;
+      setActionPending(true);
+      try {
+        // Close the running task with its memos first, like web's
+        // handleCloseTaskAndClockOut, then clock out with mood/day rating.
+        if (wizard && sessionRow?.active_task?.logId) {
+          await clock.closeActiveTaskWithMemos(sessionRow.active_task, wizard.clientMemo, wizard.internalMemo);
+        }
+        const result = await clock.clockOut(userId, orgTimezone, profile, sessionRow, wizard);
+        if (result.session) setSessionRow(result.session);
+        setPausedTask(null);
+        setShowClockOutModal(false);
+      } catch (err) {
+        alert(`Couldn't clock you out: ${err instanceof Error ? err.message : "unknown error"}. You are still clocked in — try again.`);
+      } finally {
+        setActionPending(false);
+      }
+    },
+    [userId, profile, sessionRow, orgTimezone]
+  );
+
+  // Same rule as web: with a task running, Clock Out opens the "Close Active
+  // Task" wizard (status + memo + mood/day rating); with nothing running it
+  // clocks out straight away.
   const handleClockOut = useCallback(async () => {
     if (!userId || actionPending) return;
-    setActionPending(true);
-    try {
-      const result = await clock.clockOut(userId, orgTimezone, profile, sessionRow);
-      if (result.session) setSessionRow(result.session);
-      setPausedTask(null);
-    } catch (err) {
-      alert(`Couldn't clock you out: ${err instanceof Error ? err.message : "unknown error"}. You are still clocked in — try again.`);
-    } finally {
-      setActionPending(false);
+    if (sessionRow?.active_task?.logId) {
+      setShowClockOutModal(true);
+      return;
     }
-  }, [userId, profile, sessionRow, orgTimezone, actionPending]);
+    await performClockOut();
+  }, [userId, actionPending, sessionRow, performClockOut]);
 
   // Break: same real close-and-reopen as Pause (unpaid Break log, previous
   // task snapshotted for End Break) — it used to only flip a display flag and
@@ -625,6 +648,17 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {showClockOutModal && sessionRow?.active_task && (
+        <ClockOutModal
+          taskName={sessionRow.active_task.task_name}
+          initialClientMemo={sessionRow.active_task.client_memo || ""}
+          initialInternalMemo={sessionRow.active_task.internal_memo || ""}
+          submitting={actionPending}
+          onCancel={() => setShowClockOutModal(false)}
+          onSubmit={(wizard) => void performClockOut(wizard)}
+        />
+      )}
 
       {submitTarget && (
         <SubmitWorkModal

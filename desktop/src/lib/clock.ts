@@ -249,6 +249,39 @@ export async function clockIn(userId: string, profile: Profile, orgTimezone: str
   return { ok: true, session: rows[0] };
 }
 
+/** What the clock-out wizard collects, same fields as web's Close Active Task
+ *  dialog (dashboard's handleCloseTaskAndClockOut). */
+export interface ClockOutWizardResult {
+  clientMemo: string;
+  internalMemo: string;
+  mood: "bad" | "neutral" | "good" | null;
+  dayRating: number | null;
+  dayRatingNote: string;
+}
+
+/** Closes the task that's running, saving the memos on its log — the first
+ *  half of web's handleCloseTaskAndClockOut (the second half is clockOut()
+ *  above, which now also takes the mood/day-rating). Task Status in the
+ *  dialog is required but, as on web, isn't stored by this step. */
+export async function closeActiveTaskWithMemos(
+  task: ActiveTask,
+  clientMemo: string,
+  internalMemo: string
+): Promise<void> {
+  const logId = Number(task.logId);
+  if (!logId) return;
+  const now = Date.now();
+  const startMs = task.start_time ? new Date(task.start_time).getTime() : now;
+  const body: Record<string, unknown> = {
+    end_time: new Date(now).toISOString(),
+    // Never negative (clock skew), same guard as web.
+    duration_ms: Math.max(0, now - startMs),
+  };
+  if (clientMemo.trim()) body.client_memo = clientMemo.trim();
+  if (internalMemo.trim()) body.internal_memo = internalMemo.trim();
+  await query("time_logs", { method: "PATCH", filters: `id=eq.${logId}`, body });
+}
+
 /** Mirrors performClockOut(): closes any orphaned open logs (including a
  *  still-open break), then marks the session clocked out and writes the
  *  zero-duration "Clocked Out" marker log web writes (reports use it as the
@@ -257,24 +290,49 @@ export async function clockOut(
   userId: string,
   orgTimezone: string,
   profile?: Profile | null,
-  currentSession?: SessionRow | null
+  currentSession?: SessionRow | null,
+  wizard?: ClockOutWizardResult
 ): Promise<ClockInResult> {
   const now = new Date().toISOString();
   await closeOpenLogs(userId, now, orgTimezone);
+
+  const body: Record<string, unknown> = {
+    user_id: userId,
+    clocked_in: false,
+    clock_in_time: null,
+    clock_out_time: now,
+    active_task: null,
+    updated_at: now,
+  };
+  if (wizard?.mood) body.mood = wizard.mood;
+  if (wizard?.dayRating) body.day_rating = wizard.dayRating;
+  if (wizard?.dayRatingNote.trim()) body.day_rating_note = wizard.dayRatingNote.trim();
 
   const rows = await query<SessionRow[]>("sessions", {
     method: "POST",
     filters: "on_conflict=user_id",
     headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-    body: {
-      user_id: userId,
-      clocked_in: false,
-      clock_in_time: null,
-      clock_out_time: now,
-      active_task: null,
-      updated_at: now,
-    },
+    body,
   });
+
+  // Mood history for reports/Team — same upsert web's performClockOut does.
+  // Not fatal: the session row above is what clocks them out.
+  if (wizard?.mood) {
+    try {
+      await query("mood_logs", {
+        method: "POST",
+        filters: "on_conflict=user_id,session_date",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: {
+          user_id: userId,
+          session_date: getCorrectSessionDate(currentSession, orgTimezone),
+          mood: wizard.mood,
+        },
+      });
+    } catch {
+      // see above
+    }
+  }
 
   if (profile) {
     // Not fatal, same as web: it's a zero-duration marker, so losing it costs
