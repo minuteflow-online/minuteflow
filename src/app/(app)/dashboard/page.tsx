@@ -722,6 +722,49 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // Follow another device changing the task this tab is showing. The desktop
+  // app's Pause/Resume (and Break) close the running log and open a new one, so
+  // the card here kept pointing at the old, already-closed log: its timer
+  // counted straight through the pause, and the next stopCurrentTask() on this
+  // tab rewrote that old log's end_time to "now" — overlapping the Pause and
+  // the resumed log and billing those minutes twice. Deliberately narrow: only
+  // acts when the session names a different log than the one this tab shows
+  // (a new task appears here too, e.g. after a desktop Resume, so the card
+  // comes back), and never while this tab is mid-action (its own writes
+  // produce the same realtime event and are already handled by that flow).
+  const activeTaskRef = useRef<ActiveTask | null>(null);
+  useEffect(() => { activeTaskRef.current = activeTask; }, [activeTask]);
+  useEffect(() => {
+    if (!userId) return;
+    const channel = supabase
+      .channel(`dash-active-task-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sessions", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          if (payload.eventType === "DELETE" || sessionActionPendingRef.current) return;
+          const row = payload.new as Session;
+          const current = activeTaskRef.current;
+          const next = row.active_task as ActiveTask | null;
+          if (!row.clocked_in || !next?.logId || next.logId === current?.logId) return;
+          // Nothing showing and the new state is a break/pause: nothing to clear.
+          if (!current && (next.isBreak || next.isPause)) return;
+          setSession((prev) => (prev ? { ...prev, active_task: next } : prev));
+          if (next.isBreak || next.isPause) {
+            setActiveTask(null);
+          } else {
+            setActiveTask(next);
+            activeLogIdRef.current = parseInt(next.logId, 10);
+          }
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   const dismissMessage = useCallback(
     async (messageId: number) => {
       await supabase.from("messages").update({ read: true }).eq("id", messageId);

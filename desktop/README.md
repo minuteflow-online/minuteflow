@@ -231,10 +231,9 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   killed and restarted unpredictably. This app's main process keeps running
   in the tray for as long as the VA is signed in, so `autoCapture.ts` just
   tries again at the next 5-minute tick instead — see that file's comment.
-- **No full Break-flow wizard.** Break/End Break here just flips
-  `sessions.active_task`, the same simplified version `SessionContext.tsx`
-  uses on non-dashboard pages — not the dashboard's memo-collection wizard for
-  the paused task.
+- **No full Break-flow wizard.** Break/End Break use the same real
+  close-and-reopen as Pause (unpaid `Break` log, previous task resumed on End
+  Break), but skip the dashboard's memo-collection wizard for the paused task.
 
 ## Running it
 
