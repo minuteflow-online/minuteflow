@@ -32,6 +32,16 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `src/lib/breakState.ts`'s new `isOnPause` on the web side. Also recognized
   by Your Team's status badges on both apps (a teammate paused from desktop
   shows "Paused" there, not "Working").
+- **Clock-out wizard** — with a task running, Clock Out opens the same "Close
+  Active Task Before Clocking Out" dialog as web's dashboard
+  (`src/components/ClockOutModal.tsx`): task status (required), client/internal
+  memo (at least one; client memo capped at 15 words), optional mood and day
+  rating (a rating needs a 5-word note). Saves the memos on the running task's
+  log, then writes `mood`/`day_rating`/`day_rating_note` on the session and the
+  `mood_logs` row, like `handleCloseTaskAndClockOut`/`performClockOut` on web.
+  With nothing running, Clock Out is immediate, as on web. As on web, the
+  Task Status choice is required but not stored. See `src/lib/clock.ts`'s
+  `closeActiveTaskWithMemos`/`clockOut`.
 - **Assigned Tasks** — a single list, `on_queue` and `in_progress` only.
   Mirrors web's `AssignedTasksWidget.tsx` exactly as of its 2026-10-07 rework
   (Toni's call): a newly-assigned (`pending`) task is accepted on web, not
