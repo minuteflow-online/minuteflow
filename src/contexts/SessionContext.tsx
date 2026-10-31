@@ -146,6 +146,39 @@ export function SessionProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialUserId]);
 
+  // Keep this tab in step with changes made elsewhere — the desktop app (or
+  // the extension) clocking in/out, pausing or breaking writes the same
+  // sessions row, but this context otherwise reads it only once on load, so a
+  // clock-out on desktop left the web banner saying "Clocked In" until a
+  // manual reload. Realtime covers the live case; the focus refresh is the
+  // fallback for a socket that dropped while the tab was in the background.
+  useEffect(() => {
+    if (!userId) return;
+    const sb = createClient();
+    const channel = sb
+      .channel(`session-sync-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sessions", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          if (payload.eventType === "DELETE") return;
+          applySession(payload.new as Session);
+        }
+      )
+      .subscribe();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      void sb.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   // NOTE: sessionElapsed and breakElapsed have been intentionally removed from
   // context. They were causing every useSession() consumer to re-render every
   // second. The SessionBannerWrapper now maintains its own local timer for display.

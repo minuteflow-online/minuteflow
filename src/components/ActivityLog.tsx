@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { countWords, screenshotCaptureTime } from "@/lib/utils";
 import { screenshotTileTitle } from "@/lib/screenshots";
+import { activityDayContext, belongsToToday } from "@/lib/activityLogDay";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
@@ -402,10 +403,12 @@ export default function ActivityLog({
     const today: TimeLog[] = [];
     const pastIP: TimeLog[] = [];
     const pastOH: TimeLog[] = [];
+    // Between midnight and the overnight cutoff, someone still on a shift that
+    // started yesterday keeps those entries in Today (see activityLogDay).
+    const dayContext = activityDayContext(logs, new Date(), tz);
 
     logs.forEach((log) => {
-      const logDate = log.session_date || new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: tz });
-      if (logDate === todayStr) {
+      if (belongsToToday(log, tz, { ...dayContext, todayStr })) {
         today.push(log);
       } else if (log.progress === "in_progress") {
         pastIP.push(log);

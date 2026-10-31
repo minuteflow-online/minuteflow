@@ -70,7 +70,8 @@ function durationOf(row: SummaryRow, now: number): number {
   return entryDurationMs(row, now);
 }
 
-const AWAY_CATEGORIES = new Set(["Break", "Personal"]);
+// Pause (desktop app, 2026-10-26) is unpaid time away, same as Break.
+const AWAY_CATEGORIES = new Set(["Break", "Personal", "Pause"]);
 
 /** Output-based. Anything else — including a null on older rows — is hourly. */
 function isFixed(row: SummaryRow): boolean {

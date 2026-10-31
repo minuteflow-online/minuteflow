@@ -81,6 +81,7 @@ export async function runRecurringExpenseGeneration(admin: AnySupabase): Promise
       recurrence_end_date: latest.recurrence_end_date,
     });
     if (error) {
+      console.error(`[recurring-expenses] insert failed for series ${rootId}: ${error.message}`);
       skipped++;
       continue;
     }

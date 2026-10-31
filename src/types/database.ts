@@ -184,6 +184,13 @@ export interface ActiveTask {
   logId: string;
   _startMs: number;
   isBreak?: boolean;
+  /** True for the desktop app's "Paused" placeholder task (startPause in
+   *  desktop/src/lib/clock.ts). Web itself has no Pause button yet — Toni's
+   *  "Lean and Focused Work" policy (2026-10-26) asked for desktop only —
+   *  but this field exists here too so web's own status displays (Team
+   *  Sidebar, etc.) recognize a desktop-originated pause correctly instead
+   *  of showing it as plain Working. */
+  isPause?: boolean;
   billing_type?: BillingType;
   task_rate?: number | null;
   /** assigned_tasks.id this active log is tied to, if started from an Assigned Task or one of its to-dos. */

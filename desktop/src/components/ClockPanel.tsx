@@ -4,16 +4,20 @@
 // Clock In button beneath) rather than SessionBanner's own horizontal strip.
 import { useEffect, useState } from "react";
 
-export type ClockState = "idle" | "clocked-in" | "on-break";
+export type ClockState = "idle" | "clocked-in" | "on-break" | "paused";
 
 interface ClockPanelProps {
   state: ClockState;
   clockInTime: string | null;
+  /** When the current Pause/Break began (active_task.start_time). */
+  awaySince?: string | null;
   actionPending: boolean;
   onClockIn: () => void;
   onClockOut: () => void;
   onStartBreak: () => void;
   onEndBreak: () => void;
+  onPause: () => void;
+  onResume: () => void;
 }
 
 function formatTimer(totalSeconds: number): string {
@@ -27,34 +31,51 @@ function formatTimer(totalSeconds: number): string {
 export default function ClockPanel({
   state,
   clockInTime,
+  awaySince,
   actionPending,
   onClockIn,
   onClockOut,
   onStartBreak,
   onEndBreak,
+  onPause,
+  onResume,
 }: ClockPanelProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (state === "idle" || !clockInTime) {
+    // While paused or on break the shift clock stops: the timer shows how long
+    // they've been away instead (same as web's break banner), so time visibly
+    // isn't running toward the shift.
+    const away = state === "paused" || state === "on-break";
+    const since = away && awaySince ? awaySince : clockInTime;
+    if (state === "idle" || !since) {
       setElapsed(0);
       return;
     }
-    const startMs = new Date(clockInTime).getTime();
+    const startMs = new Date(since).getTime();
     const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [state, clockInTime]);
+  }, [state, clockInTime, awaySince]);
 
   const dotClass =
     state === "clocked-in"
       ? "bg-sage shadow-[0_0_0_3px_rgba(107,143,113,0.2)] animate-breathe"
       : state === "on-break"
         ? "bg-amber animate-breathe"
-        : "bg-clay";
+        : state === "paused"
+          ? "bg-slate-blue animate-breathe"
+          : "bg-clay";
 
-  const label = state === "clocked-in" ? "Clocked In" : state === "on-break" ? "On Break" : "Ready to Start";
+  const label =
+    state === "clocked-in"
+      ? "Clocked In"
+      : state === "on-break"
+        ? "On Break"
+        : state === "paused"
+          ? "Paused"
+          : "Ready to Start";
 
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
@@ -66,7 +87,14 @@ export default function ClockPanel({
       <div className="py-2 text-center">
         <div
           className="font-serif text-[40px] font-normal tracking-tight tabular-nums"
-          style={{ color: state === "on-break" ? "var(--color-amber)" : "var(--color-sage)" }}
+          style={{
+            color:
+              state === "on-break"
+                ? "var(--color-amber)"
+                : state === "paused"
+                  ? "var(--color-slate-blue)"
+                  : "var(--color-sage)",
+          }}
         >
           {formatTimer(elapsed)}
         </div>
@@ -88,6 +116,14 @@ export default function ClockPanel({
         {state === "clocked-in" && (
           <>
             <button
+              onClick={onPause}
+              disabled={actionPending}
+              title="Step away for a moment — phone, family, cooking. Use Break instead if you're eating."
+              className="px-3 py-1.5 rounded-lg bg-slate-blue-soft text-slate-blue text-[12px] font-semibold cursor-pointer transition-colors hover:bg-slate-blue-soft/70 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Pause
+            </button>
+            <button
               onClick={onStartBreak}
               disabled={actionPending}
               className="px-3 py-1.5 rounded-lg bg-amber-soft text-amber text-[12px] font-semibold cursor-pointer transition-colors hover:bg-amber-soft/70 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -102,6 +138,15 @@ export default function ClockPanel({
               Clock Out
             </button>
           </>
+        )}
+        {state === "paused" && (
+          <button
+            onClick={onResume}
+            disabled={actionPending}
+            className="px-3 py-1.5 rounded-lg bg-slate-blue text-white text-[12px] font-semibold cursor-pointer transition-colors hover:bg-slate-blue/90 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Resume
+          </button>
         )}
         {state === "on-break" && (
           <button

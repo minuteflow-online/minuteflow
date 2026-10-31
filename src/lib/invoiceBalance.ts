@@ -99,10 +99,15 @@ export async function syncInvoicePaymentState(
     .single();
   if (!invoice) return null;
 
-  const { data: payments } = await client
+  const { data: payments, error: paymentsError } = await client
     .from("invoice_payments")
     .select("amount")
     .eq("invoice_id", invoiceId);
+  if (paymentsError) {
+    // Treating a failed read as "no payments" would write $0 over real money.
+    console.error(`syncInvoicePaymentState: reading payments failed for invoice ${invoiceId}`, paymentsError);
+    return null;
+  }
 
   const amountPaid = round2(
     (payments ?? []).reduce((sum: number, p: { amount: number | string }) => sum + Number(p.amount), 0)
@@ -113,10 +118,14 @@ export async function syncInvoicePaymentState(
   // doesn't quietly restate when the client actually settled.
   const paidDate = status === "paid" ? (invoice.paid_date ?? today()) : null;
 
-  await client
+  const { error: updateError } = await client
     .from("invoices")
     .update({ amount_paid: amountPaid, status, paid_date: paidDate })
     .eq("id", invoiceId);
+  if (updateError) {
+    console.error(`syncInvoicePaymentState: saving payment state failed for invoice ${invoiceId}`, updateError);
+    return null;
+  }
 
   return { amount_paid: amountPaid, status, paid_date: paidDate };
 }

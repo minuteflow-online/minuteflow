@@ -52,6 +52,7 @@ import {
   getTimezoneAbbr,
   displayRole,
   screenshotCaptureTime,
+  screenshotSource,
   formatTenure,
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
@@ -1037,9 +1038,9 @@ export default function AdminPage() {
 
   /**
    * Screenshots grouped into one block per person per day, each block listing that
-   * day's tasks in the order they happened — clock in first, clock out last — with
-   * the shots inside each task also running oldest to newest. The whole view reads
-   * forward in time, which is how a shift is actually reviewed.
+   * day's tasks most-recent-first — so the latest activity is always the first
+   * thing on screen, no scrolling needed — with the shots inside each task
+   * running oldest to newest, reading as that one task's own progress forward.
    *
    * `orderedScreenshots` is the same set flattened in exactly the rendered order,
    * so the lightbox arrows walk the grid the way it looks on screen.
@@ -1111,9 +1112,10 @@ export default function AdminPage() {
     });
 
     const days = Array.from(byPersonDay.values());
-    // Within a day, forward in time. Across days, most recent block first so
-    // today is the first thing on screen.
-    days.forEach((d) => d.tasks.sort((a, b) => startedAt(a) - startedAt(b)));
+    // Most recent task first within a day, same as across days just below —
+    // Neil's ask: the latest capture should be the first thing you see, not
+    // something you scroll down to find.
+    days.forEach((d) => d.tasks.sort((a, b) => startedAt(b) - startedAt(a)));
     days.sort((a, b) => startedAt(b.tasks[0]) - startedAt(a.tasks[0]));
 
     // The span the page really has records for. The date filter and the 500-row
@@ -1271,9 +1273,8 @@ export default function AdminPage() {
       })
       .eq("user_id", targetUserId);
 
-    // Matches what forceClockOut() clears on every other automatic close, so a
-    // standing warning from before this click doesn't carry into their next
-    // session and misfire the idle check.
+    // Clear any standing idle/static-screen warning so it doesn't carry into
+    // their next session and misfire the idle check.
     await supabase
       .from("profiles")
       .update({ idle_warned_at: null, screen_static_warned_at: null })
@@ -2399,6 +2400,9 @@ function TaskScreenshotCard({
           const badge = screenshotTypeBadge(ss.screenshot_type);
           // A marker slot: no image was captured, and the row says why.
           const isMarker = ss.screenshot_type === "failed" || !ss.drive_file_id;
+          // Null for anything captured before 2026-10-06 (no tag to read) —
+          // shown only when we actually know, never a guessed label.
+          const source = screenshotSource(ss.filename);
 
           return (
             <button
@@ -2438,6 +2442,14 @@ function TaskScreenshotCard({
                     title="Screen is identical to the previous capture — nothing moved"
                   >
                     Unchanged
+                  </span>
+                )}
+                {source && (
+                  <span
+                    className="absolute bottom-1.5 left-1.5 rounded bg-slate-blue-soft px-1.5 py-0.5 text-[9px] font-semibold text-slate-blue capitalize"
+                    title={`Captured by the ${source} app`}
+                  >
+                    {source}
                   </span>
                 )}
               </div>

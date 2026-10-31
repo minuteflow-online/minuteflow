@@ -22,6 +22,7 @@ import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPref
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import { isUnreadCandidate } from "@/lib/submissionUnread";
+import { showsInUnreadFilter } from "@/lib/unreadFilter";
 import {
   localDay,
   deadlineFor as sharedDeadlineFor,
@@ -553,6 +554,9 @@ function SubmissionsPageInner() {
   // that task's thread. Drives the ✉️ badge and the Unread filter below.
   const [unreadByTask, setUnreadByTask] = useState<Record<number, number>>({});
   const [unreadOnly, setUnreadOnly] = useState(false);
+  // Tasks opened while the Unread filter is on. Opening clears the unread count,
+  // so without this the card would leave the list the moment it was clicked.
+  const [openedSinceUnreadOn, setOpenedSinceUnreadOn] = useState<Set<number>>(new Set());
 
   // assigned_task_id -> true while a reviewer's flag is holding that task.
   // Reviewer-only: the API sends an empty map to everyone else.
@@ -923,6 +927,7 @@ This cannot be undone.`
   const markThreadRead = useCallback(
     (taskId: number) => {
       if (!currentUserId || !(unreadByTask[taskId] > 0)) return;
+      setOpenedSinceUnreadOn((prev) => new Set(prev).add(taskId));
       setUnreadByTask((prev) => {
         const next = { ...prev };
         delete next[taskId];
@@ -1087,10 +1092,9 @@ This cannot be undone.`
     // so this checks task membership directly rather than going through
     // keepQualifyingThreads' per-submission predicate.
     if (unreadOnly) {
-      rows = rows.filter((r) => {
-        const taskId = r.task?.id ?? r.assigned_task_id;
-        return taskId != null && (unreadByTask[taskId] ?? 0) > 0;
-      });
+      rows = rows.filter((r) =>
+        showsInUnreadFilter(r.task?.id ?? r.assigned_task_id, unreadByTask, openedSinceUnreadOn)
+      );
     }
 
     if (flaggedOnly) {
@@ -1101,7 +1105,7 @@ This cannot be undone.`
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone, unreadOnly, unreadByTask, flaggedOnly, flaggedTasks]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone, unreadOnly, unreadByTask, openedSinceUnreadOn, flaggedOnly, flaggedTasks]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -1400,7 +1404,10 @@ This cannot be undone.`
             "on which one", this answers "is there any at all". */}
         <button
           type="button"
-          onClick={() => setUnreadOnly((v) => !v)}
+          onClick={() => {
+            setOpenedSinceUnreadOn(new Set());
+            setUnreadOnly((v) => !v);
+          }}
           className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
             unreadOnly
               ? "border-terracotta/30 bg-terracotta-soft text-terracotta"
@@ -2116,8 +2123,9 @@ function SubmissionEntry({
  * abuse, not something fixable at upload — see the Sept 2026 boss report).
  * Preview re-fetches the same bytes with fetch(), which reads the body as
  * text regardless of what content-type the response claims, and renders them
- * in a fully sandboxed iframe — no scripts, no same-origin, no forms — so
- * showing exactly what a VA uploaded is safe even before anyone's reviewed it.
+ * in a sandboxed iframe — scripts allowed (calendar/report pages render their
+ * content with JS) but no same-origin, forms, popups or top navigation, so the
+ * page can't reach MinuteFlow's cookies or data even before anyone's reviewed it.
  */
 function AttachmentGallery({ attachments }: { attachments: TaskSubmissionAttachment[] }) {
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
@@ -2161,14 +2169,26 @@ function AttachmentGallery({ attachments }: { attachments: TaskSubmissionAttachm
               (file.mime_type ?? "").includes("html") || /\.html?$/i.test(file.filename);
             return (
               <span key={file.id} className="inline-flex items-center gap-1">
-                <a
-                  href={file.url ?? "#"}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
-                >
-                  {file.filename}
-                </a>
+                {isHtml && file.url ? (
+                  // The raw URL shows the page's source (Supabase serves it as
+                  // text/plain), so the filename opens the preview instead.
+                  <button
+                    type="button"
+                    onClick={() => setPreviewFile(file)}
+                    className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
+                  >
+                    {file.filename}
+                  </button>
+                ) : (
+                  <a
+                    href={file.url ?? "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
+                  >
+                    {file.filename}
+                  </a>
+                )}
                 {isHtml && file.url && (
                   <button
                     type="button"
@@ -2198,9 +2218,9 @@ function AttachmentGallery({ attachments }: { attachments: TaskSubmissionAttachm
 }
 
 /** Fetches an attachment's bytes (bypassing whatever content-type the
- *  storage response claims) and renders them in a fully sandboxed iframe —
- *  scripts, forms, and same-origin access are all disabled, so this is safe
- *  to open on a file nobody's reviewed yet. */
+ *  storage response claims) and renders them in a sandboxed iframe — scripts
+ *  run, but same-origin access, forms and navigation are disabled, so this is
+ *  safe to open on a file nobody's reviewed yet. */
 function HtmlPreviewModal({
   file,
   onClose,
@@ -2269,7 +2289,7 @@ function HtmlPreviewModal({
             <iframe
               title={file.filename}
               srcDoc={html}
-              sandbox=""
+              sandbox="allow-scripts"
               className="h-full w-full border-0 bg-white"
             />
           )}

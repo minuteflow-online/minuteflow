@@ -10,6 +10,7 @@
 // unique index and time-log-duplicate-bug-fix history).
 import { query, PostgrestError } from "./db";
 import { cappedCloseTime } from "./cappedCloseTime";
+import { isBillableCategory } from "./billable";
 
 export interface Profile {
   id: string;
@@ -18,6 +19,11 @@ export interface Profile {
   department: string | null;
   position: string | null;
   clock_in_disabled: boolean;
+  /** Gates admin-only UI (the Team tab) — see team.ts. Matches the same
+   *  6-role admin-equivalent list used throughout this app and the web RLS
+   *  policies it reads against (admin/manager/coordinator/specialist/ceo/
+   *  founder) by simply checking role !== "va", same as web's dashboard. */
+  role: string;
 }
 
 export interface ActiveTask {
@@ -34,6 +40,12 @@ export interface ActiveTask {
   logId: string;
   _startMs: number;
   isBreak?: boolean;
+  /** True while this is the placeholder "Paused" row startPause creates —
+   *  see startPause/endPause below. Distinct from isBreak: Break and Pause
+   *  are both unpaid (see billable.ts) but mean different things to Toni's
+   *  "lean and focused work" tracking (step-away vs a meal break), so they
+   *  get their own flag/category/Team-status rather than sharing isBreak. */
+  isPause?: boolean;
   assignedTaskId?: number | null;
   todoLabel?: string | null;
 }
@@ -114,7 +126,7 @@ export function getCorrectSessionDate(
 
 export async function fetchProfile(userId: string): Promise<Profile | null> {
   const rows = await query<Profile[]>("profiles", {
-    filters: `id=eq.${userId}&select=id,username,full_name,department,position,clock_in_disabled`,
+    filters: `id=eq.${userId}&select=id,username,full_name,department,position,clock_in_disabled,role`,
   });
   return rows[0] ?? null;
 }
@@ -237,24 +249,116 @@ export async function clockIn(userId: string, profile: Profile, orgTimezone: str
   return { ok: true, session: rows[0] };
 }
 
+/** What the clock-out wizard collects, same fields as web's Close Active Task
+ *  dialog (dashboard's handleCloseTaskAndClockOut). */
+export interface ClockOutWizardResult {
+  clientMemo: string;
+  internalMemo: string;
+  mood: "bad" | "neutral" | "good" | null;
+  dayRating: number | null;
+  dayRatingNote: string;
+}
+
+/** Closes the task that's running, saving the memos on its log — the first
+ *  half of web's handleCloseTaskAndClockOut (the second half is clockOut()
+ *  above, which now also takes the mood/day-rating). Task Status in the
+ *  dialog is required but, as on web, isn't stored by this step. */
+export async function closeActiveTaskWithMemos(
+  task: ActiveTask,
+  clientMemo: string,
+  internalMemo: string
+): Promise<void> {
+  const logId = Number(task.logId);
+  if (!logId) return;
+  const now = Date.now();
+  const startMs = task.start_time ? new Date(task.start_time).getTime() : now;
+  const body: Record<string, unknown> = {
+    end_time: new Date(now).toISOString(),
+    // Never negative (clock skew), same guard as web.
+    duration_ms: Math.max(0, now - startMs),
+  };
+  if (clientMemo.trim()) body.client_memo = clientMemo.trim();
+  if (internalMemo.trim()) body.internal_memo = internalMemo.trim();
+  await query("time_logs", { method: "PATCH", filters: `id=eq.${logId}`, body });
+}
+
 /** Mirrors performClockOut(): closes any orphaned open logs (including a
- *  still-open break), then marks the session clocked out. */
-export async function clockOut(userId: string, orgTimezone: string): Promise<ClockInResult> {
+ *  still-open break), then marks the session clocked out and writes the
+ *  zero-duration "Clocked Out" marker log web writes (reports use it as the
+ *  shift boundary). Mood/day-rating prompts are not ported. */
+export async function clockOut(
+  userId: string,
+  orgTimezone: string,
+  profile?: Profile | null,
+  currentSession?: SessionRow | null,
+  wizard?: ClockOutWizardResult
+): Promise<ClockInResult> {
   const now = new Date().toISOString();
   await closeOpenLogs(userId, now, orgTimezone);
+
+  const body: Record<string, unknown> = {
+    user_id: userId,
+    clocked_in: false,
+    clock_in_time: null,
+    clock_out_time: now,
+    active_task: null,
+    updated_at: now,
+  };
+  if (wizard?.mood) body.mood = wizard.mood;
+  if (wizard?.dayRating) body.day_rating = wizard.dayRating;
+  if (wizard?.dayRatingNote.trim()) body.day_rating_note = wizard.dayRatingNote.trim();
 
   const rows = await query<SessionRow[]>("sessions", {
     method: "POST",
     filters: "on_conflict=user_id",
     headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-    body: {
-      user_id: userId,
-      clocked_in: false,
-      clock_out_time: now,
-      active_task: null,
-      updated_at: now,
-    },
+    body,
   });
+
+  // Mood history for reports/Team — same upsert web's performClockOut does.
+  // Not fatal: the session row above is what clocks them out.
+  if (wizard?.mood) {
+    try {
+      await query("mood_logs", {
+        method: "POST",
+        filters: "on_conflict=user_id,session_date",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: {
+          user_id: userId,
+          session_date: getCorrectSessionDate(currentSession, orgTimezone),
+          mood: wizard.mood,
+        },
+      });
+    } catch {
+      // see above
+    }
+  }
+
+  if (profile) {
+    // Not fatal, same as web: it's a zero-duration marker, so losing it costs
+    // no tracked time and must not strand someone on the clock.
+    try {
+      await query("time_logs", {
+        method: "POST",
+        body: {
+          user_id: userId,
+          username: profile.username,
+          full_name: profile.full_name,
+          department: profile.department,
+          position: profile.position,
+          task_name: "Clocked Out",
+          category: "Clock Out",
+          start_time: now,
+          end_time: now,
+          duration_ms: 0,
+          billable: false,
+          session_date: getCorrectSessionDate(currentSession, orgTimezone),
+        },
+      });
+    } catch {
+      // see above
+    }
+  }
 
   return { ok: true, session: rows[0] };
 }
@@ -278,4 +382,196 @@ export async function endBreak(userId: string): Promise<void> {
     filters: `user_id=eq.${userId}`,
     body: { active_task: null, updated_at: now },
   });
+}
+
+export interface PauseResult {
+  ok: boolean;
+  error?: string;
+  session?: SessionRow;
+  /** The task that was active before pausing — App.tsx holds onto this in
+   *  local React state (same as the dashboard's preBreakTask) so endPause
+   *  can resume it with no prompt, per Toni's "just back on the same task
+   *  automatically" call. There's no good place to stash it server-side that
+   *  doesn't itself look like a second active task, so — same limitation the
+   *  dashboard's own preBreakTask already has — it's lost if the app
+   *  restarts mid-pause. */
+  resumeTask?: ActiveTask | null;
+}
+
+/** Pauses whatever's currently running: closes its time_log out and logs an
+ *  explicit unpaid "Pause" row (billable: false) — unlike this file's own
+ *  startBreak above, which only flips a display flag and never actually
+ *  stops the underlying log. That shortcut is fine for a flag nobody reads
+ *  for billing, but Toni's rule for Pause is "unpaid, like Break" as an
+ *  actual payroll outcome, not just a label, so this does the real
+ *  close-and-reopen Break's own *dashboard* version does on web
+ *  (handleStartBreak in src/app/(app)/dashboard/page.tsx) rather than
+ *  copying this file's simplified one. */
+export async function startPause(
+  userId: string,
+  profile: Profile,
+  currentSession: SessionRow | null,
+  orgTimezone: string,
+  /** "Break" reuses the same close-and-reopen so desktop Break actually stops
+   *  paid time like web's does (it used to only flip a display flag). Flags
+   *  match web's break task, so web recognizes it via isOnBreak. */
+  kind: "Pause" | "Break" = "Pause"
+): Promise<PauseResult> {
+  const now = new Date().toISOString();
+  await closeOpenLogs(userId, now, orgTimezone);
+
+  const sessionDate = getCorrectSessionDate(currentSession, orgTimezone);
+
+  let log: { id: number };
+  try {
+    const rows = await query<{ id: number }[]>("time_logs", {
+      method: "POST",
+      body: {
+        user_id: userId,
+        username: profile.username,
+        full_name: profile.full_name,
+        department: profile.department,
+        position: profile.position,
+        task_name: kind === "Break" ? "Break" : "Paused",
+        category: kind,
+        account: "Virtual Concierge",
+        client_name: "Toni Colina",
+        start_time: now,
+        billable: false,
+        billing_type: "hourly",
+        session_date: sessionDate,
+      },
+    });
+    log = rows[0];
+  } catch (err) {
+    return {
+      ok: false,
+      error: isDuplicateActiveLogError(err)
+        ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
+        : `Couldn't pause: ${err instanceof Error ? err.message : "unknown error"}.`,
+    };
+  }
+
+  const pauseTask: ActiveTask = {
+    task_name: kind === "Break" ? "Break" : "Paused",
+    category: kind,
+    project: "",
+    account: "",
+    client_name: "",
+    client_memo: "",
+    internal_memo: "",
+    start_time: now,
+    end_time: null,
+    duration_ms: 0,
+    logId: String(log.id),
+    _startMs: Date.now(),
+    ...(kind === "Break" ? { isBreak: true } : { isPause: true }),
+  };
+
+  const rows = await query<SessionRow[]>("sessions", {
+    method: "POST",
+    filters: "on_conflict=user_id",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      user_id: userId,
+      clocked_in: true,
+      clock_in_time: currentSession?.clock_in_time || now,
+      active_task: pauseTask,
+      session_date: sessionDate,
+      updated_at: now,
+    },
+  });
+
+  // currentSession.active_task is the task that was running right before
+  // this call closed it out — exactly what the caller needs to resume.
+  return { ok: true, session: rows[0], resumeTask: currentSession?.active_task ?? null };
+}
+
+/** Resumes the task a prior startPause call returned as `resumeTask` — a
+ *  fresh time_log built from that snapshot's fields, same shape the
+ *  dashboard's resumePreBreakTask uses on web. No wizard, no prompt: Toni's
+ *  call was to land straight back on the same task. `resumeTask` null (nothing
+ *  was running before the pause, or the snapshot was lost on an app restart)
+ *  lands back at idle-while-clocked-in instead, same as a bare End Break. */
+export async function endPause(
+  userId: string,
+  profile: Profile,
+  resumeTask: ActiveTask | null | undefined,
+  currentSession: SessionRow | null,
+  orgTimezone: string
+): Promise<ClockInResult> {
+  const now = new Date().toISOString();
+  await closeOpenLogs(userId, now, orgTimezone);
+
+  const sessionDate = getCorrectSessionDate(currentSession, orgTimezone);
+
+  if (!resumeTask) {
+    const rows = await query<SessionRow[]>("sessions", {
+      method: "POST",
+      filters: "on_conflict=user_id",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: { user_id: userId, clocked_in: true, active_task: null, session_date: sessionDate, updated_at: now },
+    });
+    return { ok: true, session: rows[0] };
+  }
+
+  let log: { id: number };
+  try {
+    const rows = await query<{ id: number }[]>("time_logs", {
+      method: "POST",
+      body: {
+        user_id: userId,
+        username: profile.username,
+        full_name: profile.full_name,
+        department: profile.department,
+        position: profile.position,
+        task_name: resumeTask.task_name,
+        category: resumeTask.category,
+        project: resumeTask.project || null,
+        account: resumeTask.account || null,
+        client_name: resumeTask.client_name || null,
+        client_memo: resumeTask.client_memo || null,
+        internal_memo: resumeTask.internal_memo || null,
+        start_time: now,
+        billable: isBillableCategory(resumeTask.category),
+        billing_type: "hourly",
+        session_date: sessionDate,
+      },
+    });
+    log = rows[0];
+  } catch (err) {
+    return {
+      ok: false,
+      error: isDuplicateActiveLogError(err)
+        ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
+        : `Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`,
+    };
+  }
+
+  const resumed: ActiveTask = {
+    ...resumeTask,
+    start_time: now,
+    end_time: null,
+    duration_ms: 0,
+    logId: String(log.id),
+    _startMs: Date.now(),
+    isPause: false,
+    isBreak: false,
+  };
+
+  const rows = await query<SessionRow[]>("sessions", {
+    method: "POST",
+    filters: "on_conflict=user_id",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      user_id: userId,
+      clocked_in: true,
+      clock_in_time: currentSession?.clock_in_time || now,
+      active_task: resumed,
+      session_date: sessionDate,
+      updated_at: now,
+    },
+  });
+
+  return { ok: true, session: rows[0] };
 }

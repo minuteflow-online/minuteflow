@@ -12,13 +12,24 @@ import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, todoLa
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 import { startAutoCapture } from "./lib/autoCapture";
+import { fetchTeamRoster, fetchTeamTimeLogs, type TeamRosterMember, type TeamTimeLog } from "./lib/team";
+import TeamPanel from "./components/TeamPanel";
+import ClockOutModal from "./components/ClockOutModal";
 
-const SESSION_POLL_MS = 15000;
+// Desktop has no realtime channel (no supabase-js here), so this poll is the
+// whole web -> desktop sync latency; 15s was noticeably laggy in testing. It's
+// one single-row read per user.
+const SESSION_POLL_MS = 5000;
 const TASKS_POLL_MS = 30000;
+const TEAM_POLL_MS = 30000;
 
 function isOnBreak(activeTask: clock.ActiveTask | null): boolean {
   if (!activeTask) return false;
   return Boolean(activeTask.isBreak) || activeTask.category === "Personal";
+}
+
+function isPaused(activeTask: clock.ActiveTask | null): boolean {
+  return Boolean(activeTask?.isPause);
 }
 
 export default function App() {
@@ -29,6 +40,8 @@ export default function App() {
 
   const [sessionRow, setSessionRow] = useState<clock.SessionRow | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [showClockOutModal, setShowClockOutModal] = useState(false);
 
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
@@ -36,10 +49,18 @@ export default function App() {
   const [startingId, setStartingId] = useState<number | null>(null);
   const [playingTodoId, setPlayingTodoId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
+  // The task that was active right before Pause — held in local state the
+  // same way the dashboard's preBreakTask is, so Resume can land straight
+  // back on it with no prompt (Toni's call). See clock.ts's startPause/
+  // endPause for why this can't just live on the session row instead.
+  const [pausedTask, setPausedTask] = useState<clock.ActiveTask | null>(null);
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
-  const [rightTab, setRightTab] = useState<"todo" | "messages">("todo");
+  const [rightTab, setRightTab] = useState<"todo" | "messages" | "team">("todo");
+  const [teamMembers, setTeamMembers] = useState<TeamRosterMember[]>([]);
+  const [teamTimeLogs, setTeamTimeLogs] = useState<TeamTimeLog[]>([]);
+  const [teamLoading, setTeamLoading] = useState(true);
   const [dmRequest, setDmRequest] = useState<{ senderId: string; nonce: number } | null>(null);
   const [launchAtStartup, setLaunchAtStartupState] = useState(false);
 
@@ -71,7 +92,7 @@ export default function App() {
       const task = row.active_task;
       return {
         userId,
-        isOnBreak: isOnBreak(task),
+        isOnBreak: isOnBreak(task) || isPaused(task),
         activeLogId: task?.logId ? Number(task.logId) : null,
       };
     });
@@ -125,17 +146,58 @@ export default function App() {
   // extension shows up here too, same idea as the extension's own poll loop.
   useEffect(() => {
     if (!userId) return;
-    const sessionTimer = setInterval(() => {
-      clock.fetchSession(userId).then(setSessionRow).catch(() => {});
-    }, SESSION_POLL_MS);
+    // A failed poll used to be swallowed silently, leaving stale clock state on
+    // screen with no hint anything was wrong; surface it, and clear on success.
+    const pollSession = () => {
+      clock
+        .fetchSession(userId)
+        .then((s) => {
+          setSessionRow(s);
+          setSyncError(null);
+        })
+        .catch((err) => {
+          setSyncError(err instanceof Error ? err.message : "unknown error");
+        });
+    };
+    const sessionTimer = setInterval(pollSession, SESSION_POLL_MS);
     const tasksTimer = setInterval(() => {
       loadTasks(userId);
     }, TASKS_POLL_MS);
+    // Catch up right away when the window is brought back (it hides to tray,
+    // where timers are slowed) instead of waiting out the next interval.
+    const onFocus = () => pollSession();
+    window.addEventListener("focus", onFocus);
     return () => {
       clearInterval(sessionTimer);
       clearInterval(tasksTimer);
+      window.removeEventListener("focus", onFocus);
     };
   }, [userId, loadTasks]);
+
+  const loadTeam = useCallback(async () => {
+    setTeamLoading(true);
+    try {
+      const [members, logs] = await Promise.all([fetchTeamRoster(), fetchTeamTimeLogs()]);
+      setTeamMembers(members);
+      setTeamTimeLogs(logs);
+    } catch {
+      // Non-critical — leave the previous list showing rather than blank it.
+    } finally {
+      setTeamLoading(false);
+    }
+  }, []);
+
+  // Team roster — admin-only (role !== "va"), same gate web's dashboard uses
+  // for TeamSidebar. Separate from the initial auth-check Promise.all since
+  // profile.role isn't known until loadForUser resolves and sets state; this
+  // fires once role becomes available (and again if it ever changes without
+  // a re-login).
+  useEffect(() => {
+    if (!userId || !profile?.role || profile.role === "va") return;
+    loadTeam();
+    const timer = setInterval(loadTeam, TEAM_POLL_MS);
+    return () => clearInterval(timer);
+  }, [userId, profile?.role, loadTeam]);
 
   // Tells the main process whether to warn before quitting — see
   // electron/main.js's close handler. Also clears the flag on sign-out
@@ -173,6 +235,9 @@ export default function App() {
     setSessionRow(null);
     setTasks([]);
     setSelectedTask(null);
+    setTeamMembers([]);
+    setTeamTimeLogs([]);
+    setPausedTask(null);
   }, []);
 
   const handleClockIn = useCallback(async () => {
@@ -190,42 +255,123 @@ export default function App() {
     }
   }, [userId, profile, orgTimezone, actionPending]);
 
+  const performClockOut = useCallback(
+    async (wizard?: clock.ClockOutWizardResult) => {
+      if (!userId) return;
+      setActionPending(true);
+      try {
+        // Close the running task with its memos first, like web's
+        // handleCloseTaskAndClockOut, then clock out with mood/day rating.
+        if (wizard && sessionRow?.active_task?.logId) {
+          await clock.closeActiveTaskWithMemos(sessionRow.active_task, wizard.clientMemo, wizard.internalMemo);
+        }
+        const result = await clock.clockOut(userId, orgTimezone, profile, sessionRow, wizard);
+        if (result.session) setSessionRow(result.session);
+        setPausedTask(null);
+        setShowClockOutModal(false);
+      } catch (err) {
+        alert(`Couldn't clock you out: ${err instanceof Error ? err.message : "unknown error"}. You are still clocked in — try again.`);
+      } finally {
+        setActionPending(false);
+      }
+    },
+    [userId, profile, sessionRow, orgTimezone]
+  );
+
+  // Same rule as web: with a task running, Clock Out opens the "Close Active
+  // Task" wizard (status + memo + mood/day rating); with nothing running it
+  // clocks out straight away.
   const handleClockOut = useCallback(async () => {
     if (!userId || actionPending) return;
-    setActionPending(true);
-    try {
-      const result = await clock.clockOut(userId, orgTimezone);
-      if (result.session) setSessionRow(result.session);
-    } finally {
-      setActionPending(false);
+    if (sessionRow?.active_task?.logId) {
+      setShowClockOutModal(true);
+      return;
     }
-  }, [userId, orgTimezone, actionPending]);
+    await performClockOut();
+  }, [userId, actionPending, sessionRow, performClockOut]);
 
+  // Break: same real close-and-reopen as Pause (unpaid Break log, previous
+  // task snapshotted for End Break) — it used to only flip a display flag and
+  // left the running task's log open and billable. Still no memo wizard.
   const handleStartBreak = useCallback(async () => {
-    if (!userId || actionPending) return;
+    if (!userId || !profile || actionPending) return;
     setActionPending(true);
     try {
-      await clock.startBreak(userId);
-      const s = await clock.fetchSession(userId);
-      setSessionRow(s);
+      const result = await clock.startPause(userId, profile, sessionRow, orgTimezone, "Break");
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      setPausedTask(result.resumeTask ?? null);
+      if (result.session) setSessionRow(result.session);
+    } catch (err) {
+      alert(`Couldn't start your break: ${err instanceof Error ? err.message : "unknown error"}.`);
     } finally {
       setActionPending(false);
     }
-  }, [userId, actionPending]);
+  }, [userId, profile, sessionRow, orgTimezone, actionPending]);
 
   const handleEndBreak = useCallback(async () => {
-    if (!userId || actionPending) return;
+    if (!userId || !profile || actionPending) return;
     setActionPending(true);
     try {
-      await clock.endBreak(userId);
-      const s = await clock.fetchSession(userId);
-      setSessionRow(s);
+      const result = await clock.endPause(userId, profile, pausedTask, sessionRow, orgTimezone);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      if (result.session) setSessionRow(result.session);
+      setPausedTask(null);
+    } catch (err) {
+      alert(`Couldn't end your break: ${err instanceof Error ? err.message : "unknown error"}.`);
     } finally {
       setActionPending(false);
     }
-  }, [userId, actionPending]);
+  }, [userId, profile, pausedTask, sessionRow, orgTimezone, actionPending]);
 
-  const handleStart = useCallback(
+  // Pause: unpaid, like Break — unlike Break above, this one actually closes
+  // and reopens time_logs rather than just flipping a flag, since "unpaid"
+  // has to be a real payroll outcome here, not just a display label. See
+  // clock.ts's startPause for the full reasoning.
+  const handlePause = useCallback(async () => {
+    if (!userId || !profile || actionPending) return;
+    setActionPending(true);
+    try {
+      const result = await clock.startPause(userId, profile, sessionRow, orgTimezone);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      setPausedTask(result.resumeTask ?? null);
+      if (result.session) setSessionRow(result.session);
+    } catch (err) {
+      alert(`Couldn't pause: ${err instanceof Error ? err.message : "unknown error"}.`);
+    } finally {
+      setActionPending(false);
+    }
+  }, [userId, profile, sessionRow, orgTimezone, actionPending]);
+
+  // Resume: lands straight back on whatever was running before Pause, no
+  // prompt — Toni's explicit call.
+  const handleResume = useCallback(async () => {
+    if (!userId || !profile || actionPending) return;
+    setActionPending(true);
+    try {
+      const result = await clock.endPause(userId, profile, pausedTask, sessionRow, orgTimezone);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      if (result.session) setSessionRow(result.session);
+      setPausedTask(null);
+    } catch (err) {
+      alert(`Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`);
+    } finally {
+      setActionPending(false);
+    }
+  }, [userId, profile, pausedTask, sessionRow, orgTimezone, actionPending]);
+
+  const handleStart =useCallback(
     async (task: VAAssignedTask) => {
       if (!userId || !profile || startingId != null) return;
       setStartingId(task.id);
@@ -356,9 +502,11 @@ export default function App() {
 
   const clockState: ClockState = !sessionRow?.clocked_in
     ? "idle"
-    : isOnBreak(sessionRow.active_task)
-      ? "on-break"
-      : "clocked-in";
+    : isPaused(sessionRow.active_task)
+      ? "paused"
+      : isOnBreak(sessionRow.active_task)
+        ? "on-break"
+        : "clocked-in";
 
   return (
     <div className="flex h-full flex-col bg-cream">
@@ -404,21 +552,35 @@ export default function App() {
         </div>
       </div>
 
+      {syncError && (
+        <div className="px-5 py-1.5 text-[11px] text-terracotta bg-terracotta-soft shrink-0">
+          Can&apos;t reach MinuteFlow right now ({syncError}). What you see may be out of date — retrying automatically.
+        </div>
+      )}
+
       {captureStatus && (
         <div className="px-5 pt-2 text-[11px] text-walnut shrink-0">{captureStatus}</div>
       )}
 
-      {/* Body — matches the wireframe: left column timer+tasks, right column to-do+description */}
+      {/* Body — matches the wireframe: left column timer+tasks, right column to-do+description.
+          Left column scales with the window instead of a fixed 450px: ~45%
+          of the available width, floored at 360px (the main.js minWidth of
+          810px floors out there too) and capped at 500px so a maximized
+          window doesn't stretch the clock/task list wider than they need —
+          the freed-up width goes to the right panel instead. */}
       <div className="flex flex-1 min-h-0 gap-4 p-4">
-        <div className="flex w-[450px] shrink-0 flex-col gap-4 min-h-0">
+        <div className="flex w-[45%] min-w-[360px] max-w-[500px] shrink-0 flex-col gap-4 min-h-0">
           <ClockPanel
             state={clockState}
             clockInTime={sessionRow?.clock_in_time ?? null}
+            awaySince={sessionRow?.active_task?.start_time ?? null}
             actionPending={actionPending}
             onClockIn={handleClockIn}
             onClockOut={handleClockOut}
             onStartBreak={handleStartBreak}
             onEndBreak={handleEndBreak}
+            onPause={handlePause}
+            onResume={handleResume}
           />
           <TasksPanel
             tasks={tasks}
@@ -454,6 +616,18 @@ export default function App() {
             >
               Message Board
             </button>
+            {profile?.role && profile.role !== "va" && (
+              <button
+                onClick={() => setRightTab("team")}
+                className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                  rightTab === "team"
+                    ? "bg-terracotta-soft text-terracotta"
+                    : "text-bark hover:bg-parchment hover:text-espresso"
+                }`}
+              >
+                Team
+              </button>
+            )}
           </div>
           {rightTab === "todo" ? (
             <TodoPanel
@@ -467,11 +641,24 @@ export default function App() {
               playingTodoId={playingTodoId}
               onPlayTodo={handlePlayTodo}
             />
-          ) : (
+          ) : rightTab === "messages" ? (
             <MessageBoardPanel userId={userId} openDmRequest={dmRequest} />
+          ) : (
+            <TeamPanel members={teamMembers} timeLogs={teamTimeLogs} loading={teamLoading} />
           )}
         </div>
       </div>
+
+      {showClockOutModal && sessionRow?.active_task && (
+        <ClockOutModal
+          taskName={sessionRow.active_task.task_name}
+          initialClientMemo={sessionRow.active_task.client_memo || ""}
+          initialInternalMemo={sessionRow.active_task.internal_memo || ""}
+          submitting={actionPending}
+          onCancel={() => setShowClockOutModal(false)}
+          onSubmit={(wizard) => void performClockOut(wizard)}
+        />
+      )}
 
       {submitTarget && (
         <SubmitWorkModal

@@ -13,6 +13,35 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   `src/app/(app)/dashboard/page.tsx` and `src/contexts/SessionContext.tsx`,
   including the duplicate-active-log guard and the overnight-log-capping
   safety net (see `src/lib/clock.ts` for the file-by-file mapping).
+- **Pause / Resume** — Toni's "Lean and Focused Work" policy (2026-10-26):
+  step away for a quick interruption (phone, family, cooking) without it
+  counting as paid time, saving Break specifically for eating. Desktop-only
+  for now, no web equivalent button yet. Unlike this app's own Break above
+  (which only flips a display flag and never actually stops the underlying
+  `time_logs` row — see that function's own comment), Pause does the real
+  close-and-reopen: it closes whatever's running, logs an explicit
+  `category: "Pause"` row with `billable: false`, and snapshots the task
+  that was active into local state (same shape the dashboard's own
+  `preBreakTask` uses, same limitation — lost if the app restarts mid-pause)
+  so Resume can land straight back on it with a fresh `time_logs` row and no
+  prompt. See `src/lib/clock.ts`'s `startPause`/`endPause`. Pause is in the
+  same unpaid-category set as Break/Personal (`src/lib/billable.ts`, mirrored
+  here in `src/lib/billable.ts` since this app can't import across), and
+  counts as off-duty for both the 5-minute auto-capture loop and the shared
+  `/api/upload-screenshot` off-duty check — see those files and
+  `src/lib/breakState.ts`'s new `isOnPause` on the web side. Also recognized
+  by Your Team's status badges on both apps (a teammate paused from desktop
+  shows "Paused" there, not "Working").
+- **Clock-out wizard** — with a task running, Clock Out opens the same "Close
+  Active Task Before Clocking Out" dialog as web's dashboard
+  (`src/components/ClockOutModal.tsx`): task status (required), client/internal
+  memo (at least one; client memo capped at 15 words), optional mood and day
+  rating (a rating needs a 5-word note). Saves the memos on the running task's
+  log, then writes `mood`/`day_rating`/`day_rating_note` on the session and the
+  `mood_logs` row, like `handleCloseTaskAndClockOut`/`performClockOut` on web.
+  With nothing running, Clock Out is immediate, as on web. As on web, the
+  Task Status choice is required but not stored. See `src/lib/clock.ts`'s
+  `closeActiveTaskWithMemos`/`clockOut`.
 - **Assigned Tasks** — a single list, `on_queue` and `in_progress` only.
   Mirrors web's `AssignedTasksWidget.tsx` exactly as of its 2026-10-07 rework
   (Toni's call): a newly-assigned (`pending`) task is accepted on web, not
@@ -189,6 +218,20 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
     boards, @mention autocomplete *for composing* (see Personal above),
     General's own delete/pin/archive, marking a notification read, realtime
     (all four tabs poll instead — see each lib file's poll interval).
+- **Your Team** — a third tab next to To-Do/Message Board, visible only when
+  `profile.role !== "va"` (same gate web's dashboard uses for `TeamSidebar.tsx`,
+  which this ports). Every active teammate currently clocked in and working/
+  on break/on personal time, each with an avatar, their current task, and a
+  Working/Personal/On Break status badge; a "Show tasks (N)" toggle expands
+  their last 14 days of time logs. See `src/lib/team.ts`
+  (`fetchTeamRoster`/`fetchTeamTimeLogs` — table-wide reads of
+  profiles/sessions/time_logs, safe here because the RLS policies on all
+  three already scope to the same admin-equivalent role list this tab is
+  gated on) and `src/components/TeamPanel.tsx`. Named `TeamRosterMember`/
+  `fetchTeamRoster`, not `TeamMember`/`fetchTeamMembers` — `lib/conversations.ts`
+  already has a same-named, differently-shaped pair for picking a DM
+  recipient. Offline teammates aren't shown (matches web). No admin actions
+  here — this is read-only monitoring, same as web's widget.
 
 ## What it deliberately does NOT do yet
 
@@ -198,10 +241,9 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   killed and restarted unpredictably. This app's main process keeps running
   in the tray for as long as the VA is signed in, so `autoCapture.ts` just
   tries again at the next 5-minute tick instead — see that file's comment.
-- **No full Break-flow wizard.** Break/End Break here just flips
-  `sessions.active_task`, the same simplified version `SessionContext.tsx`
-  uses on non-dashboard pages — not the dashboard's memo-collection wizard for
-  the paused task.
+- **No full Break-flow wizard.** Break/End Break use the same real
+  close-and-reopen as Pause (unpaid `Break` log, previous task resumed on End
+  Break), but skip the dashboard's memo-collection wizard for the paused task.
 
 ## Running it
 

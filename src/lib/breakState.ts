@@ -23,3 +23,12 @@ export function isOnPersonal(
 ): boolean {
   return activeTask?.category === "Personal";
 }
+
+/** Desktop's Pause button (Toni's "Lean and Focused Work" policy,
+ *  2026-10-26) — same flag-and-category-both pattern isOnBreak above uses,
+ *  so a Pause started on desktop is recognized here too. */
+export function isOnPause(
+  activeTask: { isPause?: boolean; category?: string } | null | undefined
+): boolean {
+  return Boolean(activeTask?.isPause) || activeTask?.category === "Pause";
+}

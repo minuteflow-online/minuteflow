@@ -30,6 +30,10 @@ export function isPayrollEligible(
   if (!log.duration_ms) return false;
   const category = (log.category || "").trim().toLowerCase();
   if (category === "personal" || category === "clock out") return false;
+  // Pause (desktop app, Toni's 2026-10-26 "Lean and Focused Work" policy) is
+  // unpaid, same as billable.ts already says. No date cutoff: the category did
+  // not exist before it shipped, so there is no older paid Pause to protect.
+  if (category === "pause") return false;
   // Break is unpaid for every VA, not just Full Time — part-timers' paystubs
   // were still paying it while their time log showed it as non-billable.
   if (category === "break") {
