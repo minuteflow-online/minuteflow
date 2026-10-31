@@ -69,6 +69,9 @@ export async function runPaystubDraftGeneration(
         company_name: orgName || "MinuteFlow",
         status: "draft",
         currency: calc.currency,
+        // Every unpaid output task starts picked, so the draft total is what's
+        // owed; unticking one in the generator saves the narrower set.
+        included_output_item_ids: calc.outputItemIds,
       })
       .select("id")
       .single();

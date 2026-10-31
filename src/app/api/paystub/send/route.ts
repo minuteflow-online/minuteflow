@@ -18,7 +18,7 @@ import { isPayrollEligible } from "@/lib/payrollHours";
 import { workDaysFromProfile } from "@/lib/budget";
 import { computeAttendancePay, type AttendancePay, type DayDecision } from "@/lib/salaryProration";
 import { esc } from "@/lib/approvalPages";
-import { fetchFirstSubmittedDates } from "@/lib/paystub";
+import { fetchUnpaidOutputTasks } from "@/lib/paystub";
 
 export const dynamic = "force-dynamic";
 
@@ -302,24 +302,10 @@ export async function POST(request: Request) {
   // reviewed and signed off. Separate table from the legacy
   // va_task_assignments fixed-rate flow above — folded into the same
   // "Output Based Assignments" section on the paystub so they show up together.
-  const { data: fixedPayTasksRaw } = await adminClient
-    .from("fixed_pay_tasks")
-    .select("id, task_name, task_detail, account, category, rate, status, updated_at")
-    .eq("claimed_by", user_id)
-    .neq("status", "cancelled")
-    .is("paid_at", null)
-    .is("deleted_at", null);
-
   // Pay is by FIRST submission — a revision is included in the reel's rate,
   // so a later resubmission or status change must not move the work into a
-  // later period (or out of this one). A task belongs to this paystub when it
-  // was first submitted by end_date; a task never submitted (meetings and the
-  // like) still falls back to its last update, as before.
-  const firstSubmitted = await fetchFirstSubmittedDates(
-    adminClient,
-    (fixedPayTasksRaw ?? []).map((t) => t.id as number)
-  );
-  const cutoffMs = new Date(outputItemDateCutoff).getTime();
+  // later period (or out of this one). Shared with scheduled draft generation.
+  const unpaidOutputTasks = await fetchUnpaidOutputTasks(adminClient, user_id, end_date);
 
   // Output work already paid, settled inside this period. It is deliberately
   // kept out of the payable items above — paying it twice is the thing that
@@ -346,31 +332,23 @@ export async function POST(request: Request) {
   }));
   const paidOutputTotal = paidOutputItems.reduce((sum, t) => sum + t.amount, 0);
 
-  const fixedPayTaskItems = (fixedPayTasksRaw ?? [])
-    .filter((t) => {
-      const first = firstSubmitted.get(t.id as number);
-      if (first) return first <= end_date;
-      const updated = t.updated_at ? new Date(t.updated_at as string).getTime() : NaN;
-      return !Number.isNaN(updated) && updated <= cutoffMs;
-    })
-    .map((t) => ({
-    id: t.id as number,
-    task_name: (t.task_name as string) ?? "Output Based Task",
-    account: (t.account as string) ?? "",
-    client_memo: ((t.task_detail as string | null) ?? "").trim() || null,
-    project: (t.category as string) ?? "",
-    rate: Number(t.rate) || 0,
+  const fixedPayTaskItems = unpaidOutputTasks.map((t) => ({
+    id: t.id,
+    task_name: t.task_name ?? "Output Based Task",
+    account: t.account ?? "",
+    client_memo: (t.task_detail ?? "").trim() || null,
+    project: t.category ?? "",
+    rate: t.rate,
     quantity: 1,
-    amount: Number(t.rate) || 0,
-    status: t.status as string,
+    amount: t.rate,
+    status: t.status,
     // First submission date (org time, YYYY-MM-DD); null if never submitted.
-    date: firstSubmitted.get(t.id as number) ?? null,
+    date: t.first_submitted,
     // Completed work is always paid. Anything earlier only counts toward
     // this paystub if the caller explicitly checked it in.
-    included: t.status === "completed" || includedOutputItemIds.has(t.id as number),
+    included: t.status === "completed" || includedOutputItemIds.has(t.id),
     source: "fixed_pay_task" as const,
-  }))
-    .sort((a, b) => (a.date ?? "9999").localeCompare(b.date ?? "9999"));
+  }));
 
   const includedFixedPayTaskItems = fixedPayTaskItems.filter((t) => t.included);
   const allFixedItems = [...fixedAssignments, ...fixedPayTaskItems];
