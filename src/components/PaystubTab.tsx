@@ -403,19 +403,30 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         });
         if (!res.ok) return d;
         const p = await res.json();
-        const freshGross = Number(p.totalGrossPay ?? p.grossPay) || 0;
+        // A draft saved before picks were stored (null) defaults to every
+        // unpaid output task, same as the scheduled run — Toni unticks what
+        // shouldn't be paid. The preview above ran with none picked, so it
+        // only counted Completed ones; add the rest.
+        const needsDefaultPicks = d.included_output_item_ids == null;
+        const outputItems = ((p.fixedAssignments ?? []) as FixedAssignment[]).filter((a) => a.source === "fixed_pay_task");
+        const picks = needsDefaultPicks ? outputItems.map((a) => a.id) : d.included_output_item_ids ?? [];
+        const defaultExtra = needsDefaultPicks
+          ? outputItems.filter((a) => a.status !== "completed").reduce((sum, a) => sum + a.amount, 0)
+          : 0;
+        const freshGross = (Number(p.totalGrossPay ?? p.grossPay) || 0) + defaultExtra;
         const freshMs = Math.round((Number(p.totalHours) || 0) * 3_600_000);
         // A draft follows the VA's current currency setting until it's sent.
         const freshCurrency = p.currency ?? d.currency ?? "USD";
-        if (Math.abs(freshGross - Number(d.gross_pay)) > 0.005 || Math.abs(freshMs - Number(d.total_hours_ms)) > 1000 || freshCurrency !== (d.currency ?? "USD")) {
+        if (needsDefaultPicks || Math.abs(freshGross - Number(d.gross_pay)) > 0.005 || Math.abs(freshMs - Number(d.total_hours_ms)) > 1000 || freshCurrency !== (d.currency ?? "USD")) {
           const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
           for (const [dt, ms] of Object.entries(p.byDate ?? {})) {
             byDateWithRates[dt] = { ms: Number(ms), rate: p.isFixedPeriod ? 0 : Number((p.rateByDate ?? {})[dt] ?? p.payRate) };
           }
           await supabase.from("paystub_snapshots").update({
             gross_pay: freshGross, total_hours_ms: freshMs, by_date: byDateWithRates, pay_rate_type: p.payRateType ?? null, currency: freshCurrency,
+            included_output_item_ids: picks,
           }).eq("id", d.id);
-          return { ...d, gross_pay: freshGross, total_hours_ms: freshMs, currency: freshCurrency };
+          return { ...d, gross_pay: freshGross, total_hours_ms: freshMs, currency: freshCurrency, included_output_item_ids: picks };
         }
       } catch { /* keep stored on any error */ }
       return d;
@@ -620,11 +631,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         .eq("period_end", range.end)
         .eq("status", "draft")
         .maybeSingle();
-      if (existing) {
-        await supabase.from("paystub_snapshots").update(payload).eq("id", existing.id);
-      } else {
-        await supabase.from("paystub_snapshots").insert({ ...payload, amount_paid: 0, status: "draft" });
-      }
+      // Surface a failed write instead of showing "saved" over the old row.
+      const { error: saveError } = existing
+        ? await supabase.from("paystub_snapshots").update(payload).eq("id", existing.id)
+        : await supabase.from("paystub_snapshots").insert({ ...payload, amount_paid: 0, status: "draft" });
+      if (saveError) throw new Error(saveError.message);
       setDraftSaved(true);
       loadDrafts();
     } catch (e: unknown) {
