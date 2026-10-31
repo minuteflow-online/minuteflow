@@ -24,6 +24,8 @@ export interface PaystubComputation {
   isFixedPeriod: boolean;
   payRateType: string | null;
   currency: PayCurrency;
+  /** Output Based Tasks counted in fixedTotal — saved on the draft as its picks. */
+  outputItemIds: number[];
 }
 
 /** Compute a VA's paystub numbers for [startDate, endDate] (inclusive, session_date). */
@@ -95,18 +97,12 @@ export async function computePaystubData(
     0
   );
 
-  // Output-based tasks (completed, not yet paid) — "not yet paid" is now its
-  // own paid_at check, not an accident of status no longer equaling
-  // "completed"; a task hand-paid early (still "submitted"/"reviewing")
-  // correctly stays excluded here too, since it's not "completed" yet either way.
-  const { data: fptRaw } = await admin
-    .from("fixed_pay_tasks")
-    .select("rate")
-    .eq("claimed_by", userId)
-    .eq("status", "completed")
-    .is("paid_at", null)
-    .is("deleted_at", null);
-  const fptTotal = ((fptRaw ?? []) as { rate: number }[]).reduce((s, t) => s + (Number(t.rate) || 0), 0);
+  // Output-based tasks: ALL unpaid work for the period (any status, carried-
+  // over included), picked by default on the draft so its total shows what's
+  // owed — Toni unticks anything that shouldn't be paid when she reviews it.
+  // Same selection the send route makes (fetchUnpaidOutputTasks).
+  const outputTasks = await fetchUnpaidOutputTasks(admin, userId, endDate);
+  const fptTotal = outputTasks.reduce((s, t) => s + t.rate, 0);
 
   const fixedTotal = fixedAssignTotal + fptTotal;
   const totalHours = totalMs / 3_600_000;
@@ -124,6 +120,7 @@ export async function computePaystubData(
     isFixedPeriod: Boolean(isFixedPeriod),
     payRateType: vaProfile.pay_rate_type ?? null,
     currency: normalizePayCurrency(vaProfile.pay_currency),
+    outputItemIds: outputTasks.map((t) => t.id),
   };
 }
 
@@ -171,6 +168,53 @@ export async function fetchFirstSubmittedDates(
     firstByTask.set(taskId, new Date(s.created_at).toLocaleDateString("en-CA", { timeZone: tz }));
   }
   return firstByTask;
+}
+
+export interface UnpaidOutputTask {
+  id: number;
+  task_name: string | null;
+  task_detail: string | null;
+  account: string | null;
+  category: string | null;
+  rate: number;
+  status: string;
+  updated_at: string | null;
+  /** First submission, YYYY-MM-DD in org time; null if never submitted. */
+  first_submitted: string | null;
+}
+
+/**
+ * Output Based Tasks (fixed_pay_tasks) a VA has not been paid for that belong
+ * on a paystub ending `endDate`: any status except cancelled, first submitted
+ * by endDate (pay is by first submission — a revision is included in the
+ * reel's rate), or, never submitted, last updated by endDate. Includes work
+ * carried over from before the period, oldest first. Shared by the send route
+ * and scheduled draft generation so both pick the same tasks.
+ */
+export async function fetchUnpaidOutputTasks(
+  admin: AnySupabase,
+  userId: string,
+  endDate: string
+): Promise<UnpaidOutputTask[]> {
+  const { data } = await admin
+    .from("fixed_pay_tasks")
+    .select("id, task_name, task_detail, account, category, rate, status, updated_at")
+    .eq("claimed_by", userId)
+    .neq("status", "cancelled")
+    .is("paid_at", null)
+    .is("deleted_at", null);
+  const rows = (data ?? []) as Array<{ id: number; task_name: string | null; task_detail: string | null; account: string | null; category: string | null; rate: number | string | null; status: string; updated_at: string | null }>;
+  const firstSubmitted = await fetchFirstSubmittedDates(admin, rows.map((t) => t.id));
+  const cutoffMs = new Date(`${endDate}T23:59:59.999`).getTime();
+  return rows
+    .filter((t) => {
+      const first = firstSubmitted.get(t.id);
+      if (first) return first <= endDate;
+      const updated = t.updated_at ? new Date(t.updated_at).getTime() : NaN;
+      return !Number.isNaN(updated) && updated <= cutoffMs;
+    })
+    .map((t) => ({ ...t, rate: Number(t.rate) || 0, first_submitted: firstSubmitted.get(t.id) ?? null }))
+    .sort((a, b) => (a.first_submitted ?? "9999").localeCompare(b.first_submitted ?? "9999"));
 }
 
 export interface PaidOutputItem {
@@ -230,4 +274,75 @@ export async function fetchPaidOutputByLabel(
     byLabel.set(t.paid_period_label, list);
   }
   return byLabel;
+}
+
+export interface PeriodPayment {
+  amount: number;
+  payment_date: string | null;
+  payment_method: string | null;
+  confirmation_number: string | null;
+  notes: string | null;
+}
+
+/**
+ * Every va_payments row for a paystub's period, split into the one that
+ * paystub's send recorded ("Paystub for <label>", at amount_paid) and the
+ * rest — advances and earlier split payments — so a stub can show what was
+ * sent before versus what it paid now, rather than one blended total.
+ */
+export async function fetchPeriodPayments(
+  admin: AnySupabase,
+  userId: string,
+  snap: { period_start: string; period_end: string; pay_period_label: string; amount_paid: number | string | null }
+): Promise<{ earlier: PeriodPayment[]; thisPaystub: PeriodPayment | null; total: number; hasRows: boolean }> {
+  const { data } = await admin
+    .from("va_payments")
+    .select("amount, payment_date, payment_method, confirmation_number, notes, created_at")
+    .eq("va_id", userId)
+    .eq("period_start", snap.period_start)
+    .eq("period_end", snap.period_end)
+    .order("payment_date", { ascending: true })
+    .order("created_at", { ascending: true });
+  return splitPeriodPayments(
+    ((data ?? []) as Array<Record<string, unknown>>).map((p) => ({
+      amount: Number(p.amount || 0),
+      payment_date: (p.payment_date as string | null) ?? null,
+      payment_method: (p.payment_method as string | null) ?? null,
+      confirmation_number: (p.confirmation_number as string | null) ?? null,
+      notes: (p.notes as string | null) ?? null,
+    })),
+    snap
+  );
+}
+
+export function splitPeriodPayments(
+  payments: PeriodPayment[],
+  snap: { pay_period_label: string; amount_paid: number | string | null }
+): { earlier: PeriodPayment[]; thisPaystub: PeriodPayment | null; total: number; hasRows: boolean } {
+  const amountPaid = Number(snap.amount_paid || 0);
+  const ownNote = `Paystub for ${snap.pay_period_label}`;
+  // Prefer the exact row (note + amount); if the stub's amount was edited
+  // afterwards, fall back to the latest row carrying its note, so its own
+  // payment is never counted again as "sent earlier".
+  let ownIdx = -1;
+  for (let i = payments.length - 1; i >= 0; i--) {
+    if (payments[i].notes === ownNote && Math.abs(payments[i].amount - amountPaid) < 0.005) {
+      ownIdx = i;
+      break;
+    }
+  }
+  if (ownIdx < 0) {
+    for (let i = payments.length - 1; i >= 0; i--) {
+      if (payments[i].notes === ownNote) {
+        ownIdx = i;
+        break;
+      }
+    }
+  }
+  return {
+    earlier: payments.filter((_, i) => i !== ownIdx),
+    thisPaystub: ownIdx >= 0 ? payments[ownIdx] : null,
+    total: payments.reduce((sum, p) => sum + p.amount, 0),
+    hasRows: payments.length > 0,
+  };
 }

@@ -95,6 +95,8 @@ interface PaystubSnapshot {
   amount_paid: number;
   /** Everything paid for this period, advances included — see /api/paystub/history. */
   total_paid?: number | null;
+  /** Advances / earlier split payments for the period, apart from this paystub's own — see /api/paystub/history. */
+  earlier_payments?: Array<{ amount: number; payment_date: string | null; payment_method: string | null; confirmation_number: string | null }>;
   /** Output Based Tasks this paystub settled — see /api/paystub/history. */
   output_items?: Array<{ id: number; task_name: string; account: string; amount: number; submitted_label: string | null; client_memo: string | null }>;
   output_total?: number;
@@ -368,14 +370,14 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [resendSuccessId, setResendSuccessId] = useState<string | null>(null);
 
   // Pending auto-generated paystub drafts (awaiting review), across all VAs
-  const [drafts, setDrafts] = useState<Array<{ id: string; user_id: string; full_name: string; period_start: string; period_end: string; pay_period_label: string | null; total_hours_ms: number; gross_pay: number; currency?: string | null }>>([]);
+  const [drafts, setDrafts] = useState<Array<{ id: string; user_id: string; full_name: string; period_start: string; period_end: string; pay_period_label: string | null; total_hours_ms: number; gross_pay: number; currency?: string | null; included_output_item_ids?: number[] | null }>>([]);
   const [draftsLoading, setDraftsLoading] = useState(true);
   const loadDrafts = useCallback(async () => {
     setDraftsLoading(true);
     const supabase = createClient();
     const { data } = await supabase
       .from("paystub_snapshots")
-      .select("id, user_id, full_name, period_start, period_end, pay_period_label, total_hours_ms, gross_pay, currency")
+      .select("id, user_id, full_name, period_start, period_end, pay_period_label, total_hours_ms, gross_pay, currency, included_output_item_ids")
       .eq("status", "draft")
       .order("created_at", { ascending: false });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -389,7 +391,15 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         const res = await fetch("/api/paystub/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: d.user_id, start_date: d.period_start, end_date: d.period_end, preview: true }),
+          body: JSON.stringify({
+            user_id: d.user_id,
+            start_date: d.period_start,
+            end_date: d.period_end,
+            preview: true,
+            // The draft's picked output tasks, so the refreshed total keeps them
+            // instead of falling back to Completed-only.
+            included_output_item_ids: d.included_output_item_ids ?? [],
+          }),
         });
         if (!res.ok) return d;
         const p = await res.json();
@@ -415,6 +425,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
   // Set when "Edit" on a draft pre-fills the generator, to auto-run Calculate.
   const [pendingCalc, setPendingCalc] = useState(false);
+  // The draft's saved output-task picks, re-ticked once that auto-Calculate lands.
+  const pendingRestoreIdsRef = useRef<number[] | null>(null);
   const [dismissingDraftId, setDismissingDraftId] = useState<string | null>(null);
 
   // Dismiss a draft that shouldn't be paid (test accounts, admins with no
@@ -462,7 +474,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     return getPeriodRange(preset, orgTimezone);
   }
 
-  const handleCalculate = useCallback(async (opts?: { resetOutputSelections?: boolean }) => {
+  const handleCalculate = useCallback(async (opts?: { resetOutputSelections?: boolean; restoreOutputIds?: number[] }) => {
     setError(null);
     setPreview(null);
     setDayDecisions({}); setGrossOverride("");
@@ -514,7 +526,19 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       setPreview(data);
       setExchangeRate(data.defaultExchangeRate != null ? String(data.defaultExchangeRate) : "");
       // Default amount = total gross pay (hourly + fixed)
-      const net = data.totalGrossPay || data.grossPay;
+      let net = data.totalGrossPay || data.grossPay;
+      // Reopening a saved draft: re-tick the output tasks it was saved with,
+      // so its total (and the Amount to Pay) is what was picked, not just the
+      // Completed ones the server counts on its own.
+      if (opts?.restoreOutputIds && opts.restoreOutputIds.length > 0) {
+        const restore = new Set(opts.restoreOutputIds);
+        const items = ((data.fixedAssignments ?? []) as FixedAssignment[]).filter(
+          (a) => a.source === "fixed_pay_task" && restore.has(a.id)
+        );
+        setIncludedOutputItemIds(new Set(items.map((a) => a.id)));
+        net += items.filter((a) => a.status !== "completed").reduce((sum, a) => sum + a.amount, 0);
+        if (items.some((a) => a.date && a.date.slice(0, 10) < range.start)) setShowCarriedOverOutput(true);
+      }
       setCustomAmount(net.toFixed(2));
       // Personalized default — only fills an empty box, never overwrites
       // something already typed (e.g. re-calculating after editing line items).
@@ -581,6 +605,10 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         by_date: byDateWithRates,
         company_name: companyName.trim() || "MinuteFlow",
         currency: preview.currency ?? "USD",
+        // What's ticked to pay — the drafts list and Edit & Send read it back.
+        included_output_item_ids: (preview.fixedAssignments ?? [])
+          .filter((a) => a.source === "fixed_pay_task" && (a.status === "completed" || includedOutputItemIds.has(a.id)))
+          .map((a) => a.id),
       };
       // Re-saving for the same VA + period refreshes the existing draft
       // instead of piling up a duplicate row in the list.
@@ -608,7 +636,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
   // "Edit" on a draft → pre-fill the generator with that VA + period, then
   // auto-calculate so the full form (line items, fee, custom amount) is ready.
-  const editInGenerator = (d: { user_id: string; period_start: string; period_end: string }) => {
+  const editInGenerator = (d: { user_id: string; period_start: string; period_end: string; included_output_item_ids?: number[] | null }) => {
+    pendingRestoreIdsRef.current = d.included_output_item_ids ?? null;
     setSelectedUserId(d.user_id);
     setPreset("custom");
     setCustomStart(d.period_start);
@@ -619,7 +648,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   useEffect(() => {
     if (pendingCalc && selectedUserId && customStart && customEnd) {
       setPendingCalc(false);
-      handleCalculate();
+      handleCalculate(pendingRestoreIdsRef.current ? { restoreOutputIds: pendingRestoreIdsRef.current } : undefined);
+      pendingRestoreIdsRef.current = null;
     }
   }, [pendingCalc, selectedUserId, customStart, customEnd, handleCalculate]);
 
@@ -1987,6 +2017,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     const outputItems = snap.output_items ?? [];
                     const outputTotal = snap.output_total ?? 0;
                     const earned = snap.gross_pay + outputTotal;
+                    const earlierPayments = snap.earlier_payments ?? [];
+                    const earlierTotal = earlierPayments.reduce((sum, p) => sum + p.amount, 0);
+                    const totalPaid = snap.amount_paid + earlierTotal;
                     return (
                       <React.Fragment key={snap.id}>
                         <tr
@@ -2001,7 +2034,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           </td>
                           <td className="px-4 py-3 text-right text-bark/70">{totalHrs.toFixed(2)} hrs</td>
                           <td className="px-4 py-3 text-right text-bark/70">{snapMoney(earned)}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-terracotta">{snapMoney(snap.total_paid ?? snap.amount_paid)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-terracotta">
+                            {snapMoney(snap.amount_paid)}
+                            {earlierTotal > 0.005 && (
+                              <div className="text-[10px] font-normal text-bark/40">+ {snapMoney(earlierTotal)} sent earlier</div>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-right text-bark/50 hidden sm:table-cell capitalize">
                             {snap.payment_method ? snap.payment_method.replace(/_/g, " ") : "—"}
                           </td>
@@ -2068,19 +2106,40 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <span>Gross Pay</span>
                                       <span>{snapMoney(earned)}</span>
                                     </div>
-                                    <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
-                                      <span>Amount Paid</span>
-                                      <span>{snapMoney(snap.total_paid ?? snap.amount_paid)}</span>
-                                    </div>
-                                    {/* Say where the total came from when an advance made it
-                                        up, so the figure can be reconciled against the stub. */}
-                                    {(snap.total_paid ?? snap.amount_paid) - snap.amount_paid > 0.005 && (
-                                      <div className="flex justify-between text-[10px] text-bark/40">
-                                        <span>on this paystub</span>
-                                        <span>
-                                          {snapMoney(snap.amount_paid)} + {snapMoney((snap.total_paid ?? 0) - snap.amount_paid)} sent earlier
-                                        </span>
+                                    {/* What was sent before vs what this paystub paid,
+                                        line by line, so the stub reconciles on its own. */}
+                                    {earlierPayments.length > 0 && (
+                                      <div className="border-t border-linen pt-1 mt-1 space-y-1">
+                                        <div className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Sent Earlier</div>
+                                        {earlierPayments.map((p, i) => (
+                                          <div key={i} className="flex justify-between gap-3">
+                                            <span className="text-bark/50">
+                                              {p.payment_date
+                                                ? new Date(p.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+                                                : "—"}
+                                              {p.payment_method && <span className="capitalize"> · {p.payment_method.replace(/_/g, " ")}</span>}
+                                              {p.confirmation_number && <span> · {p.confirmation_number}</span>}
+                                            </span>
+                                            <span>{snapMoney(p.amount)}</span>
+                                          </div>
+                                        ))}
                                       </div>
+                                    )}
+                                    <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
+                                      <span>{earlierPayments.length > 0 ? "Paid on This Paystub" : "Amount Paid"}</span>
+                                      <span>{snapMoney(snap.amount_paid)}</span>
+                                    </div>
+                                    {earlierPayments.length > 0 && (
+                                      <>
+                                        <div className="flex justify-between font-semibold">
+                                          <span>Total Paid for Period</span>
+                                          <span>{snapMoney(totalPaid)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-bark/40">{earned - totalPaid < -0.005 ? "Overpaid" : "Remaining"}</span>
+                                          <span>{snapMoney(Math.abs(earned - totalPaid))}</span>
+                                        </div>
+                                      </>
                                     )}
                                     <div className="flex justify-between pt-1">
                                       <span className="text-bark/40">Sent to</span>

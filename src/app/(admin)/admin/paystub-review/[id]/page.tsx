@@ -26,6 +26,8 @@ interface SnapshotRow {
   by_date: Record<string, number | { ms: number; rate: number }> | null;
   status: string;
   currency: string | null;
+  /** Output Based Tasks picked on the draft (all unpaid work by default). */
+  included_output_item_ids: number[] | null;
 }
 
 const PAYMENT_METHODS = [
@@ -108,6 +110,10 @@ export default function PaystubReviewPage() {
       return { date, ms, rate: r, amount: (ms / 3_600_000) * r };
     })
     .sort((a, b) => a.date.localeCompare(b.date));
+  // gross_pay on a draft includes its picked output work; the rest is time.
+  const timeTotal = days.reduce((sum, d) => sum + d.amount, 0);
+  const outputPart = Number(snap.gross_pay) - timeTotal;
+  const outputCount = snap.included_output_item_ids?.length ?? 0;
   const alreadySent = snap.status === "sent" || done;
   const isPeso = normalizePayCurrency(snap.currency) === "PHP";
   const pesoRate = isPeso ? parsePhpPerUsd(exchangeRate) : null;
@@ -129,6 +135,8 @@ export default function PaystubReviewPage() {
           confirmation_number: confInput.trim(),
           payment_date: payDate,
           exchange_rate: pesoRate,
+          // Pay the output tasks the draft was saved with, not only Completed ones.
+          included_output_item_ids: snap.included_output_item_ids ?? [],
         }),
       });
       const json = await res.json();
@@ -195,6 +203,14 @@ export default function PaystubReviewPage() {
                 ))}
               </tbody>
               <tfoot>
+                {outputPart > 0.005 && (
+                  <tr className="border-t border-parchment">
+                    <td className="px-4 py-2.5 text-bark" colSpan={3}>
+                      Output Based Work{outputCount > 0 ? ` (${outputCount} task${outputCount === 1 ? "" : "s"})` : ""}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-medium text-espresso">{fmtMoney(outputPart)}</td>
+                  </tr>
+                )}
                 <tr className="border-t-2 border-espresso/20 bg-parchment/20 font-semibold text-espresso">
                   <td className="px-4 py-2.5">Gross Pay</td>
                   <td className="px-3 py-2.5 text-right">{fmtHours(Number(snap.total_hours_ms))}</td>
