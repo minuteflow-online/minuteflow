@@ -2181,12 +2181,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      {submissions.length > 0 && (
-        <Section title="Submission Details" {...accordionProps("submissions")}>
-          <SubmissionThread submissions={submissions} />
-        </Section>
-      )}
-
       <Section title="Assignment" {...accordionProps("assignment")} warning={missingAssignment}>
         {manageAssignment && (
           <div>
@@ -2724,6 +2718,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           </div>
         )}
       </Section>
+
+      {submissions.length > 0 && (
+        <Section title="Submission Details" {...accordionProps("submissions")}>
+          <SubmissionThread submissions={submissions} />
+        </Section>
+      )}
 
       {pendingUnlinkTemplate && (
         <ConfirmModal
