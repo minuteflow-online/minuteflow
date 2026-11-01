@@ -204,11 +204,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if ("category" in body) updates.category = normalizeText(body.category);
       if ("project" in body) updates.project = normalizeText(body.project);
       if ("project_id" in body) updates.project_id = normalizeText(body.project_id);
-      if ("rate" in body) {
-        const rate = parseRate(body.rate);
-        if (rate === null) return Response.json({ error: "rate is required" }, { status: 400 });
-        updates.rate = rate;
-      }
+      // Optional — cleared means 0, not an error.
+      if ("rate" in body) updates.rate = parseRate(body.rate) ?? 0;
       if ("task_detail" in body) updates.task_detail = normalizeText(body.task_detail);
       if ("task_notes" in body) updates.task_notes = normalizeText(body.task_notes);
       if ("link" in body) updates.link = normalizeText(body.link);
@@ -295,11 +292,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("category" in body) updates.category = normalizeText(body.category);
   if ("project" in body) updates.project = normalizeText(body.project);
   if ("project_id" in body) updates.project_id = normalizeText(body.project_id);
-  if ("rate" in body) {
-    const rate = parseRate(body.rate);
-    if (rate === null) return Response.json({ error: "rate is required" }, { status: 400 });
-    updates.rate = rate;
-  }
+  // Optional — cleared means 0, not an error.
+  if ("rate" in body) updates.rate = parseRate(body.rate) ?? 0;
   if ("task_detail" in body) updates.task_detail = normalizeText(body.task_detail);
   if ("task_notes" in body) updates.task_notes = normalizeText(body.task_notes);
   if ("link" in body) updates.link = normalizeText(body.link);

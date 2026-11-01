@@ -203,11 +203,17 @@ export async function GET(request: Request) {
   // way for the VA to find it via Needs Revision. The assignee row is what
   // every review action, admin-issued or not, reliably writes to.
   const claimedIds = rows.filter((t) => t.claimed_by).map((t) => t.id);
+  // The mirror's own id — submissions are keyed on assigned_tasks.id, so the
+  // task form needs it to show the submission thread for an output-based task.
+  let mirrorIdByTaskId: Record<string | number, number> = {};
   if (claimedIds.length > 0) {
     const { data: mirrorRows } = await readClient
       .from("assigned_tasks")
       .select("id, fixed_pay_task_id, status, revision_count, assigned_task_assignees(va_id, status)")
       .in("fixed_pay_task_id", claimedIds);
+    mirrorIdByTaskId = Object.fromEntries(
+      ((mirrorRows ?? []) as unknown as Array<{ id: number; fixed_pay_task_id: string | number }>).map((r) => [r.fixed_pay_task_id, r.id])
+    );
     const claimedById = Object.fromEntries(rows.map((t) => [t.id, t.claimed_by]));
     // Same R badge the time-based table shows, next to the same mirrored
     // status above — a VA sent back for revision should see the count here
@@ -269,7 +275,7 @@ export async function GET(request: Request) {
   const filteredRows = rows.filter((task) => matchesTaskView(task, view));
 
   return Response.json({
-    tasks: filteredRows.map((t) => ({ ...t, claimed_by_me: t.claimed_by === userId })),
+    tasks: filteredRows.map((t) => ({ ...t, claimed_by_me: t.claimed_by === userId, assigned_task_id: mirrorIdByTaskId[t.id] ?? null })),
   });
 }
 
@@ -289,7 +295,8 @@ export async function POST(request: Request) {
 
   const body = await request.json();
   const taskName = String(body.task_name ?? "").trim();
-  const rate = parseRate(body.rate);
+  // Rate is optional — a task created without one is worth 0 until it's set.
+  const rate = parseRate(body.rate) ?? 0;
   // Admin-created tasks default to the open pool (anyone can grab). A VA
   // creating their own task is auto-claimed below, so "open" here is just
   // the row's resting status until they move it themselves.
@@ -297,9 +304,6 @@ export async function POST(request: Request) {
 
   if (!taskName) {
     return Response.json({ error: "task_name is required" }, { status: 400 });
-  }
-  if (rate === null) {
-    return Response.json({ error: "rate is required" }, { status: 400 });
   }
   if (!TASK_STATUSES.has(status)) {
     return Response.json({ error: "status is invalid" }, { status: 400 });

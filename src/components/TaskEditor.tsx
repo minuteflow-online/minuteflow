@@ -20,7 +20,7 @@ import {
   formatDateLocalTZ,
 } from "@/lib/utils";
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
-import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
+import { SubmissionThread } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import SubmitWorkModal from "@/components/SubmitWorkModal";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
@@ -857,10 +857,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   // Submissions exist for any assigned task that's been turned in — output-based
   // included — so unlike screenshots these aren't gated on supportsTodos.
+  // They're keyed on assigned_tasks.id. In output_based mode editingTaskId is
+  // the fixed_pay_tasks.id instead — a different id space — so the thread is
+  // read through the claimed task's assigned_tasks mirror; an unclaimed task
+  // has no mirror and so no submissions yet.
+  const submissionsTaskId = templateMode
+    ? null
+    : mode === "output_based"
+    ? ((initialTask?.assigned_task_id as number | null | undefined) ?? null)
+    : editingTaskId;
   useEffect(() => {
-    if (!editingTaskId) return;
-    void fetchSubmissions(editingTaskId).then(setSubmissions);
-  }, [editingTaskId]);
+    if (!submissionsTaskId) {
+      setSubmissions([]);
+      return;
+    }
+    void fetchSubmissions(submissionsTaskId).then(setSubmissions);
+  }, [submissionsTaskId]);
 
   const handleAddTodo = useCallback(async () => {
     const text = newTodoText.trim();
@@ -980,14 +992,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     [linkedOperations, linkedProjectId]
   );
 
-  // Submission notes live under Attachments & Files, not beside the editable
-  // internal Notes box — the emptiness check has to sit out here so the
-  // "Submission Notes" label disappears along with the (null-rendering) list.
-  const hasSubmissionNotes = useMemo(
-    () => submissions.some((s) => s.submission_comment?.trim()),
-    [submissions]
-  );
-
   const hourlyEquivalentTotal = computeHourlyEquivalent(durationValue, durationUnit, currentPayRate ?? null);
   const quantityTotal = computeQuantityTotal(unitRate, quantity);
 
@@ -1068,9 +1072,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       setError("Set a Start Date.");
       throw new Error("Set a Start Date.");
     }
-    if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
-      setError("Final Rate is required.");
-      throw new Error("Final Rate is required.");
+    if (mode === "output_based" && (rate.trim() !== "" && !Number.isFinite(Number(rate)))) {
+      setError("Final Rate must be a number.");
+      throw new Error("Final Rate must be a number.");
     }
 
     setSaving(true);
@@ -1463,8 +1467,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     const effectiveVaIds = isAdminOrManager ? vaIds : [currentUserId].filter(Boolean);
     try {
       if (templateMode) {
-        if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
-          throw new Error("Enter a rate before duplicating an Output Based template.");
+        if (mode === "output_based" && (rate.trim() !== "" && !Number.isFinite(Number(rate)))) {
+          throw new Error("Final Rate must be a number.");
         }
         const body: Record<string, unknown> = {
           title: taskName.trim(),
@@ -1503,8 +1507,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         return;
       }
       if (mode === "output_based") {
-        if (!rate.trim() || !Number.isFinite(Number(rate))) {
-          throw new Error("Enter a rate before duplicating an Output Based task.");
+        if (rate.trim() !== "" && !Number.isFinite(Number(rate))) {
+          throw new Error("Final Rate must be a number.");
         }
         const body: Record<string, unknown> = {
           task_name: taskName.trim(),
@@ -1595,8 +1599,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         // A template has one pay_type column, not two tables — flipping it is
         // a plain PATCH, no create-and-delete needed the way the two live
         // tables require.
-        if (targetMode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
-          throw new Error("Enter a rate before converting to Output Based.");
+        if (targetMode === "output_based" && (rate.trim() !== "" && !Number.isFinite(Number(rate)))) {
+          throw new Error("Final Rate must be a number.");
         }
         const body: Record<string, unknown> = {
           id: editingTemplateId,
@@ -1616,8 +1620,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         return;
       }
       if (targetMode === "output_based") {
-        if (!rate.trim() || !Number.isFinite(Number(rate))) {
-          throw new Error("Enter a rate before converting to Output Based.");
+        if (rate.trim() !== "" && !Number.isFinite(Number(rate))) {
+          throw new Error("Final Rate must be a number.");
         }
         const body: Record<string, unknown> = {
           task_name: taskName.trim(),
@@ -1757,7 +1761,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const needsTaskName = !taskName.trim();
   const needsClientDetail = !taskDetail.trim();
   const needsReviewAnswer = mode === "time_based" && !isEditing && !reviewRequired;
-  const needsRate = mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)));
+  // Final Rate is optional — blank saves as 0 — so only text that isn't a number blocks.
+  const needsRate = mode === "output_based" && rate.trim() !== "" && !Number.isFinite(Number(rate));
   // templateMode (the Recurring tab) IS a template; alsoSaveAsTemplate rides
   // one along with a regular task. Either way there's no single due date.
   const isRecurringFlow = templateMode || alsoSaveAsTemplate;
@@ -1784,7 +1789,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const missingBasics = needsTaskName ? "Required block" : null;
   const missingDetails = needsClientDetail ? "Required field/s inside" : null;
   const missingAssignment = needsReviewAnswer ? "Required field/s inside" : null;
-  const missingRate = needsRate ? "Required field/s inside" : null;
+  const missingRate = needsRate ? "Not a number" : null;
   const missingSchedule = needsSchedule || needsDueDate || needsStartDateForRecurring ? "Required field/s inside" : null;
 
   // The footer still names them, since that's the "why won't this save" spot.
@@ -1792,7 +1797,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     needsTaskName ? "Task Name" : null,
     needsClientDetail ? "Client Detail" : null,
     needsReviewAnswer ? "Review Required" : null,
-    needsRate ? "Final Rate" : null,
+    needsRate ? "Final Rate (not a number)" : null,
     needsSchedule ? (mode === "time_based" ? "Time range or Duration" : "Start Date") : null,
     needsDueDate ? "Due Date" : null,
     needsStartDateForRecurring ? "Start Date" : null,
@@ -2173,18 +2178,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         <div>
           <label className={labelClass}>Link</label>
           <input value={link} onChange={(e) => setLink(e.target.value)} disabled={readOnly} placeholder="https://..." className={inputClass} />
-          <SubmissionLinks submissions={submissions} />
         </div>
-
-        <SubmissionFiles submissions={submissions} />
-
-        {hasSubmissionNotes && (
-          <div>
-            <label className={labelClass}>Submission Notes</label>
-            <SubmissionNotes submissions={submissions} />
-          </div>
-        )}
       </Section>
+
+      {submissions.length > 0 && (
+        <Section title="Submission Details" {...accordionProps("submissions")}>
+          <SubmissionThread submissions={submissions} />
+        </Section>
+      )}
 
       <Section title="Assignment" {...accordionProps("assignment")} warning={missingAssignment}>
         {manageAssignment && (
