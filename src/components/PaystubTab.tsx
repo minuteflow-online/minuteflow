@@ -116,13 +116,17 @@ interface PaystubSnapshot {
 }
 
 /** One Output Based Task row: checkbox (locked on for Completed items),
- *  status badge, and an Approve action for anything not yet Completed. */
+ *  status badge, an Approve action for anything not yet Completed, and a
+ *  Paid action for work already paid some other way (with a note that is
+ *  saved to the task's Notes). */
 function OutputTaskRow({
   item,
   checked,
   onToggle,
   onApprove,
   approving,
+  onMarkPaid,
+  markingPaid,
   currency,
 }: {
   item: FixedAssignment;
@@ -130,11 +134,16 @@ function OutputTaskRow({
   onToggle: () => void;
   onApprove: () => void;
   approving: boolean;
+  onMarkPaid: (note: string) => void;
+  markingPaid: boolean;
   currency?: string | null;
 }) {
   const isCompleted = item.status === "completed";
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [note, setNote] = useState("");
   return (
-    <tr className="border-b border-linen/50">
+    <>
+    <tr className={noteOpen ? "" : "border-b border-linen/50"}>
       <td className="py-1.5">
         <input
           type="checkbox"
@@ -159,18 +168,67 @@ function OutputTaskRow({
       </td>
       <td className="py-1.5 text-right text-bark/70">{formatCurrency(item.amount, currency)}</td>
       <td className="py-1.5 text-right">
-        {!isCompleted && (
+        <div className="flex flex-col items-end gap-0.5">
+          {!isCompleted && (
+            <button
+              type="button"
+              onClick={onApprove}
+              disabled={approving}
+              className="text-[10px] font-semibold text-sage hover:underline disabled:opacity-50"
+            >
+              {approving ? "Approving…" : "Approve"}
+            </button>
+          )}
           <button
             type="button"
-            onClick={onApprove}
-            disabled={approving}
-            className="text-[10px] font-semibold text-sage hover:underline disabled:opacity-50"
+            onClick={() => setNoteOpen((v) => !v)}
+            disabled={markingPaid}
+            title="Already paid — take it off this paystub"
+            className="text-[10px] font-semibold text-plum hover:underline disabled:opacity-50"
           >
-            {approving ? "Approving…" : "Approve"}
+            Paid
           </button>
-        )}
+        </div>
       </td>
     </tr>
+    {noteOpen && (
+      <tr className="border-b border-linen/50">
+        <td></td>
+        <td colSpan={5} className="pb-2">
+          <div className="rounded-lg border border-sand bg-cream p-2 space-y-1.5">
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              autoFocus
+              placeholder="Note (e.g. already paid as Prepared_Vs_Unprepared on the Sep paystub)"
+              className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white resize-none"
+            />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-stone">Saved to the task&apos;s Notes. The task is marked paid and drops off this paystub.</span>
+              <div className="flex gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { setNoteOpen(false); setNote(""); }}
+                  className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMarkPaid(note)}
+                  disabled={markingPaid}
+                  className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                >
+                  {markingPaid ? "Saving…" : "Mark Paid"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 
@@ -325,6 +383,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [includedOutputItemIds, setIncludedOutputItemIds] = useState<Set<number>>(new Set());
   const [showCarriedOverOutput, setShowCarriedOverOutput] = useState(false);
   const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [markingPaidId, setMarkingPaidId] = useState<number | null>(null);
 
   // Company name (editable, shown on paystub email)
   const [companyName, setCompanyName] = useState<string>(orgName || "MinuteFlow");
@@ -981,6 +1040,34 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     }
   };
 
+  // Work already paid some other way (a duplicate, an earlier paystub):
+  // marks the task paid manually and appends the note to its Notes, then
+  // recalculates so it drops off this list and the total.
+  const handleMarkOutputItemPaid = async (id: number, note: string) => {
+    setMarkingPaidId(id);
+    try {
+      const res = await fetch(`/api/fixed-pay-tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paid: true, paid_note: note }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to mark paid.");
+      }
+      setIncludedOutputItemIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      await handleCalculate({ resetOutputSelections: false });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to mark paid.");
+    } finally {
+      setMarkingPaidId(null);
+    }
+  };
+
   // The server only ever bakes Completed items into totalGrossPay — it has
   // no way to know which optional items are checked right now, since
   // checking one doesn't round-trip to the server. This layers the live
@@ -1407,6 +1494,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             onToggle={() => toggleIncludedOutputItem(item.id)}
                             onApprove={() => handleApproveOutputItem(item.id)}
                             approving={approvingId === item.id}
+                            onMarkPaid={(note) => handleMarkOutputItemPaid(item.id, note)}
+                            markingPaid={markingPaidId === item.id}
                           />
                         ))}
                       </tbody>
@@ -1458,6 +1547,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                   onToggle={() => toggleIncludedOutputItem(item.id)}
                                   onApprove={() => handleApproveOutputItem(item.id)}
                                   approving={approvingId === item.id}
+                                  onMarkPaid={(note) => handleMarkOutputItemPaid(item.id, note)}
+                                  markingPaid={markingPaidId === item.id}
                                 />
                               ))}
                             </tbody>

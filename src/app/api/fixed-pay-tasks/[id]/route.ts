@@ -2,6 +2,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
 
@@ -331,6 +332,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     updates.paid_at = body.paid ? now : null;
     updates.paid_manually = true;
   }
+  // A note left when marking paid from the paystub ("already paid as #114")
+  // is appended to the task's Notes, so it shows wherever the task is opened.
+  const paidNote = typeof body.paid_note === "string" ? body.paid_note.trim() : "";
+  const paidNoteLine = paidNote
+    ? `Paid ${new Date(now).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: ORG_TIMEZONE })}: ${paidNote}`
+    : "";
+  const appendPaidNote = (existing: string | null) => (existing?.trim() ? `${existing.trim()}\n${paidNoteLine}` : paidNoteLine);
+  if (paidNoteLine && !("task_notes" in body)) {
+    const { data: noteRow } = await makeAdminClient().from("fixed_pay_tasks").select("task_notes").eq("id", taskId).single();
+    updates.task_notes = appendPaidNote((noteRow?.task_notes as string | null) ?? null);
+  }
   if (hasAssignedTo) updates.assigned_to = nextAssignedTo;
   if ("assigned_by" in body) updates.assigned_by = normalizeText(body.assigned_by);
   if ("is_active" in body) updates.is_active = Boolean(body.is_active);
@@ -415,6 +427,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       .update({ paid_at: updates.paid_at, paid_manually: updates.paid_manually, updated_at: now })
       .eq("fixed_pay_task_id", taskId)
       .is("deleted_at", null);
+  }
+  if (paidNoteLine && updates.task_notes !== undefined) {
+    const { data: mirrors } = await admin
+      .from("assigned_tasks")
+      .select("id, task_notes")
+      .eq("fixed_pay_task_id", taskId)
+      .is("deleted_at", null);
+    for (const m of (mirrors ?? []) as { id: string; task_notes: string | null }[]) {
+      await admin.from("assigned_tasks").update({ task_notes: appendPaidNote(m.task_notes), updated_at: now }).eq("id", m.id);
+    }
   }
 
   // Same mirror, for the schedule. The Calendar's Day/Week/Range views read
