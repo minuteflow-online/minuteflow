@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import RichTextEditor from "@/components/RichTextEditor";
+import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import {
   ensureRichHtml,
   isRichEmpty,
@@ -905,6 +906,7 @@ export default function VaBroadcastsAdminTab() {
                   >
                     Edit
                   </button>
+                  {b.status === "published" && <BroadcastCopyLinkButton category={b.category} id={b.id} />}
                   <button
                     onClick={() => handleDelete(b.id)}
                     disabled={!!deleting[b.id]}
