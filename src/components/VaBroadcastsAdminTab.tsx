@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import RichTextEditor from "@/components/RichTextEditor";
+import {
+  ensureRichHtml,
+  isRichEmpty,
+  isRichHtml,
+  plainToHtml,
+  renderBroadcastHtml,
+  richTextToPlain,
+  RICH_TEXT_CLASSES,
+} from "@/lib/richText";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -125,6 +135,10 @@ function parseRecipientsForEdit(recipients: BroadcastRecipient[]): {
     return { mode: "individual", empTypes: [], individuals };
   }
   return { mode: "all", empTypes: [], individuals: [] };
+}
+
+function isLongBody(body: string): boolean {
+  return richTextToPlain(body).length > 200 || /<img\b/i.test(body);
 }
 
 // ─── Badges ───────────────────────────────────────────────────────────────────
@@ -257,7 +271,7 @@ export default function VaBroadcastsAdminTab() {
   const openEdit = (b: Broadcast) => {
     setEditing(b);
     setTitle(b.title);
-    setBody(b.body);
+    setBody(isRichHtml(b.body) ? b.body : plainToHtml(b.body));
     setCategory(b.category);
 
     const { mode, empTypes, individuals } = parseRecipientsForEdit(b.recipients);
@@ -306,7 +320,7 @@ export default function VaBroadcastsAdminTab() {
 
   const handleSave = useCallback(
     async (forceDraft?: boolean) => {
-      if (!title.trim() || !body.trim()) return;
+      if (!title.trim() || isRichEmpty(body)) return;
       setSaving(true);
       setSaveMsg(null);
 
@@ -337,7 +351,7 @@ export default function VaBroadcastsAdminTab() {
 
       const payload = {
         title: title.trim(),
-        body: body.trim(),
+        body: ensureRichHtml(body.trim()),
         category,
         recipients: builtRecipients,
         magic_word: addMagicWord && magicWord.trim() ? magicWord.trim() : null,
@@ -410,26 +424,34 @@ export default function VaBroadcastsAdminTab() {
     );
   };
 
-  // Image upload handler
-  const handleImageUpload = useCallback(async (file: File) => {
-    setUploadingImage(true);
+  // Uploads to the broadcasts bucket; used by the cover image and by images inside the message
+  const uploadBroadcastImage = useCallback(async (file: File): Promise<string | null> => {
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/broadcasts/upload-image", { method: "POST", body: form });
       if (res.ok) {
         const d = await res.json();
-        setImageUrl(d.url || "");
-      } else {
-        const e = await res.json();
-        setSaveMsg({ type: "err", text: e.error || "Image upload failed" });
+        return d.url || null;
       }
+      const e = await res.json();
+      setSaveMsg({ type: "err", text: e.error || "Image upload failed" });
     } catch {
       setSaveMsg({ type: "err", text: "Image upload failed" });
+    }
+    return null;
+  }, []);
+
+  // Image upload handler
+  const handleImageUpload = useCallback(async (file: File) => {
+    setUploadingImage(true);
+    try {
+      const url = await uploadBroadcastImage(file);
+      if (url) setImageUrl(url);
     } finally {
       setUploadingImage(false);
     }
-  }, []);
+  }, [uploadBroadcastImage]);
 
   // VAs only (not admin) for individual selection
   const vaMembers = teamMembers.filter((m) => m.role === "va");
@@ -483,12 +505,11 @@ export default function VaBroadcastsAdminTab() {
               <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
                 Message *
               </label>
-              <textarea
+              <RichTextEditor
                 value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={8}
+                onChange={setBody}
                 placeholder="Write your broadcast..."
-                className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
+                onUploadImage={uploadBroadcastImage}
               />
             </div>
 
@@ -774,7 +795,7 @@ export default function VaBroadcastsAdminTab() {
               disabled={
                 saving ||
                 !title.trim() ||
-                !body.trim() ||
+                isRichEmpty(body) ||
                 (recipientMode === "individual" && selectedIndividuals.length === 0) ||
                 (recipientMode === "employment_type" && selectedEmpTypes.length === 0)
               }
@@ -895,13 +916,12 @@ export default function VaBroadcastsAdminTab() {
               </div>
 
               <div
-                className={`text-xs text-bark leading-relaxed whitespace-pre-wrap ${
-                  !expanded[b.id] && b.body.length > 200 ? "line-clamp-3" : ""
+                className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES} ${
+                  !expanded[b.id] && isLongBody(b.body) ? "max-h-16 overflow-hidden" : ""
                 }`}
-              >
-                {b.body}
-              </div>
-              {b.body.length > 200 && (
+                dangerouslySetInnerHTML={{ __html: renderBroadcastHtml(b.body) }}
+              />
+              {isLongBody(b.body) && (
                 <button
                   onClick={() =>
                     setExpanded((e) => ({ ...e, [b.id]: !e[b.id] }))

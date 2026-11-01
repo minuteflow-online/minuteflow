@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { injectMagicWordHtml, isRichHtml, plainToHtml, renderBroadcastHtml, sanitizeRichHtml } from "@/lib/richText";
 
 export const dynamic = "force-dynamic";
 
@@ -70,10 +71,13 @@ function buildEmailHtml(broadcast: {
   magic_word?: string | null;
   require_word?: boolean;
 }): string {
-  // Inject magic word into the displayed body if present
-  const displayBody = broadcast.magic_word
-    ? injectMagicWord(broadcast.body, broadcast.magic_word)
-    : broadcast.body;
+  // Inject magic word into the displayed body if present.
+  // Plain-text bodies use the line-based injection; rich (HTML) bodies inject at a block boundary.
+  const displayBody = !broadcast.magic_word
+    ? renderBroadcastHtml(broadcast.body)
+    : isRichHtml(broadcast.body)
+    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), `Magic word: [${broadcast.magic_word}]`, (n) => Math.floor(Math.random() * n))
+    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, broadcast.magic_word)));
 
   const label = categoryLabel(broadcast.category);
 
@@ -84,7 +88,7 @@ function buildEmailHtml(broadcast: {
           <span style="background: #f0ebe4; color: #8a6f5a; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 10px; border-radius: 100px;">${label}</span>
         </div>
         <h1 style="font-size: 22px; font-weight: 700; color: #2d1f14; margin: 0 0 16px;">${broadcast.title}</h1>
-        <div style="font-size: 14px; color: #4a3728; line-height: 1.7; white-space: pre-wrap; margin: 0 0 20px;">${displayBody}</div>
+        <div style="font-size: 14px; color: #4a3728; line-height: 1.7; margin: 0 0 20px;">${displayBody}</div>
         ${broadcast.require_word ? `
         <div style="background: #fef9ec; border: 1px solid #f5e6b8; border-radius: 8px; padding: 14px 16px; margin-top: 20px;">
           <p style="font-size: 13px; color: #8a6f2a; font-weight: 600; margin: 0 0 4px;">Magic Word Required</p>

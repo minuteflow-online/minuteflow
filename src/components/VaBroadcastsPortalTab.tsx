@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import {
+  injectMagicWordHtml,
+  isRichHtml,
+  plainToHtml,
+  renderBroadcastHtml,
+  richTextToPlain,
+  sanitizeRichHtml,
+  RICH_TEXT_CLASSES,
+} from "@/lib/richText";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -100,11 +109,15 @@ function BroadcastCard({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const displayBody = broadcast.magic_word
-    ? injectMagicWord(broadcast.body, broadcast.magic_word, broadcast.id)
-    : broadcast.body;
+  // Plain-text bodies keep the original text injection; rich bodies inject at an HTML block boundary.
+  const anchor = broadcast.id.charCodeAt(broadcast.id.length - 1);
+  const displayHtml = !broadcast.magic_word
+    ? renderBroadcastHtml(broadcast.body)
+    : isRichHtml(broadcast.body)
+    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), `Magic word is ${broadcast.magic_word}`, (n) => anchor % n)
+    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, broadcast.magic_word, broadcast.id)));
 
-  const isLong = displayBody.length > 300;
+  const isLong = richTextToPlain(displayHtml).length > 300 || /<img\b/i.test(displayHtml);
 
   const handleAcknowledge = useCallback(async () => {
     setError(null);
@@ -179,12 +192,11 @@ function BroadcastCard({
 
       {/* Body */}
       <div
-        className={`text-xs text-bark leading-relaxed whitespace-pre-wrap ${
-          !expanded && isLong ? "line-clamp-4" : ""
+        className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES} ${
+          !expanded && isLong ? "max-h-20 overflow-hidden" : ""
         }`}
-      >
-        {displayBody}
-      </div>
+        dangerouslySetInnerHTML={{ __html: displayHtml }}
+      />
       {isLong && (
         <button
           onClick={() => setExpanded((v) => !v)}
