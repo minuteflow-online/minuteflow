@@ -1,6 +1,17 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
+import {
+  injectMagicWordHtml,
+  isRichHtml,
+  plainToHtml,
+  renderBroadcastHtml,
+  richTextToPlain,
+  sanitizeRichHtml,
+  RICH_TEXT_CLASSES,
+} from "@/lib/richText";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -91,20 +102,34 @@ function CategoryBadge({ category }: { category: Broadcast["category"] }) {
 function BroadcastCard({
   broadcast,
   onAcknowledged,
+  linked,
 }: {
   broadcast: Broadcast;
   onAcknowledged: (id: string) => void;
+  /** Opened from a shared link — expand, scroll into view and highlight. */
+  linked: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(linked);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!linked) return;
+    setExpanded(true);
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [linked]);
   const [wordInput, setWordInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const displayBody = broadcast.magic_word
-    ? injectMagicWord(broadcast.body, broadcast.magic_word, broadcast.id)
-    : broadcast.body;
+  // Plain-text bodies keep the original text injection; rich bodies inject at an HTML block boundary.
+  const anchor = broadcast.id.charCodeAt(broadcast.id.length - 1);
+  const displayHtml = !broadcast.magic_word
+    ? renderBroadcastHtml(broadcast.body)
+    : isRichHtml(broadcast.body)
+    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), `Magic word is ${broadcast.magic_word}`, (n) => anchor % n)
+    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, broadcast.magic_word, broadcast.id)));
 
-  const isLong = displayBody.length > 300;
+  const isLong = richTextToPlain(displayHtml).length > 300 || /<img\b/i.test(displayHtml);
 
   const handleAcknowledge = useCallback(async () => {
     setError(null);
@@ -150,7 +175,10 @@ function BroadcastCard({
     (broadcast.require_word && wordInput.trim().length === 0);
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-5 shadow-sm">
+    <div
+      ref={cardRef}
+      className={`rounded-xl border bg-white p-5 shadow-sm scroll-mt-4 ${linked ? "border-terracotta" : "border-sand"}`}
+    >
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
@@ -168,6 +196,7 @@ function BroadcastCard({
           <h3 className="text-sm font-semibold text-espresso">{broadcast.title}</h3>
           <p className="text-[11px] text-stone mt-0.5">{fmtDate(broadcast.created_at)}</p>
         </div>
+        <BroadcastCopyLinkButton category={broadcast.category} id={broadcast.id} />
       </div>
 
       {/* Image */}
@@ -179,12 +208,11 @@ function BroadcastCard({
 
       {/* Body */}
       <div
-        className={`text-xs text-bark leading-relaxed whitespace-pre-wrap ${
-          !expanded && isLong ? "line-clamp-4" : ""
+        className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES} ${
+          !expanded && isLong ? "max-h-20 overflow-hidden" : ""
         }`}
-      >
-        {displayBody}
-      </div>
+        dangerouslySetInnerHTML={{ __html: displayHtml }}
+      />
       {isLong && (
         <button
           onClick={() => setExpanded((v) => !v)}
@@ -261,6 +289,7 @@ function BroadcastCard({
 export default function VaBroadcastsPortalTab({ category }: { category?: Broadcast["category"] } = {}) {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
+  const linkedId = useSearchParams().get("broadcast");
 
   const fetchBroadcasts = useCallback(async () => {
     setLoading(true);
@@ -303,6 +332,12 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
         </div>
       )}
 
+      {!loading && linkedId && !broadcasts.some((b) => b.id === linkedId) && (
+        <div className="rounded-lg border border-sand bg-parchment px-4 py-3 text-xs text-walnut">
+          The linked broadcast isn&apos;t available to you — it may have been archived, or sent to someone else.
+        </div>
+      )}
+
       {!loading && broadcasts.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-3 h-12 w-12 rounded-full bg-parchment flex items-center justify-center">
@@ -324,6 +359,7 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
               key={b.id}
               broadcast={b}
               onAcknowledged={handleAcknowledged}
+              linked={b.id === linkedId}
             />
           ))}
         </div>
