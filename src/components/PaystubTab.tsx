@@ -75,6 +75,8 @@ interface PreviewData {
   paymentAccounts?: Record<string, Record<string, string>>;
   previousPayments: PreviousPayment[];
   previousTotal: number;
+  /** Credit left over from earlier overpayments carried to this VA's next paystub. */
+  carryoverCredit?: number;
   /** The VA's pay currency (profiles.pay_currency) — symbol only. */
   currency?: string | null;
   /** Org default pesos per $1 (organization_settings.php_per_usd), pre-fills the rate box. */
@@ -100,6 +102,10 @@ interface PaystubSnapshot {
   /** Output Based Tasks this paystub settled — see /api/paystub/history. */
   output_items?: Array<{ id: number; task_name: string; account: string; amount: number; submitted_label: string | null; client_memo: string | null }>;
   output_total?: number;
+  /** Credit from an earlier overpayment used on this paystub. */
+  carryover_in?: number | null;
+  /** Overpayment on this paystub carried to the VA's next one. */
+  carryover_out?: number | null;
   payment_method: string | null;
   confirmation_number: string | null;
   payment_date: string | null;
@@ -394,6 +400,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   // prior payment (on its own date) so the paystub shows it as already paid and
   // it lands in the right period in Financials.
   const [advanceAmount, setAdvanceAmount] = useState<string>("");
+  // Carried overpayments. creditOffered is how much of the VA's waiting
+  // credit fits this paystub; creditApplied is that or 0 (the Apply box).
+  const [creditOffered, setCreditOffered] = useState(0);
+  const [creditApplied, setCreditApplied] = useState(0);
+  const [carryOverOn, setCarryOverOn] = useState(false);
+  const [carryOverAmount, setCarryOverAmount] = useState<string>("");
   const [advanceDate, setAdvanceDate] = useState<string>("");
   const [advanceConfirmation, setAdvanceConfirmation] = useState<string>("");
 
@@ -578,6 +590,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     setAdvanceAmount("");
     setAdvanceDate("");
     setAdvanceConfirmation("");
+    setCarryOverOn(false);
+    setCarryOverAmount("");
     setLoading(true);
     try {
       const res = await fetch("/api/paystub/send", {
@@ -609,6 +623,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         net += items.filter((a) => a.status !== "completed").reduce((sum, a) => sum + a.amount, 0);
         if (items.some((a) => a.date && a.date.slice(0, 10) < range.start)) setShowCarriedOverOutput(true);
       }
+      // Credit from an earlier overpayment comes off what's paid now.
+      const credit = Math.min(Number(data.carryoverCredit) || 0, Math.max(0, net));
+      setCreditOffered(credit);
+      setCreditApplied(credit);
+      net -= credit;
       setCustomAmount(net.toFixed(2));
       // Personalized default — only fills an empty box, never overwrites
       // something already typed (e.g. re-calculating after editing line items).
@@ -824,6 +843,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
               amount: lineItemAmount(item),
             })),
           fee: fee !== "" ? parseFloat(fee) || 0 : 0,
+          carryover_in: creditApplied,
+          carryover_out: carryOverOn ? Math.max(0, parseFloat(carryOverAmount) || 0) : 0,
           company_name: companyName.trim() || "MinuteFlow",
           exchange_rate: rate,
         }),
@@ -854,7 +875,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds, dayDecisions, grossOverride, exchangeRate]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts, includedOutputItemIds, dayDecisions, grossOverride, exchangeRate, creditApplied, carryOverOn, carryOverAmount]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -1718,6 +1739,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <span>− {previewMoney(preview.previousTotal)}</span>
                   </div>
                 )}
+                {creditApplied > 0 && (
+                  <div className="flex justify-between items-center text-xs text-bark/50 mt-1">
+                    <span>Credit from Previous Overpayment</span>
+                    <span>− {previewMoney(creditApplied)}</span>
+                  </div>
+                )}
                 <div className="text-xs text-bark/40 mt-1">To: {preview.vaEmail}</div>
               </div>
 
@@ -1777,7 +1804,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   const gross = effectiveTotalGrossPay;
                   const now = customAmount !== "" ? (parseFloat(customAmount) || 0) : gross;
                   const adv = parseFloat(advanceAmount) || 0;
-                  const remaining = gross - adv - now;
+                  const remaining = gross - creditApplied - adv - now;
                   return (
                     <div className="mt-2 rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark space-y-1">
                       <div className="flex justify-between"><span>Already sent (advance)</span><span>{previewMoney(adv)}</span></div>
@@ -1826,11 +1853,71 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-terracotta bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                   />
                 </div>
-                {customAmount !== "" && parseFloat(customAmount) !== effectiveTotalGrossPay && (
+                {customAmount !== "" && parseFloat(customAmount) !== effectiveTotalGrossPay - creditApplied && (
                   <p className="text-xs text-bark/40 mt-1">
-                    Default: {previewMoney(effectiveTotalGrossPay)} · You entered: {previewMoney(parseFloat(customAmount) || 0)}
+                    Default: {previewMoney(effectiveTotalGrossPay - creditApplied)} · You entered: {previewMoney(parseFloat(customAmount) || 0)}
                   </p>
                 )}
+
+                {/* Credit carried from an earlier overpayment */}
+                {creditOffered > 0 && (
+                  <label className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark">
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={creditApplied > 0}
+                        onChange={(e) => {
+                          const next = e.target.checked ? creditOffered : 0;
+                          const base = customAmount !== "" ? parseFloat(customAmount) || 0 : effectiveTotalGrossPay;
+                          setCustomAmount(Math.max(0, base + creditApplied - next).toFixed(2));
+                          setCreditApplied(next);
+                        }}
+                      />
+                      Apply credit from previous overpayment
+                    </span>
+                    <span className="text-sage">− {previewMoney(creditOffered)}</span>
+                  </label>
+                )}
+
+                {/* Paying more than is owed: carry the excess to the next paystub */}
+                {(() => {
+                  const paidNow = (customAmount !== "" ? parseFloat(customAmount) || 0 : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0);
+                  const owed = effectiveTotalGrossPay - creditApplied - preview.previousTotal - (parseFloat(advanceAmount) || 0);
+                  const excess = Math.round((paidNow - owed) * 100) / 100;
+                  if (excess < 0.01 && !carryOverOn) return null;
+                  return (
+                    <div className="mt-2 rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark space-y-1.5">
+                      {excess >= 0.01 && (
+                        <div className="flex justify-between">
+                          <span>Overpaid by</span>
+                          <span className="text-sage">{previewMoney(excess)}</span>
+                        </div>
+                      )}
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={carryOverOn}
+                          onChange={(e) => {
+                            setCarryOverOn(e.target.checked);
+                            if (e.target.checked && carryOverAmount === "" && excess > 0) setCarryOverAmount(excess.toFixed(2));
+                          }}
+                        />
+                        <span>Carry over</span>
+                        <span className="text-bark/50">{payCurrencySymbol(preview?.currency)}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={carryOverAmount}
+                          onChange={(e) => { setCarryOverAmount(e.target.value); setCarryOverOn(true); }}
+                          placeholder={excess > 0 ? excess.toFixed(2) : "0.00"}
+                          className="w-24 rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none bg-white"
+                        />
+                        <span>to next paystub</span>
+                      </label>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Miscellaneous Amount */}
@@ -2121,7 +2208,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     const earned = snap.gross_pay + outputTotal;
                     const earlierPayments = snap.earlier_payments ?? [];
                     const earlierTotal = earlierPayments.reduce((sum, p) => sum + p.amount, 0);
-                    const totalPaid = snap.amount_paid + earlierTotal;
+                    const creditIn = Number(snap.carryover_in) || 0;
+                    const carryOut = Number(snap.carryover_out) || 0;
+                    const totalPaid = snap.amount_paid + earlierTotal + creditIn - carryOut;
                     return (
                       <React.Fragment key={snap.id}>
                         <tr
@@ -2231,6 +2320,18 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <span>{earlierPayments.length > 0 ? "Paid on This Paystub" : "Amount Paid"}</span>
                                       <span>{snapMoney(snap.amount_paid)}</span>
                                     </div>
+                                    {creditIn > 0 && (
+                                      <div className="flex justify-between">
+                                        <span className="text-bark/40">Credit from Previous Overpayment</span>
+                                        <span>{snapMoney(creditIn)}</span>
+                                      </div>
+                                    )}
+                                    {carryOut > 0 && (
+                                      <div className="flex justify-between">
+                                        <span className="text-bark/40">Overpaid · Carried to Next Paystub</span>
+                                        <span className="text-sage">{snapMoney(carryOut)}</span>
+                                      </div>
+                                    )}
                                     {earlierPayments.length > 0 && (
                                       <>
                                         <div className="flex justify-between font-semibold">

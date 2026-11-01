@@ -82,6 +82,11 @@ export async function POST(request: Request) {
     // Pesos per 1 USD this payment was actually made at, for a PHP-paid VA.
     // Absent means the org default (organization_settings.php_per_usd).
     exchange_rate,
+    // Overpayment Toni chose to carry to this VA's next paystub (entered on
+    // the generator when the amount paid exceeds what's owed).
+    carryover_out,
+    // Credit from earlier carried overpayments, used against this paystub.
+    carryover_in,
   } = body;
   const includedOutputItemIds = new Set<number>(
     Array.isArray(included_output_item_ids) ? included_output_item_ids.map((id: number) => Number(id)) : []
@@ -261,6 +266,23 @@ export async function POST(request: Request) {
   }));
   const previousTotal = previousPayments.reduce((sum, p) => sum + p.amount, 0);
 
+  // Credit still waiting from earlier overpayments: everything carried
+  // forward minus everything already used, across this VA's sent paystubs.
+  const { data: carrySnaps } = await adminClient
+    .from("paystub_snapshots")
+    .select("status, carryover_out, carryover_in")
+    .eq("user_id", user_id);
+  const carryoverCredit = Math.max(
+    0,
+    Math.round(
+      ((carrySnaps ?? []) as { status: string | null; carryover_out: number | null; carryover_in: number | null }[])
+        .filter((s) => s.status !== "draft")
+        .reduce((sum, s) => sum + (Number(s.carryover_out) || 0) - (Number(s.carryover_in) || 0), 0) * 100
+    ) / 100
+  );
+  const creditIn = Math.min(carryoverCredit, Math.max(0, Number(carryover_in) || 0));
+  const carryOut = Math.max(0, Math.round((Number(carryover_out) || 0) * 100) / 100);
+
   // Upper bound only — old unpaid work is meant to keep surfacing until it's
   // paid (see comment below), but nothing dated after the period being run
   // belongs in it. Without this, generating Rhea's August paystub pulled in
@@ -394,6 +416,7 @@ export async function POST(request: Request) {
       paymentAccounts: (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>,
       previousPayments,
       previousTotal,
+      carryoverCredit,
     });
   }
 
@@ -491,7 +514,8 @@ export async function POST(request: Request) {
 
     // Remaining accounts for BOTH this payment and anything already sent this
     // period (advances / split payments), so a fully-settled paystub reads $0.
-    const remainingBalance = totalGrossPay - paymentAmount - previousTotal;
+    // A credit used from an earlier overpayment counts as paid too.
+    const remainingBalance = totalGrossPay - paymentAmount - previousTotal - creditIn;
 
     const html = buildPaystubEmail({
       vaName: vaProfile.full_name,
@@ -527,6 +551,8 @@ export async function POST(request: Request) {
       customLineItemsTotal,
       fee: feeAmount,
       currency,
+      carryoverIn: creditIn,
+      carryoverOut: carryOut,
     });
 
     const resendRes = await sendResendEmail({
@@ -595,6 +621,8 @@ export async function POST(request: Request) {
       fee: feeAmount,
       currency,
       exchange_rate: exchangeRate,
+      carryover_in: creditIn,
+      carryover_out: carryOut,
     }).select("id").single();
     snapshotId = snapData?.id ?? null;
   } catch (snapErr) {
@@ -726,6 +754,8 @@ interface PaystubData {
   customLineItemsTotal: number;
   fee: number;
   currency: PayCurrency;
+  carryoverIn?: number;
+  carryoverOut?: number;
 }
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -736,7 +766,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, taskBreakdown, paidOutputItems, paidOutputTotal, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee, currency } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, isFixedPeriod, periodWeekdays, monthWeekdays, attendance, taskBreakdown, paidOutputItems, paidOutputTotal, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee, currency, carryoverIn = 0, carryoverOut = 0 } = data;
   const formatCurrency = (amount: number) => formatPayMoney(amount, currency);
 
   // A salaried day has no per-day $ amount — hours are shown, the dollar
@@ -958,6 +988,10 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #9e9080;">Previous Payments</td>
             <td style="padding: 6px 0; font-size: 12px; color: #9e9080; text-align: right;">− ${formatCurrency(previousTotal)}</td>
           </tr>` : ""}
+          ${carryoverIn > 0 ? `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #9e9080;">Credit from Previous Overpayment</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #9e9080; text-align: right;">− ${formatCurrency(carryoverIn)}</td>
+          </tr>` : ""}
           <tr>
             <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Amount Paid</td>
             <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #c0704e; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(amountPaid)}</td>
@@ -965,6 +999,10 @@ function buildPaystubEmail(data: PaystubData): string {
           ${remainingBalance > 0 ? `<tr>
             <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #6b5e52;">Remaining Balance</td>
             <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #6b5e52; text-align: right;">${formatCurrency(remainingBalance)}</td>
+          </tr>` : ""}
+          ${carryoverOut > 0 ? `<tr>
+            <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #6b5e52;">Overpaid · Carried to Next Paystub</td>
+            <td style="padding: 6px 0; font-size: 13px; font-weight: 600; color: #6b5e52; text-align: right;">${formatCurrency(carryoverOut)}</td>
           </tr>` : ""}
         </table>
       </div>
