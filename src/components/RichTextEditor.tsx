@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { escapeHtml, isRichEmpty, sanitizeRichHtml, RICH_TEXT_CLASSES } from "@/lib/richText";
+import { escapeHtml, isRichEmpty, sanitizeRichHtml, IMAGE_SIZES, RICH_TEXT_CLASSES, type ImageSize } from "@/lib/richText";
 
 // amber-soft — the palette's highlight tone
 const HIGHLIGHT_COLOR = "#f5ecd0";
@@ -20,6 +20,7 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [empty, setEmpty] = useState(() => isRichEmpty(value));
+  const [selectedImg, setSelectedImg] = useState<HTMLImageElement | null>(null);
 
   // Load external value (open/edit/reset) without clobbering the caret while typing.
   useEffect(() => {
@@ -95,6 +96,34 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
     },
     [onUploadImage, emit]
   );
+
+  // Clicking an image selects it (outlined via data-selected) so its size can be changed.
+  const selectImage = (img: HTMLImageElement | null) => {
+    editorRef.current?.querySelectorAll("img[data-selected]").forEach((el) => el.removeAttribute("data-selected"));
+    if (img) img.setAttribute("data-selected", "");
+    setSelectedImg(img);
+  };
+
+  // null = the image's original size (capped at the message width)
+  const setImageSize = (size: ImageSize | null) => {
+    if (!selectedImg) return;
+    if (size) {
+      selectedImg.setAttribute("data-size", size);
+      selectedImg.style.width = IMAGE_SIZES[size].width;
+    } else {
+      selectedImg.removeAttribute("data-size");
+      selectedImg.style.removeProperty("width");
+      if (!selectedImg.getAttribute("style")) selectedImg.removeAttribute("style");
+    }
+    emit();
+  };
+
+  const removeImage = () => {
+    if (!selectedImg) return;
+    selectedImg.remove();
+    setSelectedImg(null);
+    emit();
+  };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const imageFile = Array.from(e.clipboardData.files).find((f) => f.type.startsWith("image/"));
@@ -191,6 +220,37 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
         />
       </div>
 
+      {/* Image size — shown while an image in the message is selected */}
+      {selectedImg && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-sand bg-parchment px-3 py-1.5">
+          <span className="text-[10px] font-semibold text-walnut tracking-wide uppercase mr-1">Image size</span>
+          {[...(Object.keys(IMAGE_SIZES) as ImageSize[]), null].map((size) => {
+            const active = (selectedImg.getAttribute("data-size") || null) === size;
+            return (
+              <button
+                key={size ?? "original"}
+                type="button"
+                onMouseDown={keep}
+                onClick={() => setImageSize(size)}
+                className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
+                  active ? "bg-sage text-white hover:bg-sage/90" : "bg-stone/10 text-stone hover:bg-stone/20"
+                }`}
+              >
+                {size ? IMAGE_SIZES[size].label : "Original"}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onMouseDown={keep}
+            onClick={removeImage}
+            className="ml-auto text-[11px] text-terracotta hover:underline cursor-pointer"
+          >
+            Remove image
+          </button>
+        </div>
+      )}
+
       {/* Editable area */}
       <div className="relative">
         {empty && placeholder && (
@@ -201,7 +261,11 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
           contentEditable
           suppressContentEditableWarning
           onInput={emit}
-          onBlur={saveSelection}
+          onClick={(e) => selectImage(e.target instanceof HTMLImageElement ? e.target : null)}
+          onBlur={() => {
+            saveSelection();
+            selectImage(null);
+          }}
           onKeyUp={saveSelection}
           onMouseUp={saveSelection}
           onPaste={handlePaste}
