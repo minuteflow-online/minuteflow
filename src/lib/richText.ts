@@ -15,12 +15,21 @@ const ALLOWED_TAGS = new Set([
 
 const VOID_TAGS = new Set(["br", "img"]);
 
+/** Sizes an inline image can be set to in the editor, as a share of the message width. */
+export const IMAGE_SIZES = {
+  small: { label: "Small", width: "33%" },
+  medium: { label: "Medium", width: "50%" },
+  large: { label: "Large", width: "75%" },
+} as const;
+
+export type ImageSize = keyof typeof IMAGE_SIZES;
+
 const RICH_TAG_RE =
   /<(p|div|br|b|strong|i|em|u|s|strike|mark|span|font|a|img|ul|ol|li|h[1-3]|blockquote)\b[^>]*>/i;
 
 /** Tailwind classes for a container that renders sanitized broadcast HTML. */
 export const RICH_TEXT_CLASSES =
-  "[&_a]:text-terracotta [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-sm [&_h1]:font-bold [&_h2]:text-[13px] [&_h2]:font-bold [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:border-sand [&_blockquote]:pl-3 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-1 [&_img]:inline-block [&_img]:align-middle";
+  "[&_a]:text-terracotta [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-sm [&_h1]:font-bold [&_h2]:text-[13px] [&_h2]:font-bold [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:border-sand [&_blockquote]:pl-3 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-1 [&_img]:inline-block [&_img]:align-middle [&_img[data-selected]]:outline-2 [&_img[data-selected]]:outline-terracotta";
 
 export function escapeHtml(s: string): string {
   return s
@@ -40,6 +49,8 @@ export function plainToHtml(text: string): string {
 
 /** Editor output with no tags at all would read as plain text — wrap it. */
 export function ensureRichHtml(html: string): string {
+  // data-selected is the editor's transient image-selection marker; never save it.
+  html = html.replace(/\sdata-selected(="")?/g, "");
   return isRichHtml(html) ? html : `<div>${html}</div>`;
 }
 
@@ -108,8 +119,13 @@ function rebuildTag(tag: string, rawAttrs: string): string {
     if (!src) return "";
     out.push(`src="${escapeHtml(src)}"`);
     if (attrs.alt) out.push(`alt="${escapeHtml(attrs.alt)}"`);
-    // Inline so emailed broadcasts don't overflow the card.
-    out.push('style="max-width: 100%; height: auto;"');
+    // Size comes only from data-size (never a raw style), rendered inline so it also holds in email.
+    const size = attrs["data-size"] as ImageSize | undefined;
+    if (size && size in IMAGE_SIZES) {
+      out.push(`data-size="${size}"`, `style="width: ${IMAGE_SIZES[size].width}; max-width: 100%; height: auto;"`);
+    } else {
+      out.push('style="max-width: 100%; height: auto;"');
+    }
   } else if (tag === "font") {
     // Some browsers emit <font> for highlight; keep only its color.
     if (attrs.color && COLOR_VALUE_RE.test(attrs.color)) out.push(`color="${escapeHtml(attrs.color)}"`);

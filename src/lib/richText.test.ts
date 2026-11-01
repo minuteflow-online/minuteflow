@@ -43,6 +43,19 @@ describe("sanitizeRichHtml", () => {
     );
   });
 
+  it("turns an image's data-size into an inline width (editor output with selection marker)", () => {
+    const editor = '<img src="https://x.co/a.png" alt="" data-size="medium" style="width: 50%;" data-selected="">';
+    expect(sanitizeRichHtml(editor)).toBe(
+      '<img src="https://x.co/a.png" data-size="medium" style="width: 50%; max-width: 100%; height: auto;">'
+    );
+  });
+
+  it("ignores unknown sizes and raw image styles", () => {
+    expect(sanitizeRichHtml('<img src="https://x.co/a.png" data-size="huge" style="width: 900px; position: fixed">')).toBe(
+      '<img src="https://x.co/a.png" style="max-width: 100%; height: auto;">'
+    );
+  });
+
   it("removes scripts and unknown tags", () => {
     expect(sanitizeRichHtml("hi<script>alert(1)</script><iframe src=x></iframe><table>t</table>")).toBe("hit");
   });
@@ -51,6 +64,12 @@ describe("sanitizeRichHtml", () => {
 describe("renderBroadcastHtml", () => {
   it("escapes legacy plain-text bodies and keeps line breaks", () => {
     expect(renderBroadcastHtml("a < b & c\nnext")).toBe("a &lt; b &amp; c<br>next");
+  });
+
+  it("drops the editor's image-selection marker before saving", () => {
+    expect(ensureRichHtml('<div><img src="https://x.co/a.png" data-size="small" data-selected=""></div>')).toBe(
+      '<div><img src="https://x.co/a.png" data-size="small"></div>'
+    );
   });
 
   it("does not double-escape editor output once wrapped", () => {
