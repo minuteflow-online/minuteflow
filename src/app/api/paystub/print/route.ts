@@ -89,7 +89,11 @@ export async function GET(request: Request) {
   const paidThisStub = Number(snap.amount_paid || 0);
   const earlierPayments = periodPayments.earlier;
   const amountPaid = paidThisStub + earlierPayments.reduce((sum, p) => sum + p.amount, 0);
-  const remainingBalance = grossPay - amountPaid;
+  // Credit from an earlier overpayment counts as paid; an overpayment this
+  // stub carried forward is shown as carried, not as still overpaid.
+  const creditIn = Number(snap.carryover_in || 0);
+  const carryOut = Number(snap.carryover_out || 0);
+  const remainingBalance = grossPay - amountPaid - creditIn + carryOut;
   const isFixedPeriod = isFixedPeriodRate(snap.pay_rate_type as string | null);
   const formatCurrency = (amount: number) => formatPayMoney(amount, snap.currency as string | null);
 
@@ -492,6 +496,14 @@ export async function GET(request: Request) {
           <td>Amount Paid</td>
           <td>${formatCurrency(amountPaid)}</td>
         </tr>`}
+        ${creditIn > 0.005 ? `<tr>
+          <td style="color:#6b5e52;font-size:12px;">Credit from Previous Overpayment</td>
+          <td style="color:#6b5e52;font-size:12px;">${formatCurrency(creditIn)}</td>
+        </tr>` : ""}
+        ${carryOut > 0.005 ? `<tr>
+          <td style="color:#6b5e52;font-size:12px;">Overpaid · Carried to Next Paystub</td>
+          <td style="color:#6b5e52;font-size:12px;">${formatCurrency(carryOut)}</td>
+        </tr>` : ""}
         ${remainingBalance > 0.005 ? `<tr>
           <td style="color:#6b5e52;font-size:12px;">Remaining Balance</td>
           <td style="color:#6b5e52;font-size:12px;">${formatCurrency(remainingBalance)}</td>
