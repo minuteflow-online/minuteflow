@@ -457,8 +457,8 @@ export default function VaBroadcastsAdminTab() {
     }
   }, [uploadBroadcastImage]);
 
-  // VAs only (not admin) for individual selection
-  const vaMembers = teamMembers.filter((m) => m.role === "va");
+  // Every active team member, admins included, for individual selection
+  const pickableMembers = teamMembers;
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -607,10 +607,10 @@ export default function VaBroadcastsAdminTab() {
 
                 {recipientMode === "individual" && (
                   <div className="ml-6 space-y-1.5 pt-1">
-                    {vaMembers.length === 0 ? (
+                    {pickableMembers.length === 0 ? (
                       <p className="text-[12px] text-stone">Loading team members...</p>
                     ) : (
-                      vaMembers.map((m) => (
+                      pickableMembers.map((m) => (
                         <label key={m.id} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
