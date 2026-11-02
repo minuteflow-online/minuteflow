@@ -40,12 +40,6 @@ export interface ActiveTask {
   logId: string;
   _startMs: number;
   isBreak?: boolean;
-  /** True while this is the placeholder "Paused" row startPause creates —
-   *  see startPause/endPause below. Distinct from isBreak: Break and Pause
-   *  are both unpaid (see billable.ts) but mean different things to Toni's
-   *  "lean and focused work" tracking (step-away vs a meal break), so they
-   *  get their own flag/category/Team-status rather than sharing isBreak. */
-  isPause?: boolean;
   assignedTaskId?: number | null;
   todoLabel?: string | null;
 }
@@ -363,60 +357,32 @@ export async function clockOut(
   return { ok: true, session: rows[0] };
 }
 
-/** Simple break toggle — the same shape SessionContext's default (non-dashboard)
- *  startBreak/endBreak use. Does not run the dashboard's full task-switch wizard
- *  (memo collection for the paused task); that's still web/extension-only. */
-export async function startBreak(userId: string): Promise<void> {
-  const now = new Date().toISOString();
-  await query("sessions", {
-    method: "PATCH",
-    filters: `user_id=eq.${userId}`,
-    body: { active_task: { isBreak: true, start_time: now }, updated_at: now },
-  });
-}
-
-export async function endBreak(userId: string): Promise<void> {
-  const now = new Date().toISOString();
-  await query("sessions", {
-    method: "PATCH",
-    filters: `user_id=eq.${userId}`,
-    body: { active_task: null, updated_at: now },
-  });
-}
-
-export interface PauseResult {
+export interface BreakResult {
   ok: boolean;
   error?: string;
   session?: SessionRow;
-  /** The task that was active before pausing — App.tsx holds onto this in
-   *  local React state (same as the dashboard's preBreakTask) so endPause
+  /** The task that was active before the break — App.tsx holds onto this in
+   *  local React state (same as the dashboard's preBreakTask) so endBreak
    *  can resume it with no prompt, per Toni's "just back on the same task
    *  automatically" call. There's no good place to stash it server-side that
    *  doesn't itself look like a second active task, so — same limitation the
    *  dashboard's own preBreakTask already has — it's lost if the app
-   *  restarts mid-pause. */
+   *  restarts mid-break. */
   resumeTask?: ActiveTask | null;
 }
 
-/** Pauses whatever's currently running: closes its time_log out and logs an
- *  explicit unpaid "Pause" row (billable: false) — unlike this file's own
- *  startBreak above, which only flips a display flag and never actually
- *  stops the underlying log. That shortcut is fine for a flag nobody reads
- *  for billing, but Toni's rule for Pause is "unpaid, like Break" as an
- *  actual payroll outcome, not just a label, so this does the real
- *  close-and-reopen Break's own *dashboard* version does on web
- *  (handleStartBreak in src/app/(app)/dashboard/page.tsx) rather than
- *  copying this file's simplified one. */
-export async function startPause(
+/** Starts a Break: closes whatever's running and logs an explicit unpaid
+ *  "Break" row (billable: false) — the real close-and-reopen Break's own
+ *  *dashboard* version does on web (handleStartBreak in
+ *  src/app/(app)/dashboard/page.tsx), not a display-flag shortcut, so Break
+ *  actually stops paid time rather than just flipping a flag nobody reads
+ *  for billing. */
+export async function startBreak(
   userId: string,
   profile: Profile,
   currentSession: SessionRow | null,
-  orgTimezone: string,
-  /** "Break" reuses the same close-and-reopen so desktop Break actually stops
-   *  paid time like web's does (it used to only flip a display flag). Flags
-   *  match web's break task, so web recognizes it via isOnBreak. */
-  kind: "Pause" | "Break" = "Pause"
-): Promise<PauseResult> {
+  orgTimezone: string
+): Promise<BreakResult> {
   const now = new Date().toISOString();
   await closeOpenLogs(userId, now, orgTimezone);
 
@@ -432,8 +398,8 @@ export async function startPause(
         full_name: profile.full_name,
         department: profile.department,
         position: profile.position,
-        task_name: kind === "Break" ? "Break" : "Paused",
-        category: kind,
+        task_name: "Break",
+        category: "Break",
         account: "Virtual Concierge",
         client_name: "Toni Colina",
         start_time: now,
@@ -448,13 +414,13 @@ export async function startPause(
       ok: false,
       error: isDuplicateActiveLogError(err)
         ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
-        : `Couldn't pause: ${err instanceof Error ? err.message : "unknown error"}.`,
+        : `Couldn't start your break: ${err instanceof Error ? err.message : "unknown error"}.`,
     };
   }
 
-  const pauseTask: ActiveTask = {
-    task_name: kind === "Break" ? "Break" : "Paused",
-    category: kind,
+  const breakTask: ActiveTask = {
+    task_name: "Break",
+    category: "Break",
     project: "",
     account: "",
     client_name: "",
@@ -465,7 +431,7 @@ export async function startPause(
     duration_ms: 0,
     logId: String(log.id),
     _startMs: Date.now(),
-    ...(kind === "Break" ? { isBreak: true } : { isPause: true }),
+    isBreak: true,
   };
 
   const rows = await query<SessionRow[]>("sessions", {
@@ -476,7 +442,7 @@ export async function startPause(
       user_id: userId,
       clocked_in: true,
       clock_in_time: currentSession?.clock_in_time || now,
-      active_task: pauseTask,
+      active_task: breakTask,
       session_date: sessionDate,
       updated_at: now,
     },
@@ -487,13 +453,13 @@ export async function startPause(
   return { ok: true, session: rows[0], resumeTask: currentSession?.active_task ?? null };
 }
 
-/** Resumes the task a prior startPause call returned as `resumeTask` — a
+/** Resumes the task a prior startBreak call returned as `resumeTask` — a
  *  fresh time_log built from that snapshot's fields, same shape the
  *  dashboard's resumePreBreakTask uses on web. No wizard, no prompt: Toni's
  *  call was to land straight back on the same task. `resumeTask` null (nothing
- *  was running before the pause, or the snapshot was lost on an app restart)
- *  lands back at idle-while-clocked-in instead, same as a bare End Break. */
-export async function endPause(
+ *  was running before the break, or the snapshot was lost on an app restart)
+ *  lands back at idle-while-clocked-in instead. */
+export async function endBreak(
   userId: string,
   profile: Profile,
   resumeTask: ActiveTask | null | undefined,
@@ -555,7 +521,6 @@ export async function endPause(
     duration_ms: 0,
     logId: String(log.id),
     _startMs: Date.now(),
-    isPause: false,
     isBreak: false,
   };
 

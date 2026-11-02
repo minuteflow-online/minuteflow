@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Session, Profile, TimeLog } from "@/types/database";
 import { formatDuration } from "@/lib/utils";
-import { isOnBreak, isOnPersonal, isOnPause } from "@/lib/breakState";
+import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 
 interface TeamMember {
   profile: Profile;
@@ -39,11 +39,10 @@ function getAvatarColor(index: number): string {
   return AVATAR_COLORS[index % AVATAR_COLORS.length];
 }
 
-type MemberStatus = "working" | "personal" | "resting" | "paused" | "away";
+type MemberStatus = "working" | "personal" | "resting" | "away";
 
 function getMemberStatus(session: Session | null): MemberStatus {
   if (!session || !session.clocked_in) return "away";
-  if (isOnPause(session.active_task)) return "paused";
   if (isOnBreak(session.active_task)) return "resting";
   if (isOnPersonal(session.active_task)) return "personal";
   return "working";
@@ -57,8 +56,6 @@ function getStatusLabel(status: MemberStatus): string {
       return "Personal";
     case "resting":
       return "On Break";
-    case "paused":
-      return "Paused";
     default:
       return "Offline";
   }
@@ -72,8 +69,6 @@ function getStatusBadgeClass(status: MemberStatus): string {
       return "bg-clay-rose-soft text-clay-rose";
     case "resting":
       return "bg-amber-soft text-amber";
-    case "paused":
-      return "bg-slate-blue-soft text-slate-blue";
     default:
       return "bg-parchment text-stone";
   }

@@ -12,26 +12,13 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   identical in Reports/Activity Log to one started on the web. Ported from
   `src/app/(app)/dashboard/page.tsx` and `src/contexts/SessionContext.tsx`,
   including the duplicate-active-log guard and the overnight-log-capping
-  safety net (see `src/lib/clock.ts` for the file-by-file mapping).
-- **Pause / Resume** — Toni's "Lean and Focused Work" policy (2026-10-26):
-  step away for a quick interruption (phone, family, cooking) without it
-  counting as paid time, saving Break specifically for eating. Desktop-only
-  for now, no web equivalent button yet. Unlike this app's own Break above
-  (which only flips a display flag and never actually stops the underlying
-  `time_logs` row — see that function's own comment), Pause does the real
-  close-and-reopen: it closes whatever's running, logs an explicit
-  `category: "Pause"` row with `billable: false`, and snapshots the task
-  that was active into local state (same shape the dashboard's own
-  `preBreakTask` uses, same limitation — lost if the app restarts mid-pause)
-  so Resume can land straight back on it with a fresh `time_logs` row and no
-  prompt. See `src/lib/clock.ts`'s `startPause`/`endPause`. Pause is in the
-  same unpaid-category set as Break/Personal (`src/lib/billable.ts`, mirrored
-  here in `src/lib/billable.ts` since this app can't import across), and
-  counts as off-duty for both the 5-minute auto-capture loop and the shared
-  `/api/upload-screenshot` off-duty check — see those files and
-  `src/lib/breakState.ts`'s new `isOnPause` on the web side. Also recognized
-  by Your Team's status badges on both apps (a teammate paused from desktop
-  shows "Paused" there, not "Working").
+  safety net (see `src/lib/clock.ts` for the file-by-file mapping). Break
+  does a real close-and-reopen (unpaid `Break` log, previous task
+  snapshotted for End Break), not just a display-flag flip. (A separate
+  Pause button existed briefly — Toni's "Lean and Focused Work" policy,
+  2026-10-26 — and was removed 2026-11-02; any `category: "Pause"` rows
+  logged in between are historical data only and still count as unpaid, see
+  `src/lib/billable.ts`.)
 - **Clock-out wizard** — with a task running, Clock Out opens the same "Close
   Active Task Before Clocking Out" dialog as web's dashboard
   (`src/components/ClockOutModal.tsx`): task status (required), client/internal
@@ -241,9 +228,9 @@ extension (`../extension/`) structurally cannot: capture a screenshot of the
   killed and restarted unpredictably. This app's main process keeps running
   in the tray for as long as the VA is signed in, so `autoCapture.ts` just
   tries again at the next 5-minute tick instead — see that file's comment.
-- **No full Break-flow wizard.** Break/End Break use the same real
-  close-and-reopen as Pause (unpaid `Break` log, previous task resumed on End
-  Break), but skip the dashboard's memo-collection wizard for the paused task.
+- **No full Break-flow wizard.** Break/End Break do the real close-and-reopen
+  (unpaid `Break` log, previous task resumed on End Break), but skip the
+  dashboard's memo-collection wizard for the task that was running.
 
 ## Running it
 
