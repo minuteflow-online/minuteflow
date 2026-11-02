@@ -29,6 +29,23 @@ type BroadcastRecipient = {
 };
 
 /**
+ * Whether a member is targeted by a broadcast's recipient rows.
+ * "Everyone" means the active team only; individual picks are honoured as chosen.
+ */
+function isRecipient(
+  rows: RecipientRow[],
+  member: { id: string; role: string; employment_type: string | null; is_active: boolean }
+): boolean {
+  return rows.some((r) => {
+    if (r.type === "all") return member.is_active;
+    if (r.type === "individual") return r.value === member.id;
+    if (r.type === "role") return r.value === member.role;
+    if (r.type === "employment_type") return r.value === member.employment_type;
+    return false;
+  });
+}
+
+/**
  * Inject the magic word into the latter 40% of the body (split by newlines).
  * Returns the modified body string.
  */
@@ -112,29 +129,13 @@ function resolveTargetEmails(
   profiles: Profile[],
   authUserMap: Map<string, string>
 ): string[] {
-  const matchedIds = new Set<string>();
-
-  for (const recipient of recipients) {
-    if (recipient.type === "all") {
-      profiles.forEach((p) => matchedIds.add(p.id));
-    } else if (recipient.type === "individual") {
-      matchedIds.add(recipient.value);
-    } else if (recipient.type === "role") {
-      profiles
-        .filter((p) => p.role === recipient.value)
-        .forEach((p) => matchedIds.add(p.id));
-    } else if (recipient.type === "employment_type") {
-      profiles
-        .filter((p) => p.employment_type === recipient.value)
-        .forEach((p) => matchedIds.add(p.id));
-    }
-  }
-
   const emails: string[] = [];
-  matchedIds.forEach((id) => {
-    const email = authUserMap.get(id);
-    if (email) emails.push(email);
-  });
+  profiles
+    .filter((p) => isRecipient(recipients, p))
+    .forEach((p) => {
+      const email = authUserMap.get(p.id);
+      if (email) emails.push(email);
+    });
   return emails;
 }
 
@@ -220,7 +221,7 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, employment_type, department")
+    .select("role, employment_type, department, is_active")
     .eq("id", user.id)
     .single();
 
@@ -241,16 +242,26 @@ export async function GET(request: Request) {
 
     const broadcastIds = broadcasts.map((b) => b.id);
 
-    // Fetch read counts for all broadcasts
+    // Fetch read records for all broadcasts
     const { data: allReads } = await supabase
       .from("broadcast_reads")
-      .select("broadcast_id, confirmed")
+      .select("broadcast_id, user_id, confirmed, read_at")
       .in("broadcast_id", broadcastIds);
 
     const readCounts: Record<string, number> = {};
     (allReads || []).forEach((r) => {
       readCounts[r.broadcast_id] = (readCounts[r.broadcast_id] || 0) + 1;
     });
+
+    // Team members, to list who has and hasn't acknowledged each broadcast
+    const adminClient = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: members } = await adminClient
+      .from("profiles")
+      .select("id, role, employment_type, is_active, full_name");
+    const memberList: Profile[] = members || [];
+    const memberName = new Map(memberList.map((m) => [m.id, m.full_name || "Unknown"]));
 
     // Fetch my own read records
     const { data: myReads } = await supabase
@@ -280,9 +291,24 @@ export async function GET(request: Request) {
 
     const result = broadcasts.map((b) => {
       const myRead = myReadMap.get(b.id);
+      const rows: RecipientRow[] = (recipientsByBroadcast[b.id] || []).map((r) => ({
+        type: r.recipient_type,
+        value: r.recipient_value,
+      }));
+      const reads = (allReads || []).filter((r) => r.broadcast_id === b.id);
+      const readIds = new Set(reads.map((r) => r.user_id));
+      const acknowledged = reads
+        .map((r) => ({ user_id: r.user_id, name: memberName.get(r.user_id) || "Unknown", read_at: r.read_at }))
+        .sort((x, y) => x.name.localeCompare(y.name));
+      const pending = memberList
+        .filter((m) => m.is_active && isRecipient(rows, m) && !readIds.has(m.id))
+        .map((m) => ({ user_id: m.id, name: m.full_name || "Unknown" }))
+        .sort((x, y) => x.name.localeCompare(y.name));
       return {
         ...b,
         read_count: readCounts[b.id] || 0,
+        acknowledged,
+        pending,
         confirmed_by_me: myRead?.confirmed ?? false,
         word_entered_by_me: myRead?.word_entered ?? null,
         recipients: recipientsByBroadcast[b.id] || [],
@@ -322,17 +348,18 @@ export async function GET(request: Request) {
     recipientsByBroadcast[r.broadcast_id].push(r);
   });
 
-  const visibleBroadcasts = allPublished.filter((b) => {
-    const rows = recipientsByBroadcast[b.id] || [];
-    return rows.some((r) => {
-      if (r.recipient_type === "all") return true;
-      if (r.recipient_type === "individual") return r.recipient_value === user.id;
-      if (r.recipient_type === "role") return r.recipient_value === profile.role;
-      if (r.recipient_type === "employment_type")
-        return r.recipient_value === profile.employment_type;
-      return false;
-    });
-  });
+  const me = {
+    id: user.id,
+    role: profile.role,
+    employment_type: profile.employment_type,
+    is_active: profile.is_active !== false,
+  };
+  const visibleBroadcasts = allPublished.filter((b) =>
+    isRecipient(
+      (recipientsByBroadcast[b.id] || []).map((r) => ({ type: r.recipient_type, value: r.recipient_value })),
+      me
+    )
+  );
 
   if (visibleBroadcasts.length === 0) {
     return Response.json({ broadcasts: [] });
