@@ -25,7 +25,6 @@ export interface TeamSessionActiveTask {
   project?: string;
   category?: string;
   isBreak?: boolean;
-  isPause?: boolean;
 }
 
 export interface TeamSession {
@@ -87,12 +86,11 @@ export async function fetchTeamTimeLogs(): Promise<TeamTimeLog[]> {
   });
 }
 
-export type MemberStatus = "working" | "personal" | "resting" | "paused" | "away";
+export type MemberStatus = "working" | "personal" | "resting" | "away";
 
 export function getMemberStatus(session: TeamSession | null): MemberStatus {
   if (!session || !session.clocked_in) return "away";
   const task = session.active_task;
-  if (task?.isPause || task?.category === "Pause") return "paused";
   if (task?.isBreak || task?.category === "Break") return "resting";
   if (task?.category === "Personal") return "personal";
   return "working";
@@ -106,8 +104,6 @@ export function getStatusLabel(status: MemberStatus): string {
       return "Personal";
     case "resting":
       return "On Break";
-    case "paused":
-      return "Paused";
     default:
       return "Offline";
   }
@@ -121,8 +117,6 @@ export function getStatusBadgeClass(status: MemberStatus): string {
       return "bg-clay-rose-soft text-clay-rose";
     case "resting":
       return "bg-amber-soft text-amber";
-    case "paused":
-      return "bg-slate-blue-soft text-slate-blue";
     default:
       return "bg-parchment text-stone";
   }
