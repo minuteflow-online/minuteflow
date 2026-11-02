@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import LoginScreen from "./components/LoginScreen";
 import ClockPanel, { type ClockState } from "./components/ClockPanel";
-import TasksPanel from "./components/TasksPanel";
+import TaskWidgetsTabs from "./components/TaskWidgetsTabs";
 import TodoPanel from "./components/TodoPanel";
 import MessageBoardPanel from "./components/MessageBoardPanel";
 import NotificationBell from "./components/NotificationBell";
@@ -15,6 +15,7 @@ import { startAutoCapture } from "./lib/autoCapture";
 import { fetchTeamRoster, fetchTeamTimeLogs, type TeamRosterMember, type TeamTimeLog } from "./lib/team";
 import TeamPanel from "./components/TeamPanel";
 import ClockOutModal from "./components/ClockOutModal";
+import QuickPickPanel from "./components/QuickPickPanel";
 
 // Desktop has no realtime channel (no supabase-js here), so this poll is the
 // whole web -> desktop sync latency; 15s was noticeably laggy in testing. It's
@@ -50,6 +51,11 @@ export default function App() {
   // back on it with no prompt (Toni's call). See clock.ts's startBreak/
   // endBreak for why this can't just live on the session row instead.
   const [preBreakTask, setPreBreakTask] = useState<clock.ActiveTask | null>(null);
+  // Quick Pick's "silently hold and message" — the task bumped aside by a
+  // Message for Guidance/General Message click, offered back via a Resume
+  // banner. Same local-state-only limitation as preBreakTask above (lost on
+  // an app restart): see clock.ts's startHoldAndMessage for why.
+  const [heldTask, setHeldTask] = useState<clock.ActiveTask | null>(null);
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -234,6 +240,7 @@ export default function App() {
     setTeamMembers([]);
     setTeamTimeLogs([]);
     setPreBreakTask(null);
+    setHeldTask(null);
   }, []);
 
   const handleClockIn = useCallback(async () => {
@@ -264,6 +271,7 @@ export default function App() {
         const result = await clock.clockOut(userId, orgTimezone, profile, sessionRow, wizard);
         if (result.session) setSessionRow(result.session);
         setPreBreakTask(null);
+        setHeldTask(null);
         setShowClockOutModal(false);
       } catch (err) {
         alert(`Couldn't clock you out: ${err instanceof Error ? err.message : "unknown error"}. You are still clocked in — try again.`);
@@ -324,6 +332,75 @@ export default function App() {
       setActionPending(false);
     }
   }, [userId, profile, preBreakTask, sessionRow, orgTimezone, actionPending]);
+
+  // Quick Pick: silently hold whatever's running and start a message task in
+  // its place — mirrors the dashboard's handleAutoHoldAndStartMessage. No
+  // wizard, no confirmation; the interruption is meant to be instant.
+  const handleQuickMessage = useCallback(
+    async (mapping: clock.QuickMessageMapping) => {
+      if (!userId || !profile || actionPending) return;
+      setActionPending(true);
+      try {
+        const result = await clock.startHoldAndMessage(userId, profile, sessionRow, orgTimezone, mapping);
+        if (!result.ok) {
+          alert(result.error);
+          return;
+        }
+        if (result.session) setSessionRow(result.session);
+        if (result.heldTask) setHeldTask(result.heldTask);
+      } catch (err) {
+        alert(`Couldn't start that: ${err instanceof Error ? err.message : "unknown error"}.`);
+      } finally {
+        setActionPending(false);
+      }
+    },
+    [userId, profile, sessionRow, orgTimezone, actionPending]
+  );
+
+  // Resume: ends the message task and lands straight back on the held task,
+  // no wizard — mirrors the dashboard's resumeHeldTask.
+  const handleResumeHeld = useCallback(async () => {
+    if (!userId || !profile || !heldTask || actionPending) return;
+    setActionPending(true);
+    try {
+      const result = await clock.resumeHeldTask(userId, profile, heldTask, sessionRow, orgTimezone);
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      if (result.session) setSessionRow(result.session);
+      setHeldTask(null);
+    } catch (err) {
+      alert(`Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`);
+    } finally {
+      setActionPending(false);
+    }
+  }, [userId, profile, heldTask, sessionRow, orgTimezone, actionPending]);
+
+  // Log an Activity: starts a free-form task not tied to an assignment —
+  // mirrors the dashboard's TaskEntryForm hourly submit path. `closeOld`
+  // (from LogActivityPanel's own "Close Current Task" wizard) carries the
+  // status/memos for whatever was running; its absence just closes it plain.
+  const handleStartAdHoc = useCallback(
+    async (input: clock.AdHocTaskInput, closeOld?: clock.CloseOldTaskInput) => {
+      if (!userId || !profile || actionPending) return;
+      setActionPending(true);
+      try {
+        const result = await clock.startAdHocTask(userId, profile, sessionRow, orgTimezone, input, closeOld);
+        if (!result.ok) {
+          alert(result.error);
+          return;
+        }
+        if (result.session) setSessionRow(result.session);
+        setSelectedTask(null);
+      } catch (err) {
+        alert(`Couldn't start that: ${err instanceof Error ? err.message : "unknown error"}.`);
+      } finally {
+        setActionPending(false);
+      }
+    },
+    [userId, profile, sessionRow, orgTimezone, actionPending]
+  );
 
   const handleStart =useCallback(
     async (task: VAAssignedTask) => {
@@ -522,17 +599,69 @@ export default function App() {
           the freed-up width goes to the right panel instead. */}
       <div className="flex flex-1 min-h-0 gap-4 p-4">
         <div className="flex w-[45%] min-w-[360px] max-w-[500px] shrink-0 flex-col gap-4 min-h-0">
-          <ClockPanel
-            state={clockState}
-            clockInTime={sessionRow?.clock_in_time ?? null}
-            awaySince={sessionRow?.active_task?.start_time ?? null}
-            actionPending={actionPending}
-            onClockIn={handleClockIn}
-            onClockOut={handleClockOut}
-            onStartBreak={handleStartBreak}
-            onEndBreak={handleEndBreak}
-          />
-          <TasksPanel
+          <div className="flex gap-4">
+            <div className="flex-1 min-w-0">
+              <ClockPanel
+                state={clockState}
+                clockInTime={sessionRow?.clock_in_time ?? null}
+                awaySince={sessionRow?.active_task?.start_time ?? null}
+                actionPending={actionPending}
+                onClockIn={handleClockIn}
+                onClockOut={handleClockOut}
+                onStartBreak={handleStartBreak}
+                onEndBreak={handleEndBreak}
+              />
+            </div>
+            {/* Quick Pick — only once clocked in, same gate as web's dashboard */}
+            {clockState !== "idle" && (
+              <div className="flex-1 min-w-0">
+                <QuickPickPanel onMessage={handleQuickMessage} disabled={actionPending} />
+              </div>
+            )}
+          </div>
+          {/* What's actually running right now — an assigned task, a Log an
+              Activity entry, or a Quick Pick message. Full width under both
+              cards above (Toni's call), not squeezed into ClockPanel alone.
+              Lifted from web's ActiveTaskBar.tsx (task name + "project ·
+              account · client" details), minus its Screenshot/Notes buttons,
+              which don't exist here. */}
+          {clockState === "clocked-in" && sessionRow?.active_task?.task_name && (
+            <div className="bg-cream border border-sand border-l-[3px] border-l-sage rounded-lg py-2 px-3">
+              <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-sage mb-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
+                Active
+              </span>
+              <div className="text-[13px] font-semibold text-espresso leading-tight truncate">
+                {sessionRow.active_task.task_name}
+              </div>
+              {(() => {
+                const details = [
+                  sessionRow.active_task.project,
+                  sessionRow.active_task.account,
+                  sessionRow.active_task.client_name,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return details ? <div className="text-[11px] text-bark truncate">{details}</div> : null;
+              })()}
+            </div>
+          )}
+          {heldTask && clockState !== "idle" && (
+            <div className="flex items-center gap-3 px-4 py-2.5 bg-amber/10 border border-amber/30 rounded-xl text-[12px] text-espresso">
+              <span className="text-amber text-base">⏸</span>
+              <span className="text-stone">On hold:</span>
+              <span className="font-semibold flex-1 truncate">{heldTask.task_name}</span>
+              <button
+                onClick={handleResumeHeld}
+                disabled={actionPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold cursor-pointer hover:bg-sage/80 transition-all shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21" /></svg>
+                Resume
+              </button>
+            </div>
+          )}
+          <TaskWidgetsTabs
             tasks={tasks}
             loading={tasksLoading}
             selectedId={selectedTask?.id ?? null}
@@ -541,6 +670,9 @@ export default function App() {
             onStart={handleStart}
             onSubmit={setSubmitTarget}
             onReorder={handleReorder}
+            hasActiveTask={Boolean(sessionRow?.active_task?.logId && !isOnBreak(sessionRow.active_task))}
+            actionPending={actionPending}
+            onStartAdHoc={handleStartAdHoc}
           />
         </div>
 

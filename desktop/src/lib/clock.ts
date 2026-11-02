@@ -357,6 +357,321 @@ export async function clockOut(
   return { ok: true, session: rows[0] };
 }
 
+export interface AdHocTaskInput {
+  task_name: string;
+  category: string;
+  account: string;
+  project: string;
+  client_name: string;
+  /** Client Notes, typed before Start — saved on the NEW task's log. */
+  client_memo: string;
+}
+
+/** What the "Close Current Task" wizard collects — status + memo go on the
+ *  OLD task, same split web's dashboard startTask() makes between a
+ *  wizard-driven close and the form's own Client Notes. */
+export interface CloseOldTaskInput {
+  status: "In Progress" | "Completed" | "On Hold";
+  clientMemo: string;
+  internalMemo: string;
+}
+
+export interface StartAdHocResult {
+  ok: boolean;
+  error?: string;
+  session?: SessionRow;
+}
+
+/** Starts a free-form task from the Log an Activity tab — mirrors the
+ *  dashboard's TaskEntryForm hourly submit path (startTask in
+ *  dashboard/page.tsx), minus the fixed-pay billing and task-library lookups
+ *  that stay web-only. Pass `closeOld` when something's already running (the
+ *  "Close Current Task" wizard result); its status/memos save on the OLD
+ *  task's log, while `input.client_memo` is the NEW task's own Client Notes.
+ *  Omitting `closeOld` just closes whatever was open with no memo, same as
+ *  pressing Start with nothing running. */
+export async function startAdHocTask(
+  userId: string,
+  profile: Profile,
+  currentSession: SessionRow | null,
+  orgTimezone: string,
+  input: AdHocTaskInput,
+  closeOld?: CloseOldTaskInput
+): Promise<StartAdHocResult> {
+  const now = new Date().toISOString();
+  const active = currentSession?.active_task;
+
+  if (active?.logId) {
+    const logId = Number(active.logId);
+    const startMs = active.start_time ? new Date(active.start_time).getTime() : Date.now();
+    const body: Record<string, unknown> = {
+      end_time: now,
+      duration_ms: Math.max(0, Date.now() - startMs),
+    };
+    if (closeOld) {
+      body.progress = closeOld.status.toLowerCase().replace(/ /g, "_");
+      if (closeOld.clientMemo.trim()) body.client_memo = closeOld.clientMemo.trim();
+      if (closeOld.internalMemo.trim()) body.internal_memo = closeOld.internalMemo.trim();
+    }
+    await query("time_logs", { method: "PATCH", filters: `id=eq.${logId}`, body });
+  }
+
+  await closeOpenLogs(userId, now, orgTimezone);
+
+  const sessionDate = getCorrectSessionDate(currentSession, orgTimezone);
+
+  let log: { id: number };
+  try {
+    const rows = await query<{ id: number }[]>("time_logs", {
+      method: "POST",
+      body: {
+        user_id: userId,
+        username: profile.username,
+        full_name: profile.full_name,
+        department: profile.department,
+        position: profile.position,
+        task_name: input.task_name,
+        category: input.category,
+        project: input.project || null,
+        account: input.account || null,
+        client_name: input.client_name || null,
+        client_memo: input.client_memo.trim() || null,
+        start_time: now,
+        billable: isBillableCategory(input.category),
+        billing_type: "hourly",
+        session_date: sessionDate,
+      },
+    });
+    log = rows[0];
+  } catch (err) {
+    return {
+      ok: false,
+      error: isDuplicateActiveLogError(err)
+        ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
+        : `Couldn't start that: ${err instanceof Error ? err.message : "unknown error"}.`,
+    };
+  }
+
+  const newActive: ActiveTask = {
+    task_name: input.task_name,
+    category: input.category,
+    project: input.project || "",
+    account: input.account || "",
+    client_name: input.client_name || "",
+    client_memo: input.client_memo.trim(),
+    internal_memo: "",
+    start_time: now,
+    end_time: null,
+    duration_ms: 0,
+    logId: String(log.id),
+    _startMs: Date.now(),
+  };
+
+  const rows = await query<SessionRow[]>("sessions", {
+    method: "POST",
+    filters: "on_conflict=user_id",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      user_id: userId,
+      clocked_in: true,
+      clock_in_time: currentSession?.clock_in_time || now,
+      active_task: newActive,
+      session_date: sessionDate,
+      updated_at: now,
+    },
+  });
+
+  return { ok: true, session: rows[0] };
+}
+
+export interface QuickMessageMapping {
+  task_name: string;
+  category: string;
+  account: string;
+  project: string;
+  client_name: string;
+}
+
+export interface HoldResult {
+  ok: boolean;
+  error?: string;
+  session?: SessionRow;
+  /** The task that was running before the hold, for App.tsx to hold onto and
+   *  offer a "Resume" banner for — null if nothing billable was running
+   *  (idle, or already on a Break/Pause, which this never holds). */
+  heldTask?: ActiveTask | null;
+}
+
+/** Quick Pick's "Message for Guidance/Instructions" and "General Message"
+ *  buttons — mirrors the dashboard's handleAutoHoldAndStartMessage: silently
+ *  holds whatever's running (closes its log, flagged progress "on_hold" so
+ *  it reads as interrupted rather than finished) and starts the message task
+ *  in its place. No wizard — the whole point is an instant interruption. */
+export async function startHoldAndMessage(
+  userId: string,
+  profile: Profile,
+  currentSession: SessionRow | null,
+  orgTimezone: string,
+  mapping: QuickMessageMapping
+): Promise<HoldResult> {
+  const now = new Date().toISOString();
+  const active = currentSession?.active_task;
+  const holdable = active && !active.isBreak ? active : null;
+
+  // Flag the running task's own log on_hold before the generic close below
+  // (which only ever sets end_time/duration) touches it.
+  if (holdable?.logId) {
+    const logId = Number(holdable.logId);
+    const startMs = holdable.start_time ? new Date(holdable.start_time).getTime() : Date.now();
+    await query("time_logs", {
+      method: "PATCH",
+      filters: `id=eq.${logId}`,
+      body: { end_time: now, duration_ms: Math.max(0, Date.now() - startMs), progress: "on_hold" },
+    });
+  }
+
+  await closeOpenLogs(userId, now, orgTimezone);
+
+  const sessionDate = getCorrectSessionDate(currentSession, orgTimezone);
+
+  let log: { id: number };
+  try {
+    const rows = await query<{ id: number }[]>("time_logs", {
+      method: "POST",
+      body: {
+        user_id: userId,
+        username: profile.username,
+        full_name: profile.full_name,
+        department: profile.department,
+        position: profile.position,
+        task_name: mapping.task_name,
+        category: mapping.category,
+        project: mapping.project || null,
+        account: mapping.account || null,
+        client_name: mapping.client_name || null,
+        start_time: now,
+        billable: isBillableCategory(mapping.category),
+        billing_type: "hourly",
+        session_date: sessionDate,
+      },
+    });
+    log = rows[0];
+  } catch (err) {
+    return {
+      ok: false,
+      error: isDuplicateActiveLogError(err)
+        ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
+        : `Couldn't start that: ${err instanceof Error ? err.message : "unknown error"}.`,
+    };
+  }
+
+  const newActive: ActiveTask = {
+    task_name: mapping.task_name,
+    category: mapping.category,
+    project: mapping.project || "",
+    account: mapping.account || "",
+    client_name: mapping.client_name || "",
+    client_memo: "",
+    internal_memo: "",
+    start_time: now,
+    end_time: null,
+    duration_ms: 0,
+    logId: String(log.id),
+    _startMs: Date.now(),
+  };
+
+  const rows = await query<SessionRow[]>("sessions", {
+    method: "POST",
+    filters: "on_conflict=user_id",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      user_id: userId,
+      clocked_in: true,
+      clock_in_time: currentSession?.clock_in_time || now,
+      active_task: newActive,
+      session_date: sessionDate,
+      updated_at: now,
+    },
+  });
+
+  return { ok: true, session: rows[0], heldTask: holdable };
+}
+
+/** Resumes a task startHoldAndMessage held — a fresh log built from the
+ *  snapshot, same shape endPause's resume branch uses, no wizard. The
+ *  on_hold log from the hold itself is left alone as the historical record
+ *  of the interruption rather than reopened. */
+export async function resumeHeldTask(
+  userId: string,
+  profile: Profile,
+  heldTask: ActiveTask,
+  currentSession: SessionRow | null,
+  orgTimezone: string
+): Promise<ClockInResult> {
+  const now = new Date().toISOString();
+  await closeOpenLogs(userId, now, orgTimezone);
+
+  const sessionDate = getCorrectSessionDate(currentSession, orgTimezone);
+
+  let log: { id: number };
+  try {
+    const rows = await query<{ id: number }[]>("time_logs", {
+      method: "POST",
+      body: {
+        user_id: userId,
+        username: profile.username,
+        full_name: profile.full_name,
+        department: profile.department,
+        position: profile.position,
+        task_name: heldTask.task_name,
+        category: heldTask.category,
+        project: heldTask.project || null,
+        account: heldTask.account || null,
+        client_name: heldTask.client_name || null,
+        client_memo: heldTask.client_memo || null,
+        internal_memo: heldTask.internal_memo || null,
+        start_time: now,
+        billable: isBillableCategory(heldTask.category),
+        billing_type: "hourly",
+        session_date: sessionDate,
+      },
+    });
+    log = rows[0];
+  } catch (err) {
+    return {
+      ok: false,
+      error: isDuplicateActiveLogError(err)
+        ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
+        : `Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`,
+    };
+  }
+
+  const resumed: ActiveTask = {
+    ...heldTask,
+    start_time: now,
+    end_time: null,
+    duration_ms: 0,
+    logId: String(log.id),
+    _startMs: Date.now(),
+  };
+
+  const rows = await query<SessionRow[]>("sessions", {
+    method: "POST",
+    filters: "on_conflict=user_id",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      user_id: userId,
+      clocked_in: true,
+      clock_in_time: currentSession?.clock_in_time || now,
+      active_task: resumed,
+      session_date: sessionDate,
+      updated_at: now,
+    },
+  });
+
+  return { ok: true, session: rows[0] };
+}
+
 export interface BreakResult {
   ok: boolean;
   error?: string;
