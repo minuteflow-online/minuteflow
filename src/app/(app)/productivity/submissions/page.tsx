@@ -43,6 +43,10 @@ type FeedItem = {
   edited_at: string | null;
   /** Set on a revision entry: the new deadline for the rework. */
   due_at: string | null;
+  /** Only meaningful when message_type is "submission" — the VA's own
+   *  In Progress / Completed choice (Phase 2, Toni's call, 2026-11-02). */
+  progress_status: "in_progress" | "completed" | null;
+  review_requested: boolean | null;
   attachments: TaskSubmissionAttachment[];
   profiles?: { id: string; full_name: string | null; username: string | null } | null;
   task: {
@@ -145,6 +149,7 @@ const STATUS_OPTIONS = [
   { value: "rejected", label: "Rejected" },
   { value: "approved", label: "Approved" },
   { value: "auto_approved", label: "Auto approved" },
+  { value: "in_progress", label: "In Progress" },
   { value: "completed", label: "Completed" },
 ];
 
@@ -214,6 +219,11 @@ const REVIEW_STATE_PILL: Record<string, { label: string; className: string }> = 
   // false, so nobody looked at it. Worth being able to tell apart at a glance.
   auto_approved: { label: "Auto approved", className: "bg-sage-soft text-sage border-sage/20" },
   completed: { label: "Completed", className: "bg-stone/10 text-stone border-stone/20" },
+  // The VA's own call (Phase 2, Toni's call, 2026-11-02) — a status report,
+  // not a finished handoff. Shown instead of awaiting/approved/auto_approved
+  // regardless of which of those the review side landed on, same way
+  // auto_approved already overrides a plain "approved".
+  in_progress: { label: "In progress", className: "bg-amber-50 text-amber-600 border-amber-200" },
 };
 
 /** "1h 23m" / "45m" / "30s" — compact enough to sit inline on a badge row. */
@@ -971,6 +981,24 @@ This cannot be undone.`
     return projects.filter((p) => kinds.has(p.kind));
   }, [projects, scopeFilter]);
 
+  // taskId -> the most recent "submission" entry's progress_status, so the
+  // In Progress / Completed filter and pill reflect what the VA most
+  // recently reported, not an older submission on the same thread (Phase 3,
+  // Toni's call, 2026-11-02).
+  const progressStatusByTask = useMemo(() => {
+    const latest = new Map<number, { created_at: string; progress_status: "in_progress" | "completed" | null }>();
+    for (const item of items) {
+      if (item.message_type !== "submission" || !item.task) continue;
+      const current = latest.get(item.task.id);
+      if (!current || item.created_at > current.created_at) {
+        latest.set(item.task.id, { created_at: item.created_at, progress_status: item.progress_status });
+      }
+    }
+    const result: Record<number, "in_progress" | "completed" | null> = {};
+    for (const [taskId, v] of latest) result[taskId] = v.progress_status;
+    return result;
+  }, [items]);
+
   // Account and client narrow the already-fetched rows rather than re-querying:
   // a task names its account directly, and the client is that account's client.
   const visibleItems = useMemo(() => {
@@ -1027,6 +1055,13 @@ This cannot be undone.`
     if (statusFilter.size > 0) {
       rows = rows.filter((r) => {
         if (!r.task) return false;
+        // In Progress overrides the review-decision state entirely — it's a
+        // different axis (what the VA reported) than awaiting/approved/
+        // rejected (what a reviewer did about it), same way auto_approved
+        // already overrides a plain "approved" below.
+        if (progressStatusByTask[r.task.id] === "in_progress") {
+          return statusFilter.has("in_progress");
+        }
         const state = reviewState[String(r.task.id)] ?? "awaiting";
         const key =
           state === "approved" && r.task.review_required === false
@@ -1105,7 +1140,7 @@ This cannot be undone.`
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone, unreadOnly, unreadByTask, openedSinceUnreadOn, flaggedOnly, flaggedTasks]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState, progressStatusByTask, search, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, orgTimezone, unreadOnly, unreadByTask, openedSinceUnreadOn, flaggedOnly, flaggedTasks]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -1853,7 +1888,7 @@ function SubmissionsLegend() {
       </span>
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
-        {(["awaiting", "revision_requested", "approved", "auto_approved"] as const).map((key) => (
+        {(["awaiting", "revision_requested", "approved", "auto_approved", "in_progress"] as const).map((key) => (
           <span
             key={key}
             className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${REVIEW_STATE_PILL[key].className}`}
@@ -2588,11 +2623,22 @@ function ThreadCard({
   // An approval on a task that never required review is labelled as such, so
   // "Approved" always means a person actually looked at it.
   const autoApproved = state === "approved" && latest.task?.review_required === false;
-  const pill = autoApproved
-    ? REVIEW_STATE_PILL.auto_approved
-    : state
-      ? REVIEW_STATE_PILL[state]
-      : undefined;
+  // The VA's own most recent In Progress / Completed call (Phase 3, Toni's
+  // call, 2026-11-02) — a different axis than the review-decision state
+  // above, so it's found the same way reviewState itself is: the latest
+  // "submission" entry on the thread, not just whatever's newest overall
+  // (a later comment or approval doesn't carry a progress_status of its own).
+  const latestSubmission = thread.items
+    .filter((item) => item.message_type === "submission")
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+  const inProgress = latestSubmission?.progress_status === "in_progress";
+  const pill = inProgress
+    ? REVIEW_STATE_PILL.in_progress
+    : autoApproved
+      ? REVIEW_STATE_PILL.auto_approved
+      : state
+        ? REVIEW_STATE_PILL[state]
+        : undefined;
 
   return (
     <div ref={cardRef} className="rounded-lg border border-sand bg-white px-3 py-2.5">

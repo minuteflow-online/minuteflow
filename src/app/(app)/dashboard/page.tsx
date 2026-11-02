@@ -267,6 +267,13 @@ export default function DashboardPage() {
   // Held task (auto-held when a quick-message action is used)
   const [heldTask, setHeldTask] = useState<ActiveTask | null>(null);
 
+  // Clock Out gate (Phase 3, Toni's call, 2026-11-02): narrow version — only
+  // blocks on a task actively in_progress right now, not on older
+  // started-then-stopped-but-never-submitted work. Null means "not checked
+  // /nothing open"; a non-empty array means Clock Out is blocked until each
+  // is Stopped or Submitted.
+  const [clockOutBlockedTasks, setClockOutBlockedTasks] = useState<{ id: number; task_name: string }[] | null>(null);
+
   // Close-task-before-clockout modal state
   const [showClockOutModal, setShowClockOutModal] = useState(false);
   const [clockOutTaskStatus, setClockOutTaskStatus] = useState("");
@@ -941,6 +948,20 @@ export default function DashboardPage() {
       console.error("[stopCurrentTask] session upsert failed:", stopSessionError.message);
     }
 
+    // The log is closed, but until now nothing ever told the assignment
+    // itself to stop being "in_progress" — it just sat there forever, which
+    // is how a task could look In Progress on the dashboard with no running
+    // timer behind it at all, or two tasks both show In Progress at once.
+    // Demoted to on_queue, same status Start already resumes from — Phase 1
+    // of the Start/Stop/Submit rework (Toni's call, 2026-11-02).
+    if (activeTask?.assignedTaskId) {
+      void setAssignedTaskStatus({
+        assignedTaskId: activeTask.assignedTaskId,
+        status: "on_queue",
+        vaId: userId,
+      }).then(() => setWidgetRefetchCount((c) => c + 1));
+    }
+
     // Stop the capture sequence for the closed task (keep the screen-share
     // stream alive — the next task may schedule its own captures). Inlined
     // instead of clearCaptureTimers() because that callback is declared later.
@@ -967,7 +988,7 @@ export default function DashboardPage() {
 
       let query = supabase
         .from("time_logs")
-        .select("id, start_time")
+        .select("id, start_time, assigned_task_id")
         .eq("user_id", userId)
         .is("end_time", null)
         .neq("category", "Clock Out");
@@ -1016,6 +1037,19 @@ export default function DashboardPage() {
             return log;
           })
         );
+
+        // Shared safety-net sweep used by several callers (break start, task
+        // resume, clock-in races) — same demotion fix as stopCurrentTask,
+        // since any of those can be the thing that closes an assigned task's
+        // last open log (Phase 1, Toni's call, 2026-11-02).
+        const demotedIds = new Set(
+          openLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
+        );
+        for (const assignedTaskId of demotedIds) {
+          void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
+            setWidgetRefetchCount((c) => c + 1)
+          );
+        }
       }
     },
     [supabase, userId, orgTimezone]
@@ -1332,7 +1366,7 @@ export default function DashboardPage() {
     {
       const { data: orphanedLogs } = await supabase
         .from("time_logs")
-        .select("id, start_time")
+        .select("id, start_time, assigned_task_id")
         .eq("user_id", userId)
         .is("end_time", null)
         .neq("category", "Clock Out");
@@ -1362,6 +1396,17 @@ export default function DashboardPage() {
             return log;
           })
         );
+
+        // Same demotion fix as the other close-paths — an orphaned log here
+        // can still belong to an assigned task (Phase 1, Toni's call, 2026-11-02).
+        const demotedIds = new Set(
+          orphanedLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
+        );
+        for (const assignedTaskId of demotedIds) {
+          void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
+            setWidgetRefetchCount((c) => c + 1)
+          );
+        }
       }
     }
 
@@ -1464,18 +1509,45 @@ export default function DashboardPage() {
   const clockOut = useCallback(async () => {
     if (!userId) return;
 
-    // If there's an active task, show the close-task modal instead of clocking out directly
-    if (activeTask) {
-      // Pre-fill memos from the active task so the VA doesn't have to re-type them
-      setClockOutClientMemo(activeTask.client_memo || "");
-      setClockOutInternalMemo(activeTask.internal_memo || "");
-      setShowClockOutModal(true);
-      return;
+    // Clock Out gate — narrow version: block only on a task actively
+    // in_progress right now. First built this against
+    // assigned_task_assignees.status === "in_progress", but live-testing
+    // caught that status column drifting stale with no running timer behind
+    // it (22 rows stuck at in_progress on the test account with zero open
+    // time_logs — leftover from well before this phase, not something
+    // currently running) — so trusting it here would have permanently
+    // locked a VA out of clocking out over data that was already wrong.
+    // A genuinely open time_log is the one signal that can't go stale this
+    // way: every close path (Stop, switch, Submit, the orphan sweeps) already
+    // closes it the moment a task actually stops, so one being open always
+    // means something is really running right now (Phase 3, Toni's call,
+    // 2026-11-02).
+    try {
+      const { data: openLogs } = await supabase
+        .from("time_logs")
+        .select("assigned_task_id, task_name")
+        .eq("user_id", userId)
+        .is("end_time", null)
+        .not("assigned_task_id", "is", null);
+      const blocked = (openLogs ?? [])
+        .filter((l) => l.assigned_task_id != null)
+        .map((l) => ({ id: l.assigned_task_id as number, task_name: l.task_name as string }));
+      if (blocked.length > 0) {
+        setClockOutBlockedTasks(blocked);
+        return;
+      }
+    } catch {
+      // Best-effort check — if it fails, fall through to clocking out rather
+      // than trapping the VA over a network hiccup on the gate itself.
     }
 
-    // No active task — clock out immediately
+    // Silent now, same as Stop/Start — no forced "close this task first"
+    // popup. performClockOut()'s own orphan sweep already closes whatever's
+    // still open (including the active task's log) and demotes its status
+    // correctly on its own (Phase 1/2, Toni's call, 2026-11-02); live-tested
+    // this exact path earlier today.
     await performClockOut();
-  }, [userId, activeTask, performClockOut]);
+  }, [userId, performClockOut, supabase]);
 
   const handleCloseTaskAndClockOut = useCallback(async () => {
     if (!clockOutTaskStatus || (!clockOutClientMemo.trim() && !clockOutInternalMemo.trim())) return;
@@ -1510,6 +1582,19 @@ export default function DashboardPage() {
               : log
           )
         );
+
+        // Same gap as stopCurrentTask and the startTask sweep: closing the log
+        // here never used to touch the assignment's status, so clocking out
+        // while a task was running left it stuck "in_progress" forever even
+        // though nothing was running. Phase 1 of the Start/Stop/Submit rework
+        // (Toni's call, 2026-11-02).
+        if (activeTask?.assignedTaskId) {
+          void setAssignedTaskStatus({
+            assignedTaskId: activeTask.assignedTaskId,
+            status: "on_queue",
+            vaId: userId,
+          }).then(() => setWidgetRefetchCount((c) => c + 1));
+        }
       }
 
       // Capture mood and day rating before resetting
@@ -1564,49 +1649,12 @@ export default function DashboardPage() {
   const startBreak = useCallback(async () => {
     if (!userId || !profile) return;
 
-    if (activeTask && !activeTask.isBreak) {
-      // Use the existing close-task wizard to collect status + memos
-      setBreakPending(true);
-      const taskAsLog: TimeLog = {
-        id: parseInt(activeTask.logId, 10) || 0,
-        user_id: userId,
-        username: profile.username,
-        full_name: profile.full_name,
-        department: profile.department || null,
-        position: profile.position || null,
-        task_name: activeTask.task_name,
-        category: activeTask.category,
-        project: activeTask.project || null,
-        account: activeTask.account || null,
-        client_name: activeTask.client_name || null,
-        start_time: activeTask.start_time,
-        end_time: null,
-        duration_ms: activeTask.start_time
-          ? Date.now() - new Date(activeTask.start_time).getTime()
-          : 0,
-        billable: isBillableCategory(activeTask.category),
-        client_memo: activeTask.client_memo || null,
-        internal_memo: activeTask.internal_memo || null,
-        is_manual: false,
-        manual_status: null,
-        form_fill_ms: 0,
-        progress: null,
-        billing_type: activeTask.billing_type || "hourly",
-        task_rate: activeTask.task_rate ?? null,
-        session_date: null,
-        created_at: activeTask.start_time,
-        deleted_at: null,
-      };
-      setLiveSessionData(taskAsLog);
-      setCloseOldClientMemo(taskAsLog.client_memo || "");
-      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
-      setCloseOldStep("details");
-      return;
-    }
-
-    // No active task, start break directly
+    // Silent, same as every other switch now — doStartBreak() already calls
+    // stopCurrentTask() itself when there's a real (non-break) active task,
+    // which carries its own demotion fix (Phase 1/2, Toni's call,
+    // 2026-11-02). No forced wizard here anymore.
     await doStartBreak();
-  }, [userId, profile, activeTask]);
+  }, [userId, profile]);
 
   // Actually start the break (called after wizard or directly).
   // closedTaskStatus is the status just chosen for the task being closed to
@@ -1772,7 +1820,7 @@ export default function DashboardPage() {
       const gapCutoff = new Date(new Date(now).getTime() - SWITCH_MIN_AGE_MS).toISOString();
       const { data: openLogs } = await supabase
         .from("time_logs")
-        .select("id, start_time")
+        .select("id, start_time, assigned_task_id")
         .eq("user_id", userId)
         .is("end_time", null)
         .neq("category", "Clock Out")
@@ -1802,6 +1850,16 @@ export default function DashboardPage() {
             return log;
           })
         );
+
+        // Same demotion fix as the other close-paths (Phase 1, Toni's call, 2026-11-02).
+        const demotedIds = new Set(
+          openLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
+        );
+        for (const assignedTaskId of demotedIds) {
+          void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
+            setWidgetRefetchCount((c) => c + 1)
+          );
+        }
       }
     }
 
@@ -2513,7 +2571,7 @@ export default function DashboardPage() {
           const gapCutoff = new Date(new Date(now).getTime() - SWITCH_MIN_AGE_MS).toISOString();
           const { data: openLogs } = await supabase
             .from("time_logs")
-            .select("id, start_time")
+            .select("id, start_time, assigned_task_id")
             .eq("user_id", userId)
             .is("end_time", null)
             .neq("category", "Clock Out")
@@ -2550,6 +2608,21 @@ export default function DashboardPage() {
                 return log;
               })
             );
+
+            // Same demotion as stopCurrentTask, for whatever this sweep just
+            // closed — this is the DB-level path (catches stray open logs
+            // React state didn't know about), so it has to carry its own fix
+            // rather than relying on activeTask alone. Without it, a task
+            // auto-stopped by starting a different one kept reading
+            // "in_progress" forever (Phase 1, Toni's call, 2026-11-02).
+            const demotedIds = new Set(
+              openLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
+            );
+            for (const assignedTaskId of demotedIds) {
+              void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
+                setWidgetRefetchCount((c) => c + 1)
+              );
+            }
           }
         }
         setActiveTask(null);
@@ -2873,6 +2946,15 @@ export default function DashboardPage() {
       setShowLivePrompt(false);
       setLiveSessionData(null);
       setPendingFormData(null);
+      // The task card the VA clicked Start on already flipped to "In
+      // Progress" optimistically (AssignedTasksWidget's handlePlay, on
+      // click, before it's known whether a live session elsewhere will
+      // intervene) — Rejoin means that task was never actually started, so
+      // without this the card is left showing a status the database never
+      // had. A refetch clears the stale optimistic flag and re-reads the
+      // real (on_queue) status. Found live-testing the wizard retirement,
+      // 2026-11-02.
+      setWidgetRefetchCount((c) => c + 1);
     },
     [userId, supabase, session, sessionState, refreshSession]
   );
@@ -3040,18 +3122,6 @@ export default function DashboardPage() {
     setCloseOldStep("screenshot");
   }, []);
 
-  /**
-   * Is the thing currently running the person's own time rather than work?
-   *
-   * Personal time and breaks have no status to set and no memo to write, so
-   * switching away from one should not open the close-old-task wizard. Clocking
-   * out still does: that closes the working day, not a coffee.
-   */
-  const activeIsOwnTime = useCallback(() => {
-    const category = (activeTask?.category ?? "").toLowerCase();
-    return Boolean(activeTask?.isBreak) || category === "personal" || category === "break";
-  }, [activeTask]);
-
   // Called from TaskEntryForm when Start Task is clicked
   const handleCheckAndStartTask = useCallback(
     async (formData: TaskFormData) => {
@@ -3170,54 +3240,15 @@ export default function DashboardPage() {
       pendingAssignedTaskIdRef.current = task.assigned_tasks.id;
     }
 
-    if (activeTask && activeIsOwnTime()) {
-      // Leaving personal time or a break: nothing to report, just start the task.
-      handleCheckAndStartTask(formData);
-      return;
-    }
-
-    if (activeTask) {
-      // Build a TimeLog shape from the current active task so the wizard can
-      // display it and save memos/status before starting the assigned task.
-      const taskAsLog: TimeLog = {
-        id: parseInt(activeTask.logId, 10),
-        user_id: userId!,
-        username: profile?.username || "",
-        full_name: profile?.full_name || "",
-        department: profile?.department || null,
-        position: profile?.position || null,
-        task_name: activeTask.task_name,
-        category: activeTask.category,
-        project: activeTask.project || null,
-        account: activeTask.account || null,
-        client_name: activeTask.client_name || null,
-        start_time: activeTask.start_time,
-        end_time: null,
-        duration_ms: activeTask.start_time
-          ? Date.now() - new Date(activeTask.start_time).getTime()
-          : 0,
-        billable: true,
-        client_memo: activeTask.client_memo || null,
-        internal_memo: activeTask.internal_memo || null,
-        is_manual: false,
-        form_fill_ms: 0,
-        progress: null,
-        billing_type: activeTask.billing_type || "hourly",
-        task_rate: activeTask.task_rate ?? null,
-        manual_status: null,
-        session_date: null,
-        created_at: activeTask.start_time,
-        deleted_at: null,
-      };
-      setLiveSessionData(taskAsLog);
-      setCloseOldClientMemo(taskAsLog.client_memo || "");
-      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
-      setPendingFormData(formData);
-      setCloseOldStep("details");
-    } else {
-      handleCheckAndStartTask(formData);
-    }
-  }, [activeTask, activeIsOwnTime, userId, profile, handleCheckAndStartTask, accountClientMap]);
+    // Starting a task while another is running just switches, silently — no
+    // forced wizard, same as Stop already is. handleCheckAndStartTask already
+    // routes an existing activeTask through startTask(), whose own close
+    // sweep stops and correctly demotes whatever was running (Phase 1,
+    // Toni's call, 2026-11-02). The old wizard-gate branch that used to run
+    // here is gone; the wizard component itself stays for the unrelated
+    // live-session-rejoin flow (handleStartNewFromLivePrompt), untouched.
+    handleCheckAndStartTask(formData);
+  }, [handleCheckAndStartTask, accountClientMap]);
 
   // ─── To-Do Play ─────────────────────────────────────────────
   // Same close-old-task-wizard-then-start flow as handlePlayAssignedTask —
@@ -3246,52 +3277,10 @@ export default function DashboardPage() {
     pendingAssignedTaskIdRef.current = task.assigned_tasks.id;
     pendingTodoLabelRef.current = todoLabel(todo.sort_order);
 
-    if (activeTask && activeIsOwnTime()) {
-      // Leaving personal time or a break: nothing to report, just start it.
-      handleCheckAndStartTask(formData);
-      return;
-    }
-
-    if (activeTask) {
-      const taskAsLog: TimeLog = {
-        id: parseInt(activeTask.logId, 10),
-        user_id: userId!,
-        username: profile?.username || "",
-        full_name: profile?.full_name || "",
-        department: profile?.department || null,
-        position: profile?.position || null,
-        task_name: activeTask.task_name,
-        category: activeTask.category,
-        project: activeTask.project || null,
-        account: activeTask.account || null,
-        client_name: activeTask.client_name || null,
-        start_time: activeTask.start_time,
-        end_time: null,
-        duration_ms: activeTask.start_time
-          ? Date.now() - new Date(activeTask.start_time).getTime()
-          : 0,
-        billable: true,
-        client_memo: activeTask.client_memo || null,
-        internal_memo: activeTask.internal_memo || null,
-        is_manual: false,
-        form_fill_ms: 0,
-        progress: null,
-        billing_type: activeTask.billing_type || "hourly",
-        task_rate: activeTask.task_rate ?? null,
-        manual_status: null,
-        session_date: null,
-        created_at: activeTask.start_time,
-        deleted_at: null,
-      };
-      setLiveSessionData(taskAsLog);
-      setCloseOldClientMemo(taskAsLog.client_memo || "");
-      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
-      setPendingFormData(formData);
-      setCloseOldStep("details");
-    } else {
-      handleCheckAndStartTask(formData);
-    }
-  }, [activeTask, activeIsOwnTime, userId, profile, handleCheckAndStartTask, accountClientMap]);
+    // Same silent switch as handlePlayAssignedTask — no forced wizard
+    // (Phase 1/2, Toni's call, 2026-11-02).
+    handleCheckAndStartTask(formData);
+  }, [handleCheckAndStartTask, accountClientMap]);
 
   // Submitting the assigned task the VA is currently clocked into should hand
   // them straight to the next thing — but the clock and screen monitoring for
@@ -3786,6 +3775,7 @@ export default function DashboardPage() {
                 assignedKey={claimRefreshKey}
                 claimRefreshKey={claimRefreshKey}
                 onStartTask={handleCheckAndStartTask}
+                onStopActiveTask={stopCurrentTask}
                 role={role}
                 activeTaskClientMemo={activeTask?.client_memo || ""}
               />
@@ -4166,6 +4156,46 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* ─── Clock Out gate (Phase 3, Toni's call, 2026-11-02) ─── */}
+      {clockOutBlockedTasks && clockOutBlockedTasks.length > 0 && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-lg mx-4">
+            <div className="py-4 px-5 border-b border-parchment">
+              <h3 className="text-sm font-bold text-espresso">
+                Finish These Before Clocking Out
+              </h3>
+              <p className="mt-1 text-xs text-stone">
+                {clockOutBlockedTasks.length === 1
+                  ? "This task is still running:"
+                  : `${clockOutBlockedTasks.length} tasks are still running:`}{" "}
+                Stop or Submit each one, then try Clock Out again.
+              </p>
+            </div>
+            <div className="p-5 space-y-2">
+              {clockOutBlockedTasks.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-center gap-2 py-2 px-3 rounded-lg border border-sand bg-cream/40"
+                >
+                  <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200">
+                    In Progress
+                  </span>
+                  <span className="text-[13px] font-semibold text-espresso">{t.task_name}</span>
+                </div>
+              ))}
+            </div>
+            <div className="py-3 px-5 border-t border-parchment flex justify-end">
+              <button
+                onClick={() => setClockOutBlockedTasks(null)}
+                className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors"
+              >
+                Got It
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ─── Close Task Before Clock Out Modal ─── */}
       {showClockOutModal && activeTask && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
@@ -4486,6 +4516,7 @@ export default function DashboardPage() {
                       setShowNextActivityModal(false);
                       handlePlayTodo(task, todo);
                     }}
+                    onStopActiveTask={stopCurrentTask}
                     orgTimezone={orgTimezone}
                     isAdmin={hasBroadAdminAccess({ role })}
                     refetchCount={widgetRefetchCount}

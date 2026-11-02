@@ -26,6 +26,16 @@ interface TasksPanelProps {
   onSelect: (task: VAAssignedTask) => void;
   startingId: number | null;
   onStart: (task: VAAssignedTask) => void;
+  /** Real Stop — halts billing for this task without starting anything else
+   *  (Phase 1/4, Toni's call, 2026-11-02; matches web's AssignedTasksWidget). */
+  stoppingId: number | null;
+  onStop: (task: VAAssignedTask) => void;
+  /** Gates the Stop button to only the task that's genuinely the session's
+   *  active one — a task's "in_progress" status badge can be stale (today's
+   *  Clock Out gate bug showed exactly that), so Stop only shows where it's
+   *  actually backed by a running timer. Matches web's
+   *  activeAssignedTaskId === detail.id check. */
+  activeAssignedTaskId: number | null;
   onSubmit: (task: VAAssignedTask) => void;
   onReorder: (source: VAAssignedTask, target: VAAssignedTask) => void;
   /** Skip the outer card chrome — for embedding inside TaskWidgetsTabs,
@@ -60,6 +70,9 @@ export default function TasksPanel({
   onSelect,
   startingId,
   onStart,
+  stoppingId,
+  onStop,
+  activeAssignedTaskId,
   onSubmit,
   onReorder,
   bare = false,
@@ -183,28 +196,37 @@ export default function TasksPanel({
                       </button>
                     )}
 
-                    {task.status === "on_queue" && (
-                      <div className="mt-1.5">
-                        <button
-                          onClick={() => onStart(task)}
-                          disabled={isStarting || isFixedPay}
-                          title={
-                            isFixedPay
-                              ? "Fixed-pay tasks aren't supported here yet — start from the web app."
-                              : undefined
-                          }
-                          className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sage text-white hover:bg-sage/90 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                            <polygon points="5,3 19,12 5,21" />
-                          </svg>
-                          {isStarting ? "Starting..." : "Start"}
-                        </button>
-                      </div>
-                    )}
-
-                    {task.status === "in_progress" && (
-                      <div className="mt-1.5">
+                    {(task.status === "on_queue" || task.status === "in_progress") && (
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        {task.status === "on_queue" && (
+                          <button
+                            onClick={() => onStart(task)}
+                            disabled={isStarting || isFixedPay}
+                            title={
+                              isFixedPay
+                                ? "Fixed-pay tasks aren't supported here yet — start from the web app."
+                                : undefined
+                            }
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sage text-white hover:bg-sage/90 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                              <polygon points="5,3 19,12 5,21" />
+                            </svg>
+                            {isStarting ? "Starting..." : "Start"}
+                          </button>
+                        )}
+                        {task.status === "in_progress" && activeAssignedTaskId === detail.id && (
+                          <button
+                            onClick={() => onStop(task)}
+                            disabled={stoppingId === task.id}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-terracotta/90 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                              <rect x="5" y="5" width="14" height="14" />
+                            </svg>
+                            {stoppingId === task.id ? "Stopping..." : "Stop"}
+                          </button>
+                        )}
                         <button
                           onClick={() => onSubmit(task)}
                           className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sky-500 text-white hover:bg-sky-600 cursor-pointer transition-colors"

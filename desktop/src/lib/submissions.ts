@@ -107,7 +107,15 @@ export interface SubmitWorkResult {
 /** Saves the submission row once every attachment is already in storage. */
 export async function postSubmission(
   assignedTaskId: number,
-  params: { message?: string; link?: string; attachments: PendingAttachment[] }
+  params: {
+    message?: string;
+    link?: string;
+    attachments: PendingAttachment[];
+    /** The VA's In Progress / Completed call (Phase 2/4, Toni's call,
+     *  2026-11-02) — mirrors web's SubmitWorkModal exactly. */
+    progressStatus?: "in_progress" | "completed";
+    reviewRequested?: boolean;
+  }
 ): Promise<SubmitWorkResult> {
   const session = await ensureAuth();
   if (!session) return { ok: false, error: "Not signed in." };
@@ -123,6 +131,8 @@ export async function postSubmission(
         message: params.message || undefined,
         link: params.link || undefined,
         attachments: params.attachments,
+        progress_status: params.progressStatus ?? "completed",
+        review_requested: params.progressStatus === "in_progress" && params.reviewRequested === true,
       }),
     });
     const data = await res.json().catch(() => ({}));

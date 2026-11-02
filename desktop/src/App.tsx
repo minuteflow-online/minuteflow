@@ -44,6 +44,7 @@ export default function App() {
   const [tasksLoading, setTasksLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<VAAssignedTask | null>(null);
   const [startingId, setStartingId] = useState<number | null>(null);
+  const [stoppingId, setStoppingId] = useState<number | null>(null);
   const [playingTodoId, setPlayingTodoId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
   // The task that was active right before Break — held in local state the
@@ -285,14 +286,33 @@ export default function App() {
   // Same rule as web: with a task running, Clock Out opens the "Close Active
   // Task" wizard (status + memo + mood/day rating); with nothing running it
   // clocks out straight away.
+  // Silent now, same as web (Phase 2, Toni's call, 2026-11-02) — no forced
+  // "close this task first" popup. Instead, a narrow Clock Out gate (Phase
+  // 3): block only if a task genuinely has an open time_log right now, the
+  // one signal that can't go stale the way assigned_task_assignees.status
+  // can (web's own gate build caught that status drifting stuck on
+  // "in_progress" with nothing actually running behind it — see
+  // closeOpenLogs's comment). A plain alert, matching this app's existing
+  // error-dialog convention, rather than porting web's own popup component.
   const handleClockOut = useCallback(async () => {
     if (!userId || actionPending) return;
-    if (sessionRow?.active_task?.logId) {
-      setShowClockOutModal(true);
-      return;
+    try {
+      const openLogs = await auth.query<{ task_name: string }[]>("time_logs", {
+        filters: `user_id=eq.${userId}&end_time=is.null&assigned_task_id=not.is.null&select=task_name`,
+      });
+      if (openLogs.length > 0) {
+        const names = Array.from(new Set(openLogs.map((l) => l.task_name)));
+        alert(
+          `Finish these before clocking out:\n\n${names.map((n) => `• ${n}`).join("\n")}\n\nStop or Submit each one, then try Clock Out again.`
+        );
+        return;
+      }
+    } catch {
+      // Best-effort check — if it fails, fall through to clocking out rather
+      // than trapping the VA over a network hiccup on the gate itself.
     }
     await performClockOut();
-  }, [userId, actionPending, sessionRow, performClockOut]);
+  }, [userId, actionPending, performClockOut]);
 
   // Break: real close-and-reopen (unpaid Break log, previous task
   // snapshotted for End Break) — it used to only flip a display flag and
@@ -420,6 +440,34 @@ export default function App() {
       }
     },
     [userId, profile, sessionRow, orgTimezone, startingId, loadTasks]
+  );
+
+  // Real Stop — only acts on the task that's actually the session's active
+  // one right now, same gating web's Stop button uses (activeAssignedTaskId
+  // === detail.id), rather than trusting the list's "in_progress" badge
+  // alone — that badge can be stale (Phase 1/4, Toni's call, 2026-11-02; see
+  // the Clock Out gate's own comment for why trusting status alone is risky).
+  const handleStop = useCallback(
+    async (task: VAAssignedTask) => {
+      if (!userId || stoppingId != null) return;
+      if (sessionRow?.active_task?.assignedTaskId !== task.assigned_tasks.id) {
+        alert("That task isn't the one currently running — refresh to see its real status.");
+        return;
+      }
+      setStoppingId(task.id);
+      try {
+        const result = await clock.stopCurrentTask(userId, sessionRow);
+        if (!result.ok) {
+          alert(result.error);
+          return;
+        }
+        if (result.session) setSessionRow(result.session);
+        await loadTasks(userId);
+      } finally {
+        setStoppingId(null);
+      }
+    },
+    [userId, sessionRow, stoppingId, loadTasks]
   );
 
   // Play a specific to-do: mirrors the dashboard's handlePlayTodo. Always
@@ -668,6 +716,9 @@ export default function App() {
             onSelect={setSelectedTask}
             startingId={startingId}
             onStart={handleStart}
+            stoppingId={stoppingId}
+            onStop={handleStop}
+            activeAssignedTaskId={sessionRow?.active_task?.assignedTaskId ?? null}
             onSubmit={setSubmitTarget}
             onReorder={handleReorder}
             hasActiveTask={Boolean(sessionRow?.active_task?.logId && !isOnBreak(sessionRow.active_task))}

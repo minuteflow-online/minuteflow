@@ -265,6 +265,16 @@ export async function POST(request: Request, { params }: RouteContext) {
   }> = [];
   /** A revision may carry a new deadline for the rework. */
   let dueAt: string | null = null;
+  /**
+   * The VA's own call on a "submission": still working ("in_progress", stays
+   * on the dashboard) or done ("completed", same as every submission before
+   * this). Defaults to "completed" so an older caller (desktop app, a stray
+   * script) that never sends this keeps behaving exactly as it always has.
+   */
+  let progressStatus: "in_progress" | "completed" = "completed";
+  /** Only meaningful on an in_progress submission — the VA's own escape
+   *  hatch asking for Toni's eyes on this one instead of auto-approving. */
+  let reviewRequested = false;
 
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
@@ -279,12 +289,16 @@ export async function POST(request: Request, { params }: RouteContext) {
     const rawType = String(formData.get("message_type") ?? "submission");
     messageType = rawType as SubmissionMessageType;
     files = formData.getAll("file").filter((entry): entry is File => entry instanceof File);
+    if (String(formData.get("progress_status") ?? "") === "in_progress") progressStatus = "in_progress";
+    reviewRequested = String(formData.get("review_requested") ?? "") === "true";
   } else {
     const body = await request.json().catch(() => ({}));
     dueAt = typeof body.due_at === "string" && body.due_at ? body.due_at : null;
     message = String(body.message ?? "").trim();
     link = String(body.link ?? "").trim();
     messageType = (body.message_type ?? "submission") as SubmissionMessageType;
+    if (body.progress_status === "in_progress") progressStatus = "in_progress";
+    reviewRequested = body.review_requested === true;
 
     // Only paths under this task's own folder — the upload-url route is what
     // hands those out, and a caller must not be able to claim someone else's
@@ -373,6 +387,9 @@ export async function POST(request: Request, { params }: RouteContext) {
       user_id: user.id,
       message_type: messageType,
       due_at: dueAt,
+      ...(messageType === "submission"
+        ? { progress_status: progressStatus, review_requested: progressStatus === "in_progress" && reviewRequested }
+        : {}),
       content: submissionSummary({
         message,
         link,
@@ -454,6 +471,34 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 
+  // Auto-attach this task's own screenshots to the submission — a glanceable
+  // record of what was happening while it ran, with no extra step for the
+  // VA. Screenshots stay in Google Drive (the hard rule); this only adds a
+  // pointer, the same way task_screenshots already links to time_logs via
+  // log_id. Scoped to screenshots not already claimed by an earlier
+  // submission on this task (submission_id is null), so a second round only
+  // picks up what's new since then. Best-effort: a screenshot that fails to
+  // link costs nothing the submission itself doesn't already have (Phase 3,
+  // Toni's call, 2026-11-02).
+  if (messageType === "submission") {
+    try {
+      const { data: taskLogs } = await admin
+        .from("time_logs")
+        .select("id")
+        .eq("assigned_task_id", id);
+      const logIds = (taskLogs ?? []).map((l) => l.id as number);
+      if (logIds.length > 0) {
+        await admin
+          .from("task_screenshots")
+          .update({ submission_id: submission.id })
+          .in("log_id", logIds)
+          .is("submission_id", null);
+      }
+    } catch (err) {
+      console.error("submission screenshot linking failed:", err);
+    }
+  }
+
   // ── Auto-outcome ─────────────────────────────────────────────────────────
   // Some submissions never need a human decision:
   //   * Communication / Planning / Collaboration work is logged, not reviewed
@@ -472,7 +517,34 @@ export async function POST(request: Request, { params }: RouteContext) {
   // setAssignedTaskStatus, keeping one status-write path.
   let autoStatus: string | null = null;
 
-  if (messageType === "submission" && task.review_required !== true) {
+  // An in_progress submission is a status report, not a handoff — Toni's
+  // call (2026-11-02): the dashboard holds onto the task either way,
+  // regardless of whether review was requested. autoStatus = "on_queue" in
+  // both branches below keeps it inside AssignedTasksWidget's
+  // VA_VISIBLE_STATUSES (which only hides "submitted"/"approved"/"completed"
+  // etc. — "on_queue" stays visible and startable). What differs between the
+  // two branches is only whether Toni sees it in her review queue: with no
+  // companion approval row, the submission falls through to the ordinary
+  // "awaiting" state (src/app/api/submissions/route.ts's reviewState), same
+  // as any other unreviewed submission; with one, it reads "approved" and
+  // drops out of her queue, same companion-approval-row pattern the
+  // review_required === false branch below already uses. Checked first and
+  // unconditionally — unlike the category/review_required rule below, this
+  // one isn't about whether the task itself needs review, it's about what
+  // the VA just reported.
+  if (messageType === "submission" && progressStatus === "in_progress") {
+    autoStatus = "on_queue";
+    if (!reviewRequested) {
+      await admin.from("task_submissions").insert({
+        assigned_task_id: Number(id),
+        va_task_assignment_id: null,
+        user_id: user.id,
+        message_type: "approval",
+        content: "Auto approved — in-progress update, no review requested",
+        submission_comment: "Auto approved — in-progress update, no review requested",
+      });
+    }
+  } else if (messageType === "submission" && task.review_required !== true) {
     // Reuses the row fetched for the existence check above. The previous
     // version issued a second lookup and ignored its error, so any failure
     // there silently skipped the whole auto-outcome — which is exactly how
@@ -491,6 +563,15 @@ export async function POST(request: Request, { params }: RouteContext) {
       });
     }
   }
+
+  // autoStatus alone can't tell the Telegram block below whether a human
+  // decision is still pending: the in_progress + review_requested branch
+  // above sets autoStatus = "on_queue" (so the dashboard still holds the
+  // task) even though nobody has approved anything yet. This is the one
+  // case where autoStatus being set doesn't mean the submission is settled.
+  const pendingReview =
+    messageType === "submission" &&
+    (autoStatus === null || (progressStatus === "in_progress" && reviewRequested));
 
   // Write the auto-outcome status here rather than leaving it to the caller.
   // The browser still moves the status for a normal submission, but an auto
@@ -679,12 +760,15 @@ ${esc(snippet)}` : ""}`,
     const who = prof?.full_name || prof?.username || "A VA";
     const where = [task.account, task.project].filter(Boolean).join(" / ");
 
-    const outcome =
-      autoStatus === "approved"
-        ? "Auto approved — no review needed"
-        : autoStatus === "completed"
-          ? "Logged — completes on submit"
-          : "Waiting for review";
+    const outcome = pendingReview
+      ? progressStatus === "in_progress"
+        ? "In progress — review requested"
+        : "Waiting for review"
+      : progressStatus === "in_progress"
+        ? "In progress — auto approved, no review needed"
+        : autoStatus === "approved"
+          ? "Auto approved — no review needed"
+          : "Logged — completes on submit";
 
     const lines = [
       `📤 <b>New submission</b> from ${mention(who, prof?.telegram_chat_id)}`,
@@ -708,8 +792,11 @@ ${esc(snippet)}` : ""}`,
 
     // Decide from the chat. Only offered where a decision is still open —
     // auto-approved work has already closed, and putting an Approve link on it
-    // would invite a tap that does nothing.
-    if (!autoStatus) {
+    // would invite a tap that does nothing. pendingReview rather than a bare
+    // !autoStatus check: an in_progress + review_requested submission sets
+    // autoStatus = "on_queue" (so the dashboard keeps the task) but still
+    // genuinely needs a decision.
+    if (pendingReview) {
       const links = reviewLinks(Number(id));
       lines.push(
         "",

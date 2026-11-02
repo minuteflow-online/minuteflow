@@ -154,6 +154,49 @@ async function loadAttachments(
 }
 
 /**
+ * Screenshots auto-linked to a submission (Phase 3, Toni's call,
+ * 2026-11-02) — shaped as TaskSubmissionAttachment so they can ride in the
+ * same `attachments` array the gallery already renders, right alongside
+ * whatever was attached by hand. No signed URL needed: screenshots live in
+ * Google Drive, not Supabase Storage, and /api/drive-image already serves
+ * them directly from drive_file_id (same route ActivityLog's thumbnails use).
+ */
+async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
+  const bySubmission = new Map<number, Array<Record<string, unknown>>>();
+  if (submissionIds.length === 0) return bySubmission;
+
+  const idChunks: number[][] = [];
+  for (let i = 0; i < submissionIds.length; i += 100) idChunks.push(submissionIds.slice(i, i + 100));
+  const rows = (
+    await Promise.all(
+      idChunks.map((ids) =>
+        admin
+          .from("task_screenshots")
+          .select("id, submission_id, filename, drive_file_id")
+          .in("submission_id", ids)
+          .not("drive_file_id", "is", null)
+      )
+    )
+  ).flatMap((r) => r.data ?? []);
+
+  for (const s of rows) {
+    const list = bySubmission.get(s.submission_id as number) ?? [];
+    list.push({
+      // Negative, so it can never collide with a real assigned_task_attachments
+      // id when both ride in the same array (that table's ids only ever go up).
+      id: -(s.id as number),
+      filename: s.filename || "screenshot.png",
+      storage_path: "",
+      file_size: null,
+      mime_type: "image/png",
+      url: `/api/drive-image?id=${s.drive_file_id}`,
+    });
+    bySubmission.set(s.submission_id as number, list);
+  }
+  return bySubmission;
+}
+
+/**
  * Time spent per revision round, and where each task currently stands.
  *
  * A log belongs to round N when N revisions had been issued before it
@@ -557,7 +600,7 @@ export async function GET(request: Request) {
     let query = admin
       .from("task_submissions")
       .select(
-        "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, " +
+        "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, progress_status, review_requested, " +
           "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
           "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
       )
@@ -713,8 +756,9 @@ export async function GET(request: Request) {
   // stacking, not any single slow query, was the real source of "submissions
   // takes a while to load": roughly half a dozen sequential Supabase
   // round-trips add up fast even when each one individually is fine.
-  const [filesBySubmission, roundData, expected, unreadByTask] = await Promise.all([
+  const [filesBySubmission, screenshotsBySubmission, roundData, expected, unreadByTask] = await Promise.all([
     loadAttachments(admin, submissionIds, rows),
+    loadScreenshots(admin, submissionIds),
     loadRoundData(admin, taskIds, completedTasks),
     expectedPromise,
     loadUnreadByTask(admin, rows, user.id),
@@ -727,7 +771,9 @@ export async function GET(request: Request) {
     void _omit;
     return {
       ...rest,
-      attachments: filesBySubmission.get(row.id) ?? [],
+      // Screenshots first — they're what was actually happening while the
+      // task ran, so they lead the gallery; anything hand-attached follows.
+      attachments: [...(screenshotsBySubmission.get(row.id) ?? []), ...(filesBySubmission.get(row.id) ?? [])],
       task: task
         ? {
             id: task.id,
