@@ -723,11 +723,11 @@ export default function DashboardPage() {
   }, [userId]);
 
   // Follow another device changing the task this tab is showing. The desktop
-  // app's Pause/Resume (and Break) close the running log and open a new one, so
-  // the card here kept pointing at the old, already-closed log: its timer
-  // counted straight through the pause, and the next stopCurrentTask() on this
-  // tab rewrote that old log's end_time to "now" — overlapping the Pause and
-  // the resumed log and billing those minutes twice. Deliberately narrow: only
+  // app's Break closes the running log and opens a new one, so the card here
+  // kept pointing at the old, already-closed log: its timer counted straight
+  // through the break, and the next stopCurrentTask() on this tab rewrote
+  // that old log's end_time to "now" — overlapping the break and the resumed
+  // log and billing those minutes twice. Deliberately narrow: only
   // acts when the session names a different log than the one this tab shows
   // (a new task appears here too, e.g. after a desktop Resume, so the card
   // comes back), and never while this tab is mid-action (its own writes
@@ -747,10 +747,10 @@ export default function DashboardPage() {
           const current = activeTaskRef.current;
           const next = row.active_task as ActiveTask | null;
           if (!row.clocked_in || !next?.logId || next.logId === current?.logId) return;
-          // Nothing showing and the new state is a break/pause: nothing to clear.
-          if (!current && (next.isBreak || next.isPause)) return;
+          // Nothing showing and the new state is a break: nothing to clear.
+          if (!current && next.isBreak) return;
           setSession((prev) => (prev ? { ...prev, active_task: next } : prev));
-          if (next.isBreak || next.isPause) {
+          if (next.isBreak) {
             setActiveTask(null);
           } else {
             setActiveTask(next);

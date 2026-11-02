@@ -8,7 +8,7 @@
 // that file for the still-open questions on revision_needed / on_queue / paid /
 // cancelled placement.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BOARD_COLUMNS, boardStatus, columnForStatus, COLUMN_ACCENT_TEXT } from "@/lib/subtaskStatusColumns";
 import { assigneeNames } from "@/lib/subtaskDisplay";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
@@ -29,6 +29,123 @@ function isOverdue(sub: SubtaskRow, today: string): boolean {
   return sub.due_date < today;
 }
 
+/**
+ * What a card can lead with. Task names repeat across a whole board ("Promo
+ * Processing" ×20), so the Client Detail memo is often the line that actually
+ * says what the task is. Mirrors the Title choice on the Submissions page.
+ */
+const TITLE_FIELDS: { value: string; label: string; get: (sub: SubtaskRow) => string | null | undefined }[] = [
+  { value: "task", label: "Task name", get: (sub) => sub.task_name },
+  { value: "client_detail", label: "Client detail", get: (sub) => sub.task_detail },
+  { value: "notes", label: "Notes", get: (sub) => sub.task_notes },
+  { value: "instructions", label: "Instructions", get: (sub) => sub.instructions },
+  { value: "account", label: "Account", get: (sub) => sub.account },
+  { value: "project", label: "Objective / Operation", get: (sub) => sub.project ?? sub.category },
+];
+/**
+ * The lines a card can show besides its title, each switchable. Client detail
+ * and notes start hidden so the default card looks the way it always has.
+ */
+const CARD_FIELDS = [
+  { key: "status", label: "Status badge" },
+  { key: "task", label: "Task name" },
+  { key: "assignees", label: "Assigned VA" },
+  { key: "account", label: "Account" },
+  { key: "project", label: "Objective / Operation" },
+  { key: "client_detail", label: "Client detail" },
+  { key: "notes", label: "Notes" },
+  { key: "due_date", label: "Due date" },
+  { key: "due_countdown", label: "Days overdue / until due" },
+] as const;
+const DEFAULT_HIDDEN = ["client_detail", "notes"];
+const CARD_PREFS_ID = "subtask-board-card";
+
+type CardPrefs = { title: string; hidden: string[] };
+const DEFAULT_CARD_PREFS: CardPrefs = { title: "task", hidden: DEFAULT_HIDDEN };
+
+/** A stored payload with no title means "no choice made" — see resetMine. */
+function readCardPrefs(raw: unknown): CardPrefs | null {
+  const p = raw as { title?: unknown; hidden?: unknown } | null;
+  if (!p || typeof p.title !== "string") return null;
+  return {
+    title: TITLE_FIELDS.some((f) => f.value === p.title) ? p.title : "task",
+    hidden: Array.isArray(p.hidden) ? p.hidden.filter((h): h is string => typeof h === "string") : DEFAULT_HIDDEN,
+  };
+}
+
+/**
+ * The board's card layout: the person's own choice if they made one,
+ * otherwise the sitewide default an admin set, otherwise DEFAULT_CARD_PREFS.
+ * Both live in /api/table-prefs so they follow the person across devices.
+ */
+function useBoardCardPrefs(userId: string | null) {
+  const [personal, setPersonal] = useState<CardPrefs | null>(null);
+  const [sitewide, setSitewide] = useState<CardPrefs | null>(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    const read = (scope: string) =>
+      fetch(`/api/table-prefs?tableId=${CARD_PREFS_ID}${scope}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => readCardPrefs(d?.prefs))
+        .catch(() => null);
+    Promise.all([read(""), read("&scope=sitewide")]).then(([mine, everyone]) => {
+      if (cancelled) return;
+      setPersonal(mine);
+      setSitewide(everyone);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const save = (prefs: CardPrefs | { title: null }, scope?: "sitewide") =>
+    fetch("/api/table-prefs", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tableId: CARD_PREFS_ID, prefs, ...(scope ? { scope } : {}) }),
+    }).catch(() => {
+      // Best-effort — the choice still applies for this visit.
+    });
+
+  const sitewidePrefs = sitewide ?? DEFAULT_CARD_PREFS;
+  const effective = personal ?? sitewidePrefs;
+  return {
+    prefs: effective,
+    sitewidePrefs,
+    hasPersonal: personal != null,
+    update: (patch: Partial<CardPrefs>, scope: "mine" | "sitewide") => {
+      if (scope === "sitewide") {
+        // Setting the default for everyone also drops the admin's own
+        // override, so what they just chose is what they see.
+        const next = { ...sitewidePrefs, ...patch };
+        setSitewide(next);
+        setPersonal(null);
+        save(next, "sitewide");
+        save({ title: null });
+      } else {
+        const next = { ...effective, ...patch };
+        setPersonal(next);
+        save(next);
+      }
+    },
+    resetMine: () => {
+      setPersonal(null);
+      save({ title: null });
+    },
+  };
+}
+
+/** Whole days from today to the due date (negative once it's passed). */
+function daysUntil(dueDate: string, today: string): number {
+  const toUtc = (d: string) => {
+    const [y, m, day] = d.slice(0, 10).split("-").map(Number);
+    return Date.UTC(y, m - 1, day);
+  };
+  return Math.round((toUtc(dueDate) - toUtc(today)) / 86_400_000);
+}
+
 interface SubtaskBoardViewProps {
   subtasks: SubtaskRow[];
   editingSubId: number | null;
@@ -39,6 +156,13 @@ interface SubtaskBoardViewProps {
   /** Persist a card moved by drag. The board only ever allows the one lifecycle-
    *  safe move (Approved → Completed), so this is the single transition it fires. */
   onMoveStatus?: (subtaskId: number, toStatus: string) => void;
+  /** Whose card choices to load and save. */
+  currentUserId: string;
+  /** Admins can also set the card layout for everyone. */
+  canSetSitewide?: boolean;
+  /** Full-screen state lives with the parent so the edit form can sit beside the board. */
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
 }
 
 // The one drag the board permits. Every other status still moves through the
@@ -58,7 +182,17 @@ export default function SubtaskBoardView({
   StatusBadge,
   activeProfiles,
   onMoveStatus,
+  currentUserId,
+  canSetSitewide = false,
+  expanded = false,
+  onToggleExpanded,
 }: SubtaskBoardViewProps) {
+  const cardPrefs = useBoardCardPrefs(currentUserId || null);
+  const titleDef = TITLE_FIELDS.find((f) => f.value === cardPrefs.prefs.title) ?? TITLE_FIELDS[0];
+  const shows = (key: string) => !cardPrefs.prefs.hidden.includes(key);
+  // Falls back to the task name when the chosen field is empty on this card,
+  // so no card ends up titled with nothing.
+  const cardTitle = (sub: SubtaskRow) => titleDef.get(sub)?.trim() || sub.task_name;
   // Per-column page index. The ONLY drag allowed is Approved → Completed (a card
   // approved by a reviewer is dragged to Completed, which persists everywhere);
   // every other status still moves through the dashboard flow, never by drag.
@@ -102,6 +236,34 @@ export default function SubtaskBoardView({
   }, [subtasks]);
 
   return (
+    <div className="space-y-2">
+    <div className="flex items-center justify-end gap-2">
+      <BoardCardPicker
+        prefs={cardPrefs.prefs}
+        sitewidePrefs={cardPrefs.sitewidePrefs}
+        hasPersonal={cardPrefs.hasPersonal}
+        canSetSitewide={canSetSitewide}
+        onUpdate={cardPrefs.update}
+        onResetMine={cardPrefs.resetMine}
+      />
+      {onToggleExpanded && (
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          title={expanded ? "Exit full screen (Esc)" : "Full screen"}
+          className="flex items-center gap-1.5 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none transition-colors hover:border-walnut"
+        >
+          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {expanded ? (
+              <path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6" />
+            ) : (
+              <path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6" />
+            )}
+          </svg>
+          {expanded ? "Exit full screen" : "Full screen"}
+        </button>
+      )}
+    </div>
     <div className="flex gap-4 items-start">
       {/* ── Subtasks reference list — collapsed by default, see referenceListOpen ── */}
       <div className={`shrink-0 space-y-2 ${referenceListOpen ? "w-56" : ""}`}>
@@ -134,7 +296,7 @@ export default function SubtaskBoardView({
                 }`}
               >
                 <span className="text-[12px] font-semibold text-espresso leading-tight truncate">
-                  {sub.task_name}
+                  {cardTitle(sub)}
                 </span>
                 <StatusBadge status={shownStatus(sub)} paidManually={sub.paid_manually ?? false} />
               </button>
@@ -201,26 +363,75 @@ export default function SubtaskBoardView({
                       className={`flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors ${isDraggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <span className="text-[13px] font-semibold text-espresso leading-tight">
-                          {sub.task_name}
+                        <span className="text-[13px] font-semibold text-espresso leading-tight line-clamp-3 whitespace-pre-wrap">
+                          {cardTitle(sub)}
                         </span>
-                        <StatusBadge status={shownStatus(sub)} paidManually={sub.paid_manually ?? false} />
+                        {shows("status") && (
+                          <StatusBadge status={shownStatus(sub)} paidManually={sub.paid_manually ?? false} />
+                        )}
                       </div>
-                      {(() => {
+                      {/* The task name is its own line only when something else
+                          is leading the card — never printed twice. */}
+                      {shows("task") && cardTitle(sub) !== sub.task_name && (
+                        <div className="text-[11px] font-semibold text-walnut">{sub.task_name}</div>
+                      )}
+                      {shows("assignees") && (() => {
                         const names = assigneeNames(sub.assigned_task_assignees, activeProfiles);
                         return names && <div className="text-[11px] text-stone/80">{names}</div>;
                       })()}
-                      <div className="flex items-center justify-between gap-2 text-[11px] text-stone/80">
-                        {/* Account AND project/category, like the list view shows both —
-                            not one OR the other, so this card can't show less than List View
-                            does for the same subtask. */}
-                        <span>{[sub.account, sub.project ?? sub.category].filter(Boolean).join(" · ")}</span>
-                        {sub.due_date && (
-                          <span className={isOverdue(sub, today) ? "font-semibold text-terracotta" : undefined}>
-                            Due: {formatDate(sub.due_date)}
-                          </span>
-                        )}
-                      </div>
+                      {shows("client_detail") && titleDef.value !== "client_detail" && sub.task_detail?.trim() && (
+                        <div className="text-[11px] text-walnut line-clamp-2 whitespace-pre-wrap">{sub.task_detail}</div>
+                      )}
+                      {shows("notes") && titleDef.value !== "notes" && sub.task_notes?.trim() && (
+                        <div className="text-[11px] text-stone/80 italic line-clamp-2 whitespace-pre-wrap">{sub.task_notes}</div>
+                      )}
+                      {(() => {
+                        // Account AND project/category, like the list view shows both —
+                        // each switchable now, and skipped when it's already the title.
+                        const place = [
+                          shows("account") && titleDef.value !== "account" ? sub.account : null,
+                          shows("project") && titleDef.value !== "project" ? sub.project ?? sub.category : null,
+                        ].filter(Boolean).join(" · ");
+                        // Countdown only while the task is still open — once it's
+                        // approved/completed, days left or late stop meaning anything.
+                        const days =
+                          shows("due_countdown") && sub.due_date && !RESOLVED_STATUSES.has(shownStatus(sub))
+                            ? daysUntil(sub.due_date, today)
+                            : null;
+                        const showDue = shows("due_date") && sub.due_date;
+                        if (!place && !showDue && days == null) return null;
+                        return (
+                          <div className="flex items-start justify-between gap-2 text-[11px] text-stone/80">
+                            <span>{place}</span>
+                            {(showDue || days != null) && (
+                              <span className="flex shrink-0 flex-col items-end text-right">
+                                {showDue && (
+                                  <span className={isOverdue(sub, today) ? "font-semibold text-terracotta" : undefined}>
+                                    Due: {formatDate(sub.due_date)}
+                                  </span>
+                                )}
+                                {days != null && (
+                                  <span
+                                    className={
+                                      days < 0
+                                        ? "font-semibold text-terracotta"
+                                        : days === 0
+                                          ? "font-semibold text-amber"
+                                          : "text-stone"
+                                    }
+                                  >
+                                    {days < 0
+                                      ? `${-days} day${days === -1 ? "" : "s"} overdue`
+                                      : days === 0
+                                        ? "Due today"
+                                        : `${days} day${days === 1 ? "" : "s"} left`}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                     );
                   })}
@@ -252,6 +463,149 @@ export default function SubtaskBoardView({
           })}
         </div>
       </div>
+    </div>
+    </div>
+  );
+}
+
+/**
+ * Same Fields dropdown as the Submissions page's CardFieldsPicker — Title plus
+ * "Also show" checkboxes — with a choice of who it applies to: just this
+ * person, or (admins only) everyone who hasn't picked their own.
+ */
+function BoardCardPicker({
+  prefs,
+  sitewidePrefs,
+  hasPersonal,
+  canSetSitewide,
+  onUpdate,
+  onResetMine,
+}: {
+  prefs: CardPrefs;
+  sitewidePrefs: CardPrefs;
+  hasPersonal: boolean;
+  canSetSitewide: boolean;
+  onUpdate: (patch: Partial<CardPrefs>, scope: "mine" | "sitewide") => void;
+  onResetMine: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState<"mine" | "sitewide">("mine");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  // While editing the sitewide default, the controls show that default rather
+  // than whatever this admin happens to be looking at.
+  const editing = scope === "sitewide" ? sitewidePrefs : prefs;
+  const toggle = (key: string) => {
+    const hidden = editing.hidden.includes(key)
+      ? editing.hidden.filter((h) => h !== key)
+      : [...editing.hidden, key];
+    onUpdate({ hidden }, scope);
+  };
+  const shown = CARD_FIELDS.length - CARD_FIELDS.filter((f) => prefs.hidden.includes(f.key)).length;
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none transition-colors hover:border-walnut"
+      >
+        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="3" width="7" height="18" rx="1" />
+          <rect x="14" y="3" width="7" height="18" rx="1" />
+        </svg>
+        Fields
+        <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
+          {shown}
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-9 z-30 w-60 rounded-lg border border-sand bg-white p-2 shadow-lg">
+          {canSetSitewide && (
+            <>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-walnut">
+                Apply to
+              </label>
+              {([
+                ["mine", "Just my view"],
+                ["sitewide", "Everyone (sitewide)"],
+              ] as const).map(([value, label]) => (
+                <label
+                  key={value}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12px] text-espresso hover:bg-parchment"
+                >
+                  <input
+                    type="radio"
+                    name="board-card-scope"
+                    checked={scope === value}
+                    onChange={() => setScope(value)}
+                    className="cursor-pointer accent-terracotta"
+                  />
+                  <span className="truncate">{label}</span>
+                </label>
+              ))}
+              <div className="my-1 border-t border-parchment" />
+            </>
+          )}
+
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-walnut">
+            Title
+          </label>
+          <select
+            value={editing.title}
+            onChange={(e) => onUpdate({ title: e.target.value }, scope)}
+            className="mb-2 w-full rounded-lg border border-sand bg-white px-2 py-1 text-[12px] text-espresso outline-none"
+          >
+            {TITLE_FIELDS.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+
+          <div className="my-1 border-t border-parchment" />
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-walnut">
+            Also show
+          </label>
+          {CARD_FIELDS.map((f) => (
+            <label
+              key={f.key}
+              className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12px] text-espresso hover:bg-parchment"
+            >
+              <input
+                type="checkbox"
+                checked={!editing.hidden.includes(f.key)}
+                onChange={() => toggle(f.key)}
+                className="cursor-pointer accent-terracotta"
+              />
+              <span className="truncate">{f.label}</span>
+            </label>
+          ))}
+
+          {hasPersonal && scope === "mine" && (
+            <>
+              <div className="my-1 border-t border-parchment" />
+              <button
+                type="button"
+                onClick={onResetMine}
+                className="px-1 text-[11px] font-semibold text-bark hover:text-espresso"
+              >
+                Use the sitewide layout instead
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -305,6 +305,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // space until someone actually wants the per-VA detail (per Toni).
   const [showVaProgress, setShowVaProgress] = useState(false);
   const [subtaskView, setSubtaskView] = useState<"list" | "board" | "checklist">("checklist");
+  // Board View full screen. Esc backs out, the same way it would close a modal.
+  const [boardExpanded, setBoardExpanded] = useState(false);
+  useEffect(() => {
+    if (!boardExpanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBoardExpanded(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [boardExpanded]);
   // "Add Subtask" form collapsed by default (Figma correction) — same
   // show-on-demand pattern as showDetails above.
   const [showAddSubtask, setShowAddSubtask] = useState(false);
@@ -1368,7 +1378,12 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
         )}
 
+        {/* Full screen: the board and its edit form move into one overlay, the
+            form docked on the right so clicking a card doesn't open it out of
+            sight behind the overlay. */}
         {subtaskView === "board" && (
+        <div className={boardExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6" : "space-y-3"}>
+          <div className={boardExpanded ? "flex-1 min-w-0 overflow-auto" : undefined}>
           <SubtaskBoardView
             subtasks={filteredListSubtasks}
             editingSubId={editingSubId}
@@ -1377,14 +1392,18 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             StatusBadge={StatusBadge}
             activeProfiles={activeProfiles}
             onMoveStatus={handleMoveSubtaskStatus}
+            currentUserId={currentUserId}
+            canSetSitewide={isAdmin}
+            expanded={boardExpanded}
+            onToggleExpanded={() => setBoardExpanded((v) => !v)}
           />
-        )}
+          </div>
 
-        {subtaskView === "board" && editingSubId != null && (() => {
+        {editingSubId != null && (() => {
           const sub = subtasks.find((s) => s.id === editingSubId);
           if (!sub) return null;
           return (
-            <div className="space-y-3 rounded-lg border border-sand bg-parchment p-3">
+            <div className={`space-y-3 rounded-lg border border-sand bg-parchment p-3 ${boardExpanded ? "w-[440px] shrink-0 overflow-y-auto" : ""}`}>
               <TaskEditor
                 // Sub id in the key — this is the one Board View edit
                 // instance (a fixed JSX position, not one per card, unlike
@@ -1471,6 +1490,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             </div>
           );
         })()}
+        </div>
+        )}
 
         {(subtaskView === "list" || subtaskView === "board") && visibleSubtasks.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-1 pb-1">

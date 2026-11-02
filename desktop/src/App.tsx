@@ -29,10 +29,6 @@ function isOnBreak(activeTask: clock.ActiveTask | null): boolean {
   return Boolean(activeTask.isBreak) || activeTask.category === "Personal";
 }
 
-function isPaused(activeTask: clock.ActiveTask | null): boolean {
-  return Boolean(activeTask?.isPause);
-}
-
 export default function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
@@ -50,14 +46,14 @@ export default function App() {
   const [startingId, setStartingId] = useState<number | null>(null);
   const [playingTodoId, setPlayingTodoId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
-  // The task that was active right before Pause — held in local state the
-  // same way the dashboard's preBreakTask is, so Resume can land straight
-  // back on it with no prompt (Toni's call). See clock.ts's startPause/
-  // endPause for why this can't just live on the session row instead.
-  const [pausedTask, setPausedTask] = useState<clock.ActiveTask | null>(null);
+  // The task that was active right before Break — held in local state the
+  // same way the dashboard's preBreakTask is, so End Break can land straight
+  // back on it with no prompt (Toni's call). See clock.ts's startBreak/
+  // endBreak for why this can't just live on the session row instead.
+  const [preBreakTask, setPreBreakTask] = useState<clock.ActiveTask | null>(null);
   // Quick Pick's "silently hold and message" — the task bumped aside by a
   // Message for Guidance/General Message click, offered back via a Resume
-  // banner. Same local-state-only limitation as pausedTask above (lost on
+  // banner. Same local-state-only limitation as preBreakTask above (lost on
   // an app restart): see clock.ts's startHoldAndMessage for why.
   const [heldTask, setHeldTask] = useState<clock.ActiveTask | null>(null);
 
@@ -98,7 +94,7 @@ export default function App() {
       const task = row.active_task;
       return {
         userId,
-        isOnBreak: isOnBreak(task) || isPaused(task),
+        isOnBreak: isOnBreak(task),
         activeLogId: task?.logId ? Number(task.logId) : null,
       };
     });
@@ -243,7 +239,7 @@ export default function App() {
     setSelectedTask(null);
     setTeamMembers([]);
     setTeamTimeLogs([]);
-    setPausedTask(null);
+    setPreBreakTask(null);
     setHeldTask(null);
   }, []);
 
@@ -274,7 +270,7 @@ export default function App() {
         }
         const result = await clock.clockOut(userId, orgTimezone, profile, sessionRow, wizard);
         if (result.session) setSessionRow(result.session);
-        setPausedTask(null);
+        setPreBreakTask(null);
         setHeldTask(null);
         setShowClockOutModal(false);
       } catch (err) {
@@ -298,19 +294,19 @@ export default function App() {
     await performClockOut();
   }, [userId, actionPending, sessionRow, performClockOut]);
 
-  // Break: same real close-and-reopen as Pause (unpaid Break log, previous
-  // task snapshotted for End Break) — it used to only flip a display flag and
+  // Break: real close-and-reopen (unpaid Break log, previous task
+  // snapshotted for End Break) — it used to only flip a display flag and
   // left the running task's log open and billable. Still no memo wizard.
   const handleStartBreak = useCallback(async () => {
     if (!userId || !profile || actionPending) return;
     setActionPending(true);
     try {
-      const result = await clock.startPause(userId, profile, sessionRow, orgTimezone, "Break");
+      const result = await clock.startBreak(userId, profile, sessionRow, orgTimezone);
       if (!result.ok) {
         alert(result.error);
         return;
       }
-      setPausedTask(result.resumeTask ?? null);
+      setPreBreakTask(result.resumeTask ?? null);
       if (result.session) setSessionRow(result.session);
     } catch (err) {
       alert(`Couldn't start your break: ${err instanceof Error ? err.message : "unknown error"}.`);
@@ -323,61 +319,19 @@ export default function App() {
     if (!userId || !profile || actionPending) return;
     setActionPending(true);
     try {
-      const result = await clock.endPause(userId, profile, pausedTask, sessionRow, orgTimezone);
+      const result = await clock.endBreak(userId, profile, preBreakTask, sessionRow, orgTimezone);
       if (!result.ok) {
         alert(result.error);
         return;
       }
       if (result.session) setSessionRow(result.session);
-      setPausedTask(null);
+      setPreBreakTask(null);
     } catch (err) {
       alert(`Couldn't end your break: ${err instanceof Error ? err.message : "unknown error"}.`);
     } finally {
       setActionPending(false);
     }
-  }, [userId, profile, pausedTask, sessionRow, orgTimezone, actionPending]);
-
-  // Pause: unpaid, like Break — unlike Break above, this one actually closes
-  // and reopens time_logs rather than just flipping a flag, since "unpaid"
-  // has to be a real payroll outcome here, not just a display label. See
-  // clock.ts's startPause for the full reasoning.
-  const handlePause = useCallback(async () => {
-    if (!userId || !profile || actionPending) return;
-    setActionPending(true);
-    try {
-      const result = await clock.startPause(userId, profile, sessionRow, orgTimezone);
-      if (!result.ok) {
-        alert(result.error);
-        return;
-      }
-      setPausedTask(result.resumeTask ?? null);
-      if (result.session) setSessionRow(result.session);
-    } catch (err) {
-      alert(`Couldn't pause: ${err instanceof Error ? err.message : "unknown error"}.`);
-    } finally {
-      setActionPending(false);
-    }
-  }, [userId, profile, sessionRow, orgTimezone, actionPending]);
-
-  // Resume: lands straight back on whatever was running before Pause, no
-  // prompt — Toni's explicit call.
-  const handleResume = useCallback(async () => {
-    if (!userId || !profile || actionPending) return;
-    setActionPending(true);
-    try {
-      const result = await clock.endPause(userId, profile, pausedTask, sessionRow, orgTimezone);
-      if (!result.ok) {
-        alert(result.error);
-        return;
-      }
-      if (result.session) setSessionRow(result.session);
-      setPausedTask(null);
-    } catch (err) {
-      alert(`Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`);
-    } finally {
-      setActionPending(false);
-    }
-  }, [userId, profile, pausedTask, sessionRow, orgTimezone, actionPending]);
+  }, [userId, profile, preBreakTask, sessionRow, orgTimezone, actionPending]);
 
   // Quick Pick: silently hold whatever's running and start a message task in
   // its place — mirrors the dashboard's handleAutoHoldAndStartMessage. No
@@ -579,11 +533,9 @@ export default function App() {
 
   const clockState: ClockState = !sessionRow?.clocked_in
     ? "idle"
-    : isPaused(sessionRow.active_task)
-      ? "paused"
-      : isOnBreak(sessionRow.active_task)
-        ? "on-break"
-        : "clocked-in";
+    : isOnBreak(sessionRow.active_task)
+      ? "on-break"
+      : "clocked-in";
 
   return (
     <div className="flex h-full flex-col bg-cream">
@@ -658,8 +610,6 @@ export default function App() {
                 onClockOut={handleClockOut}
                 onStartBreak={handleStartBreak}
                 onEndBreak={handleEndBreak}
-                onPause={handlePause}
-                onResume={handleResume}
               />
             </div>
             {/* Quick Pick — only once clocked in, same gate as web's dashboard */}
@@ -693,9 +643,7 @@ export default function App() {
             onStart={handleStart}
             onSubmit={setSubmitTarget}
             onReorder={handleReorder}
-            hasActiveTask={Boolean(
-              sessionRow?.active_task?.logId && !isOnBreak(sessionRow.active_task) && !isPaused(sessionRow.active_task)
-            )}
+            hasActiveTask={Boolean(sessionRow?.active_task?.logId && !isOnBreak(sessionRow.active_task))}
             actionPending={actionPending}
             onStartAdHoc={handleStartAdHoc}
           />
