@@ -545,11 +545,9 @@ export async function PATCH(request: Request) {
     await supabase.from("broadcast_recipients").insert(recipientInserts);
   }
 
-  // If transitioning to published, send emails
-  const wasPublished = current.status === "published";
-  const nowPublished = broadcast.status === "published";
-
-  if (!wasPublished && nowPublished) {
+  // Every save of a published broadcast emails its recipients, so editing and
+  // re-saving an already-published one sends it again.
+  if (broadcast.status === "published") {
     // Fetch recipients for this broadcast (may have just been updated above)
     const { data: recipientRows } = await supabase
       .from("broadcast_recipients")
