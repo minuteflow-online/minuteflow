@@ -28,6 +28,10 @@ interface TasksPanelProps {
   onStart: (task: VAAssignedTask) => void;
   onSubmit: (task: VAAssignedTask) => void;
   onReorder: (source: VAAssignedTask, target: VAAssignedTask) => void;
+  /** Skip the outer card chrome — for embedding inside TaskWidgetsTabs,
+   *  which already provides its own box and tab strip. Mirrors web's
+   *  AssignedTasksWidget `bare` prop. */
+  bare?: boolean;
 }
 
 function statusBadge(status: AssignedTaskStatus) {
@@ -58,15 +62,24 @@ export default function TasksPanel({
   onStart,
   onSubmit,
   onReorder,
+  bare = false,
 }: TasksPanelProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4 space-y-3 flex-1 min-h-0 flex flex-col">
-      <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">
-        Assigned{tasks.length > 0 ? ` (${tasks.length})` : ""}
-      </h3>
+    <div
+      className={
+        bare
+          ? "space-y-1.5 flex-1 min-h-0 flex flex-col"
+          : "rounded-xl border border-sand bg-white p-4 space-y-3 flex-1 min-h-0 flex flex-col"
+      }
+    >
+      {!bare && (
+        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">
+          Assigned{tasks.length > 0 ? ` (${tasks.length})` : ""}
+        </h3>
+      )}
 
       <div className="space-y-1.5 overflow-y-auto min-h-0">
         {loading ? (
