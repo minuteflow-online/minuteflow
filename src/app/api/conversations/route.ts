@@ -49,14 +49,18 @@ export async function GET(request: Request) {
   // Resolve member profile names.
   const memberIds = Array.from(new Set((allMembers ?? []).map((m) => m.user_id as string)));
   const nameById = new Map<string, string>();
+  const avatarById = new Map<string, string | null>();
   if (memberIds.length) {
     const { data: profs } = await supabase.from("profiles").select("id, full_name, username, avatar_url").in("id", memberIds);
-    for (const p of profs ?? []) nameById.set(p.id as string, (p.full_name as string) || (p.username as string) || "?");
+    for (const p of profs ?? []) {
+      nameById.set(p.id as string, (p.full_name as string) || (p.username as string) || "?");
+      avatarById.set(p.id as string, (p.avatar_url as string | null) ?? null);
+    }
   }
-  const membersByConv = new Map<string, { id: string; name: string }[]>();
+  const membersByConv = new Map<string, { id: string; name: string; avatar_url: string | null }[]>();
   for (const m of allMembers ?? []) {
     const arr = membersByConv.get(m.conversation_id as string) ?? [];
-    arr.push({ id: m.user_id as string, name: nameById.get(m.user_id as string) ?? "?" });
+    arr.push({ id: m.user_id as string, name: nameById.get(m.user_id as string) ?? "?", avatar_url: avatarById.get(m.user_id as string) ?? null });
     membersByConv.set(m.conversation_id as string, arr);
   }
 
