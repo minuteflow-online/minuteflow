@@ -106,6 +106,24 @@ function linkifyText(text: string, mentionNames: string[] = []): ReactNode {
   });
 }
 
+// A DM reply carries the message it answers as its opening line —
+// "> Name: words", then a blank line — rather than a reply_to column, so it
+// needs no schema change, reads naturally in the Telegram ping, and an older
+// client just shows the quote as plain text.
+const REPLY_QUOTE = /^> ([^:\n]{1,80}): ([^\n]*)\n\n?/;
+
+function splitReplyQuote(body: string): { quote: { name: string; text: string } | null; prefix: string; text: string } {
+  const m = body.match(REPLY_QUOTE);
+  if (!m) return { quote: null, prefix: "", text: body };
+  return { quote: { name: m[1], text: m[2] }, prefix: m[0], text: body.slice(m[0].length) };
+}
+
+function replyQuoteFor(name: string, body: string): string {
+  // Quote only the words that message added, not a quote it was carrying.
+  const words = splitReplyQuote(body).text.replace(/\s+/g, " ").trim();
+  return `> ${name}: ${words.length > 120 ? `${words.slice(0, 120)}…` : words}\n\n`;
+}
+
 function ago(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (s < 60) return "now";
@@ -225,6 +243,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
   // Editing one of your own DMs in place — same shape as editing a comment.
   const [editingDm, setEditingDm] = useState<number | null>(null);
   const [editDmText, setEditDmText] = useState("");
+  // The message the next send answers — quoted at the top of it (see REPLY_QUOTE).
+  const [replyingTo, setReplyingTo] = useState<DM | null>(null);
+  const dmInputRef = useRef<HTMLTextAreaElement>(null);
   // Deleting a single DM (sender-only) or the whole conversation (any member)
   // — id of whichever one is mid-request, so its button can show busy and
   // nothing else double-fires while it's in flight.
@@ -643,6 +664,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
 
   const openConv = useCallback(async (c: Conversation) => {
     setActiveConv(c);
+    setReplyingTo(null);
     const d = await fetch(`/api/conversations/${c.id}/messages`, { cache: "no-store" }).then((r) => r.json()).catch(() => ({}));
     setDms((d.messages ?? []) as DM[]);
     void loadConvs();
@@ -696,11 +718,13 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
     if (!activeConv || (!dmText.trim() && !dmComposer.hasAttachment)) return;
     setSending(true);
     try {
-      const r = await fetch(`/api/conversations/${activeConv.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: dmText.trim() || dmComposer.fallbackBody }) });
+      const quote = replyingTo ? replyQuoteFor(replyingTo.sender_name, replyingTo.body) : "";
+      const r = await fetch(`/api/conversations/${activeConv.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: quote + (dmText.trim() || dmComposer.fallbackBody) }) });
       if (r.ok) {
         const d = await r.json();
         setDms((prev) => [...prev, d.message]);
         setDmText("");
+        setReplyingTo(null);
         if (d.message?.id) {
           await dmComposer.flush("direct_message", d.message.id);
           // Attachments just landed after the optimistic append above, which
@@ -713,12 +737,13 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
         setTimeout(() => dmEndRef.current?.scrollIntoView({ block: "end" }), 50);
       }
     } finally { setSending(false); }
-  }, [activeConv, dmText, loadConvs, dmComposer]);
+  }, [activeConv, dmText, loadConvs, dmComposer, replyingTo]);
 
   const saveDmEdit = useCallback(async (messageId: number) => {
     if (!activeConv) return;
-    const text = editDmText.trim();
-    if (!text) return;
+    if (!editDmText.trim()) return;
+    // The edit box only holds the reply's own words — keep the quote it answers.
+    const text = splitReplyQuote(dms.find((m) => m.id === messageId)?.body ?? "").prefix + editDmText.trim();
     const r = await fetch(`/api/conversations/${activeConv.id}/messages?messageId=${messageId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -732,7 +757,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
       setEditingDm(null);
       setEditDmText("");
     }
-  }, [activeConv, editDmText]);
+  }, [activeConv, editDmText, dms]);
 
   // Soft delete: the route stamps deleted_at, so the message leaves the
   // thread without touching anyone else's copy of the conversation.
@@ -1278,7 +1303,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                       </span>
                       {c.message_count > 0 && <span className="text-[10px] text-stone shrink-0">{c.message_count}</span>}
                     </span>
-                    {c.last_message && <span className="block text-[11px] text-walnut truncate">{c.last_message.body}</span>}
+                    {c.last_message && <span className="block text-[11px] text-walnut truncate">{splitReplyQuote(c.last_message.body).text}</span>}
                     <span className="block text-[10px] text-bark truncate">{c.last_message ? `${ago(c.last_message.created_at)} ago` : "no messages"}</span>
                   </button>
                 ))
@@ -1346,22 +1371,40 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                             </button>
                           </div>
                         </div>
-                      ) : (
+                      ) : (() => {
+                        const { quote, text } = splitReplyQuote(m.body);
+                        return (
                         <>
-                          <p className="whitespace-pre-wrap">{linkifyText(m.body, mentionNames)}</p>
+                          {quote && (
+                            <div className="mb-1 border-l-2 border-slate-blue/40 pl-1.5 text-[10px] text-bark">
+                              <span className="font-semibold">{quote.name}</span>
+                              <p className="line-clamp-2">{quote.text}</p>
+                            </div>
+                          )}
+                          <p className="whitespace-pre-wrap">{linkifyText(text, mentionNames)}</p>
                           <AttachmentList attachments={m.attachments} />
                           <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-bark">
                             <span>
                               {ago(m.created_at)} ago
                               {m.edited_at && <span className="italic text-stone"> · edited</span>}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReplyingTo(m);
+                                dmInputRef.current?.focus();
+                              }}
+                              className="font-semibold text-slate-blue hover:underline"
+                            >
+                              Reply
+                            </button>
                             {m.mine && (
                               <>
                                 <button
                                   type="button"
                                   onClick={() => {
                                     setEditingDm(m.id);
-                                    setEditDmText(m.body);
+                                    setEditDmText(text);
                                   }}
                                   className="font-semibold text-slate-blue hover:underline"
                                 >
@@ -1379,13 +1422,24 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                             )}
                           </p>
                         </>
-                      )}
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}
                 <div ref={dmEndRef} />
               </div>
               <AttachmentPicker composer={dmComposer} disabled={sending} />
+              {replyingTo && (
+                <div className="flex items-center justify-between gap-2 rounded-lg border-l-2 border-slate-blue/40 bg-parchment px-2 py-1 text-[10px] text-bark">
+                  <span className="truncate">
+                    Replying to <span className="font-semibold">{replyingTo.mine ? "yourself" : replyingTo.sender_name}</span>: {splitReplyQuote(replyingTo.body).text}
+                  </span>
+                  <button type="button" onClick={() => setReplyingTo(null)} className="shrink-0 font-semibold text-bark hover:text-espresso" title="Cancel reply">
+                    ✕
+                  </button>
+                </div>
+              )}
               <div className="relative flex items-end gap-1.5">
                 {mentionFor === "dm" && dmMentionMatches.length > 0 && (
                   <div className="absolute bottom-full mb-1 left-0 right-0 z-10 rounded-lg border border-sand bg-white shadow-sm overflow-hidden">
@@ -1402,9 +1456,13 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                   </div>
                 )}
                 <textarea
+                  ref={dmInputRef}
                   value={dmText}
                   onChange={(e) => { setDmText(e.target.value); onMentionInput(e.target.value, "dm"); }}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && mentionFor !== "dm") { e.preventDefault(); void sendDm(); } }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape" && replyingTo) { setReplyingTo(null); return; }
+                    if (e.key === "Enter" && !e.shiftKey && mentionFor !== "dm") { e.preventDefault(); void sendDm(); }
+                  }}
                   rows={1}
                   placeholder="Message… (@name to tag)"
                   className={`${input} resize-none flex-1`}
@@ -1451,7 +1509,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                       </span>
                       <span className="text-[12px] font-semibold text-espresso truncate">{c.is_group ? "👥 " : ""}{c.title}</span>
                     </span>
-                    {c.last_message && <span className="block text-[11px] text-walnut truncate">{c.last_message.mine ? "You: " : ""}{c.last_message.body}</span>}
+                    {c.last_message && <span className="block text-[11px] text-walnut truncate">{c.last_message.mine ? "You: " : ""}{splitReplyQuote(c.last_message.body).text}</span>}
                     <span className="block text-[10px] text-bark truncate">archived</span>
                   </button>
                 ))
@@ -1497,7 +1555,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                     </span>
                     {c.last_message && (
                       <span className={`block text-[11px] truncate ${c.unread > 0 ? "text-espresso font-medium" : "text-walnut"}`}>
-                        {c.last_message.mine ? "You: " : ""}{c.last_message.body}
+                        {c.last_message.mine ? "You: " : ""}{splitReplyQuote(c.last_message.body).text}
                       </span>
                     )}
                     {c.last_message && <span className="block text-[10px] text-bark">{ago(c.last_message.created_at)} ago</span>}

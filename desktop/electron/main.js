@@ -7,7 +7,7 @@
 //   2. Encrypted-at-rest storage of the Supabase refresh token, via
 //      safeStorage (OS keychain / DPAPI), so a login survives an app
 //      restart without the token sitting around as plain text.
-const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog, Tray, Menu, nativeImage, powerMonitor } = require("electron");
+const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog, Tray, Menu, nativeImage, powerMonitor, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { SUPABASE_URL, API_BASE } = require("./config");
@@ -109,6 +109,15 @@ function createWindow() {
       // while hidden, delaying the session poll and the 5-minute capture.
       backgroundThrottling: false,
     },
+  });
+
+  // A target="_blank" link (a shared Drive folder, an attachment) would
+  // otherwise open in a bare Electron child window with no address bar or
+  // sign-in — Drive renders half-broken there. Hand web links to the user's
+  // real browser instead, and never let the app spawn its own windows.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
   });
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
