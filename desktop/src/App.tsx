@@ -619,6 +619,33 @@ export default function App() {
               </div>
             )}
           </div>
+          {/* What's actually running right now — an assigned task, a Log an
+              Activity entry, or a Quick Pick message. Full width under both
+              cards above (Toni's call), not squeezed into ClockPanel alone.
+              Lifted from web's ActiveTaskBar.tsx (task name + "project ·
+              account · client" details), minus its Screenshot/Notes buttons,
+              which don't exist here. */}
+          {clockState === "clocked-in" && sessionRow?.active_task?.task_name && (
+            <div className="bg-cream border border-sand border-l-[3px] border-l-sage rounded-lg py-2 px-3">
+              <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-sage mb-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
+                Active
+              </span>
+              <div className="text-[13px] font-semibold text-espresso leading-tight truncate">
+                {sessionRow.active_task.task_name}
+              </div>
+              {(() => {
+                const details = [
+                  sessionRow.active_task.project,
+                  sessionRow.active_task.account,
+                  sessionRow.active_task.client_name,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return details ? <div className="text-[11px] text-bark truncate">{details}</div> : null;
+              })()}
+            </div>
+          )}
           {heldTask && clockState !== "idle" && (
             <div className="flex items-center gap-3 px-4 py-2.5 bg-amber/10 border border-amber/30 rounded-xl text-[12px] text-espresso">
               <span className="text-amber text-base">⏸</span>
