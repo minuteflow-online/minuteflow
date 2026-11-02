@@ -9,7 +9,7 @@
 // composing a General topic/reply — Personal's DM composer has it, General's
 // doesn't yet, General's own delete/pin/archive, group-chat title beyond the
 // basics).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchGeneralTopics, postTopic, postReply, editTopic, editComment, type Topic } from "../lib/messageBoard";
 import {
   fetchConversations,
@@ -45,6 +45,23 @@ function ago(iso: string): string {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
+}
+
+// A DM reply carries the message it answers as its opening line —
+// "> Name: words", then a blank line. Same format as the web panel's
+// REPLY_QUOTE, so a reply sent from either one renders the same in both.
+const REPLY_QUOTE = /^> ([^:\n]{1,80}): ([^\n]*)\n\n?/;
+
+function splitReplyQuote(body: string): { quote: { name: string; text: string } | null; prefix: string; text: string } {
+  const m = body.match(REPLY_QUOTE);
+  if (!m) return { quote: null, prefix: "", text: body };
+  return { quote: { name: m[1], text: m[2] }, prefix: m[0], text: body.slice(m[0].length) };
+}
+
+function replyQuoteFor(name: string, body: string): string {
+  // Quote only the words that message added, not a quote it was carrying.
+  const words = splitReplyQuote(body).text.replace(/\s+/g, " ").trim();
+  return `> ${name}: ${words.length > 120 ? `${words.slice(0, 120)}…` : words}\n\n`;
 }
 
 function authorName(author: { full_name: string | null; username: string | null } | null): string {
@@ -134,6 +151,9 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   // Editing one of your own DMs in place — same shape as editing a reply.
   const [editingDm, setEditingDm] = useState<number | null>(null);
   const [editDmText, setEditDmText] = useState("");
+  // The message the next send answers — quoted at the top of it (see REPLY_QUOTE).
+  const [replyingTo, setReplyingTo] = useState<DirectMessage | null>(null);
+  const dmInputRef = useRef<HTMLTextAreaElement>(null);
   // Deleting a single DM (sender-only) or the whole conversation (any
   // member) — id of whichever is mid-request, so its button shows busy and
   // nothing else double-fires while it's in flight.
@@ -304,6 +324,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
   const openConv = useCallback(async (c: Conversation) => {
     setActiveConv(c);
     setEditingDm(null);
+    setReplyingTo(null);
     setDmMentionQuery(null);
     const rows = await fetchMessages(c.id);
     setDms(rows);
@@ -335,10 +356,12 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
     if (!body) return;
     setPosting(true);
     try {
-      const sent = await sendMessage(activeConv.id, body);
+      const quote = replyingTo ? replyQuoteFor(replyingTo.sender_name, replyingTo.body) : "";
+      const sent = await sendMessage(activeConv.id, quote + body);
       if (sent) {
         setDms((prev) => [...prev, sent]);
         setDmText("");
+        setReplyingTo(null);
         setDmMentionQuery(null);
         if (sent.id != null) {
           await dmComposer.flush("direct_message", sent.id);
@@ -353,19 +376,20 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
     } finally {
       setPosting(false);
     }
-  }, [activeConv, dmText, dmComposer, posting, loadConvs]);
+  }, [activeConv, dmText, dmComposer, posting, loadConvs, replyingTo]);
 
   const saveDmEdit = useCallback(async (messageId: number) => {
     if (!activeConv) return;
-    const text = editDmText.trim();
-    if (!text) return;
+    if (!editDmText.trim()) return;
+    // The edit box only holds the reply's own words — keep the quote it answers.
+    const text = splitReplyQuote(dms.find((m) => m.id === messageId)?.body ?? "").prefix + editDmText.trim();
     const updated = await editMessage(activeConv.id, messageId, text);
     if (updated) {
       setDms((prev) => prev.map((m) => (m.id === messageId ? { ...m, body: updated.body, edited_at: updated.edited_at } : m)));
       setEditingDm(null);
       setEditDmText("");
     }
-  }, [activeConv, editDmText]);
+  }, [activeConv, editDmText, dms]);
 
   // Soft delete: leaves the thread without touching anyone else's copy of
   // the conversation. Sender-only, same rule as editing it.
@@ -786,20 +810,37 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                             </button>
                           </div>
                         </div>
-                      ) : (
+                      ) : (() => {
+                        const { quote, text } = splitReplyQuote(m.body);
+                        return (
                         <>
-                          <p className="whitespace-pre-wrap">{linkifyText(m.body, mentionNames)}</p>
+                          {quote && (
+                            <div className="mb-1 border-l-2 border-slate-blue/40 pl-1.5 text-[10px] text-bark">
+                              <span className="font-semibold">{quote.name}</span>
+                              <p className="line-clamp-2">{quote.text}</p>
+                            </div>
+                          )}
+                          <p className="whitespace-pre-wrap">{linkifyText(text, mentionNames)}</p>
                           <AttachmentList attachments={m.attachments} />
                           <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-bark">
                             <span>
                               {ago(m.created_at)} ago{m.edited_at && <span className="italic text-stone"> · edited</span>}
                             </span>
+                            <button
+                              onClick={() => {
+                                setReplyingTo(m);
+                                dmInputRef.current?.focus();
+                              }}
+                              className="font-semibold text-slate-blue hover:underline cursor-pointer"
+                            >
+                              Reply
+                            </button>
                             {m.mine && (
                               <>
                                 <button
                                   onClick={() => {
                                     setEditingDm(m.id);
-                                    setEditDmText(m.body);
+                                    setEditDmText(text);
                                   }}
                                   className="font-semibold text-slate-blue hover:underline cursor-pointer"
                                 >
@@ -816,7 +857,8 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                             )}
                           </p>
                         </>
-                      )}
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -824,6 +866,16 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
 
               <div className="mt-3 pt-3 border-t border-sand space-y-1.5">
                 <AttachmentPicker composer={dmComposer} disabled={posting} />
+                {replyingTo && (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border-l-2 border-slate-blue/40 bg-parchment px-2 py-1 text-[10px] text-bark">
+                    <span className="truncate">
+                      Replying to <span className="font-semibold">{replyingTo.mine ? "yourself" : replyingTo.sender_name}</span>: {splitReplyQuote(replyingTo.body).text}
+                    </span>
+                    <button onClick={() => setReplyingTo(null)} className="shrink-0 font-semibold text-bark hover:text-espresso cursor-pointer" title="Cancel reply">
+                      ✕
+                    </button>
+                  </div>
+                )}
                 <div className="relative flex items-end gap-1.5">
                   {dmMentionQuery !== null && dmMentionMatches.length > 0 && (
                     <div className="absolute bottom-full mb-1 left-0 right-0 z-10 rounded-lg border border-sand bg-white shadow-sm overflow-hidden">
@@ -839,9 +891,14 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                     </div>
                   )}
                   <textarea
+                    ref={dmInputRef}
                     value={dmText}
                     onChange={(e) => onDmTextChange(e.target.value)}
                     onKeyDown={(e) => {
+                      if (e.key === "Escape" && replyingTo) {
+                        setReplyingTo(null);
+                        return;
+                      }
                       if (e.key === "Enter" && !e.shiftKey && dmMentionQuery === null) {
                         e.preventDefault();
                         void handleSendDm();
@@ -935,7 +992,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                     {c.last_message && (
                       <span className="block text-[11px] text-walnut truncate">
                         {c.last_message.mine ? "You: " : ""}
-                        {c.last_message.body}
+                        {splitReplyQuote(c.last_message.body).text}
                       </span>
                     )}
                     <span className="block text-[10px] text-bark">archived</span>
@@ -995,7 +1052,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                     {c.last_message && (
                       <span className="block text-[11px] text-walnut truncate">
                         {c.last_message.mine ? "You: " : ""}
-                        {c.last_message.body}
+                        {splitReplyQuote(c.last_message.body).text}
                       </span>
                     )}
                     {c.last_message && <span className="block text-[10px] text-bark">{ago(c.last_message.created_at)} ago</span>}
