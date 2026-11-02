@@ -22,7 +22,6 @@ export interface MessageAuthor {
   id: string;
   full_name: string | null;
   username: string | null;
-  avatar_url?: string | null;
 }
 
 export interface TopicComment {

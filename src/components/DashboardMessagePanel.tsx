@@ -24,7 +24,7 @@ type Comment = { id: number; body: string; created_at: string; author?: string; 
 type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
 type Notif = { id: number; content: string; read: boolean; created_at: string; kind?: string | null };
 type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
-type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string; archived: boolean };
+type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string; avatar_url?: string | null }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string; archived: boolean };
 type DM = { id: number; body: string; created_at: string; edited_at?: string | null; mine: boolean; sender_name: string; sender_id?: string | null; attachments?: Attachment[] };
 
 // ── Admin (moderator-only oversight of everyone's Personal conversations) ──
@@ -1344,7 +1344,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                 {dms.map((m) => (
                   <div key={m.id} className={`flex items-end gap-1.5 ${m.mine ? "flex-row-reverse" : ""}`}>
                     {!m.mine && (
-                      <Avatar member={memberById.get(m.sender_id ?? "")} name={m.sender_name} size={20} />
+                      <Avatar member={memberById.get(m.sender_id ?? "") ?? asMember(m.sender_id ?? "", m.sender_name, activeConv.members.find((p) => p.id === m.sender_id)?.avatar_url ?? null)} size={20} />
                     )}
                     <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${m.mine ? "bg-amber-soft text-espresso border border-amber/20" : "bg-parchment text-espresso"}`}>
                       {activeConv.is_group && !m.mine && <p className="text-[9px] font-semibold opacity-70 mb-0.5">{m.sender_name}</p>}
@@ -1546,7 +1546,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                             .filter((m) => m.id !== currentUserId)
                             .slice(0, 3)
                             .map((m) => (
-                              <Avatar key={m.id} member={memberById.get(m.id)} name={m.name} size={18} />
+                              // memberById only holds VAs and admins (/api/team-members), so
+                              // anyone else in the chat gets their photo from the conversation itself.
+                              <Avatar key={m.id} member={memberById.get(m.id) ?? asMember(m.id, m.name, m.avatar_url ?? null)} size={18} />
                             ))}
                         </span>
                         <span className="text-[12px] font-semibold text-espresso truncate">{c.is_group ? "👥 " : ""}{c.title}</span>

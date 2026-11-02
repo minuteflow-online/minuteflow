@@ -13,7 +13,6 @@ import type { Attachment } from "../components/AttachmentComposer";
 export interface ConversationMember {
   id: string;
   name: string;
-  avatar_url?: string | null;
 }
 
 export interface Conversation {
@@ -46,7 +45,6 @@ export interface TeamMember {
   id: string;
   full_name: string | null;
   username: string | null;
-  avatar_url?: string | null;
 }
 
 async function authHeaders(): Promise<Record<string, string> | null> {
