@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { after } from "next/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -472,7 +473,9 @@ export async function POST(request: Request) {
       type: r.type,
       value: r.value,
     }));
-    sendBroadcastEmail(broadcast, recipientRows).catch(() => {});
+    // after() keeps the function alive until the send finishes; started and left,
+    // the send can be cut off once the reply goes out and no one gets the email.
+    after(() => sendBroadcastEmail(broadcast, recipientRows).catch(() => {}));
   }
 
   return Response.json({ broadcast }, { status: 201 });
@@ -558,7 +561,7 @@ export async function PATCH(request: Request) {
       value: r.recipient_value,
     }));
 
-    sendBroadcastEmail(broadcast, recipients).catch(() => {});
+    after(() => sendBroadcastEmail(broadcast, recipients).catch(() => {}));
   }
 
   return Response.json({ broadcast });
