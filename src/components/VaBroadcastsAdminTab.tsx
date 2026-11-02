@@ -36,6 +36,8 @@ interface Broadcast {
   created_at: string;
   updated_at: string;
   read_count: number;
+  acknowledged?: { user_id: string; name: string; read_at: string | null }[];
+  pending?: { user_id: string; name: string }[];
   recipients: BroadcastRecipient[];
   link: string | null;
   image_url: string | null;
@@ -195,6 +197,7 @@ export default function VaBroadcastsAdminTab() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showAcks, setShowAcks] = useState<Record<string, boolean>>({});
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
@@ -235,7 +238,7 @@ export default function VaBroadcastsAdminTab() {
 
   const fetchTeamMembers = useCallback(async () => {
     try {
-      const res = await fetch("/api/team-members");
+      const res = await fetch("/api/team-members?all=true");
       if (res.ok) {
         const d = await res.json();
         setTeamMembers(d.members || []);
@@ -454,8 +457,8 @@ export default function VaBroadcastsAdminTab() {
     }
   }, [uploadBroadcastImage]);
 
-  // VAs only (not admin) for individual selection
-  const vaMembers = teamMembers.filter((m) => m.role === "va");
+  // Every active team member, admins included, for individual selection
+  const pickableMembers = teamMembers;
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -604,10 +607,10 @@ export default function VaBroadcastsAdminTab() {
 
                 {recipientMode === "individual" && (
                   <div className="ml-6 space-y-1.5 pt-1">
-                    {vaMembers.length === 0 ? (
+                    {pickableMembers.length === 0 ? (
                       <p className="text-[12px] text-stone">Loading team members...</p>
                     ) : (
-                      vaMembers.map((m) => (
+                      pickableMembers.map((m) => (
                         <label key={m.id} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
@@ -869,7 +872,10 @@ export default function VaBroadcastsAdminTab() {
                     <span className="text-[11px] text-stone">{fmtDate(b.created_at)}</span>
                     <CategoryBadge category={b.category} />
                     <StatusBadge status={b.status} scheduledAt={b.scheduled_at} />
-                    <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-medium text-sage">
+                    <button
+                      onClick={() => setShowAcks((s) => ({ ...s, [b.id]: !s[b.id] }))}
+                      className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-medium text-sage cursor-pointer hover:bg-sage/20 transition-colors"
+                    >
                       <svg
                         className="h-3 w-3"
                         viewBox="0 0 24 24"
@@ -880,7 +886,8 @@ export default function VaBroadcastsAdminTab() {
                         <polyline points="20 6 9 17 4 12" />
                       </svg>
                       {b.read_count ?? 0} acknowledged
-                    </span>
+                      {b.pending && b.pending.length > 0 && ` · ${b.pending.length} pending`}
+                    </button>
                     {b.magic_word && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-terracotta-soft px-2 py-0.5 text-[11px] font-medium text-terracotta">
                         <svg
@@ -916,6 +923,38 @@ export default function VaBroadcastsAdminTab() {
                   </button>
                 </div>
               </div>
+
+              {showAcks[b.id] && (
+                <div className="mb-3 grid gap-3 sm:grid-cols-2 rounded-lg border border-sand bg-cream p-3">
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
+                      Acknowledged ({b.acknowledged?.length ?? 0})
+                    </p>
+                    {(b.acknowledged ?? []).length === 0 ? (
+                      <p className="text-[11px] text-stone">No one yet</p>
+                    ) : (
+                      (b.acknowledged ?? []).map((a) => (
+                        <div key={a.user_id} className="flex items-center justify-between gap-2 text-[12px]">
+                          <span className="text-espresso">{a.name}</span>
+                          {a.read_at && <span className="text-[11px] text-stone">{fmtDateTime(a.read_at)}</span>}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
+                      Not yet ({b.pending?.length ?? 0})
+                    </p>
+                    {(b.pending ?? []).length === 0 ? (
+                      <p className="text-[11px] text-stone">Everyone has acknowledged</p>
+                    ) : (
+                      (b.pending ?? []).map((p) => (
+                        <div key={p.user_id} className="text-[12px] text-terracotta">{p.name}</div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div
                 className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES} ${

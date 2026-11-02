@@ -1,4 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { after } from "next/server";
+import { notifyOne } from "@/lib/notifyOne";
+import { esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +24,7 @@ export async function POST(request: Request) {
   // Verify broadcast exists and is published
   const { data: broadcast, error: fetchError } = await supabase
     .from("broadcasts")
-    .select("id, magic_word, require_word, status")
+    .select("id, title, created_by, magic_word, require_word, status")
     .eq("id", broadcast_id)
     .single();
 
@@ -45,6 +49,14 @@ export async function POST(request: Request) {
     !broadcast.magic_word ||
     (word_entered || "").trim().toLowerCase() === (broadcast.magic_word || "").toLowerCase();
 
+  // Only the first acknowledgement notifies the author, not a repeat click
+  const { data: priorRead } = await supabase
+    .from("broadcast_reads")
+    .select("confirmed")
+    .eq("broadcast_id", broadcast_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   // Upsert read record
   const { error } = await supabase
     .from("broadcast_reads")
@@ -60,6 +72,32 @@ export async function POST(request: Request) {
     );
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  // Tell whoever published the broadcast — bell notification plus Telegram DM.
+  const authorId = broadcast.created_by as string | null;
+  if (confirmed && !priorRead?.confirmed && authorId && authorId !== user.id) {
+    after(async () => {
+      const admin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+      );
+      const { data: me } = await admin
+        .from("profiles")
+        .select("full_name, username")
+        .eq("id", user.id)
+        .single();
+      const name = me?.full_name || me?.username || "Someone";
+      const title = broadcast.title || "a broadcast";
+      await notifyOne(admin, {
+        targetUserId: authorId,
+        senderId: user.id,
+        content: `${name} acknowledged “${title}”`,
+        telegram: `✅ <b>${esc(name)}</b> acknowledged <b>${esc(title)}</b>`,
+        topic: "broadcast",
+      });
+    });
+  }
 
   return Response.json({ success: true, confirmed });
 }
