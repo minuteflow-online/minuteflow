@@ -63,6 +63,8 @@ export async function remindPendingBroadcast(
       content: `Reminder: please acknowledge “${broadcast.title}”`,
       telegram: `⏰ <b>Reminder: ${esc(broadcast.title)}</b>\n\n${ask}\n${link}`,
       topic: "broadcast",
+      // Broadcasts reach people on a break too — Toni's call.
+      evenOnBreak: true,
     });
     try {
       const { data } = await admin.auth.admin.getUserById(m.id);

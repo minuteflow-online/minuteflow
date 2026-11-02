@@ -198,8 +198,7 @@ async function sendBroadcastEmail(
 
 /**
  * Private Telegram DM to each active recipient with a link to the broadcast.
- * Someone on a break or personal time is skipped (see notifyVaPrivately);
- * a reminder reaches them later.
+ * Sent even to someone on a break or personal time — broadcasts always go out.
  */
 async function sendBroadcastTelegram(
   broadcast: { id: string; title: string; category: string; require_word?: boolean },
@@ -231,7 +230,6 @@ async function sendBroadcastTelegram(
       vaName: p.full_name || p.username || "there",
       topic: "Broadcast",
       message,
-      userId: p.id,
     });
   }
 }

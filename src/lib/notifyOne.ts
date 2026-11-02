@@ -18,6 +18,8 @@ export async function notifyOne(
      *  straight back to it instead of leaving the reader to go find it. */
     assignedTaskId?: number;
     submissionId?: number;
+    /** Send the Telegram DM even while they're on a break or personal time. */
+    evenOnBreak?: boolean;
   }
 ): Promise<void> {
   try {
@@ -44,7 +46,8 @@ export async function notifyOne(
       chatId: p?.telegram_chat_id,
       vaName: p?.full_name || p?.username || "there",
       topic: opts.topic,
-      userId: opts.targetUserId,
+      // Without userId notifyVaPrivately skips its break check and always sends.
+      userId: opts.evenOnBreak ? undefined : opts.targetUserId,
       message: opts.telegram,
     });
   } catch { /* ignore */ }
