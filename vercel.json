@@ -84,6 +84,10 @@
     {
       "path": "/api/cron/team-digest?kind=heads-up",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/broadcast-reminders",
+      "schedule": "0 * * * *"
     }
   ]
 }

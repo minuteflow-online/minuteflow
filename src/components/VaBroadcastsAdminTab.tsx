@@ -198,6 +198,8 @@ export default function VaBroadcastsAdminTab() {
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showAcks, setShowAcks] = useState<Record<string, boolean>>({});
+  const [reminding, setReminding] = useState<Record<string, boolean>>({});
+  const [remindMsg, setRemindMsg] = useState<Record<string, string>>({});
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
@@ -413,6 +415,28 @@ export default function VaBroadcastsAdminTab() {
     },
     [fetchBroadcasts]
   );
+
+  const handleRemind = useCallback(async (id: string, count: number) => {
+    if (!confirm(`Send a reminder to the ${count} ${count === 1 ? "person" : "people"} who haven't acknowledged yet?`)) return;
+    setReminding((r) => ({ ...r, [id]: true }));
+    setRemindMsg((m) => ({ ...m, [id]: "" }));
+    try {
+      const res = await fetch("/api/broadcasts/remind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ broadcast_id: id }),
+      });
+      const d = await res.json().catch(() => ({}));
+      setRemindMsg((m) => ({
+        ...m,
+        [id]: res.ok ? `Reminder sent to ${d.reminded ?? 0}` : d.error || "Couldn't send the reminder",
+      }));
+    } catch {
+      setRemindMsg((m) => ({ ...m, [id]: "Couldn't send the reminder" }));
+    } finally {
+      setReminding((r) => ({ ...r, [id]: false }));
+    }
+  }, []);
 
   // ── Toggle helpers ───────────────────────────────────────────────────────────
 
@@ -951,6 +975,18 @@ export default function VaBroadcastsAdminTab() {
                       (b.pending ?? []).map((p) => (
                         <div key={p.user_id} className="text-[12px] text-terracotta">{p.name}</div>
                       ))
+                    )}
+                    {b.status === "published" && (b.pending ?? []).length > 0 && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={() => handleRemind(b.id, b.pending?.length ?? 0)}
+                          disabled={!!reminding[b.id]}
+                          className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {reminding[b.id] ? "Sending…" : "Send reminder"}
+                        </button>
+                        {remindMsg[b.id] && <span className="text-[11px] text-stone">{remindMsg[b.id]}</span>}
+                      </div>
                     )}
                   </div>
                 </div>

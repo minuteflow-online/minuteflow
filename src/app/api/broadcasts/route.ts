@@ -4,14 +4,15 @@ import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { injectMagicWordHtml, isRichHtml, plainToHtml, renderBroadcastHtml, sanitizeRichHtml } from "@/lib/richText";
+import { isRecipient, broadcastPortalPath, type RecipientRow } from "@/lib/broadcasts";
+import { notifyVaPrivately } from "@/lib/vaNotify";
+import { esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const RESEND_API_KEY = process.env.RESEND_API_KEY!;
-
-type RecipientRow = { type: string; value: string };
 
 type Profile = {
   id: string;
@@ -28,23 +29,6 @@ type BroadcastRecipient = {
   recipient_value: string;
   created_at: string;
 };
-
-/**
- * Whether a member is targeted by a broadcast's recipient rows.
- * "Everyone" means the active team only; individual picks are honoured as chosen.
- */
-function isRecipient(
-  rows: RecipientRow[],
-  member: { id: string; role: string; employment_type: string | null; is_active: boolean }
-): boolean {
-  return rows.some((r) => {
-    if (r.type === "all") return member.is_active;
-    if (r.type === "individual") return r.value === member.id;
-    if (r.type === "role") return r.value === member.role;
-    if (r.type === "employment_type") return r.value === member.employment_type;
-    return false;
-  });
-}
 
 /**
  * Inject the magic word into the latter 40% of the body (split by newlines).
@@ -210,6 +194,55 @@ async function sendBroadcastEmail(
       }
     } catch { /* non-fatal */ }
   }
+}
+
+/**
+ * Private Telegram DM to each active recipient with a link to the broadcast.
+ * Sent even to someone on a break or personal time — broadcasts always go out.
+ */
+async function sendBroadcastTelegram(
+  broadcast: { id: string; title: string; category: string; require_word?: boolean },
+  recipientRows: RecipientRow[]
+): Promise<void> {
+  const adminClient = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: profiles } = await adminClient
+    .from("profiles")
+    .select("id, role, employment_type, is_active, full_name, username, telegram_chat_id")
+    .eq("is_active", true);
+
+  const path = broadcastPortalPath(broadcast.category, broadcast.id);
+  const link = `https://minuteflow.click${path ?? "/portal"}`;
+  const message = [
+    `📣 <b>New ${esc(categoryLabel(broadcast.category).toLowerCase())}: ${esc(broadcast.title)}</b>`,
+    "",
+    broadcast.require_word
+      ? "Please read it and enter the magic word to acknowledge it."
+      : "Please read it and acknowledge it.",
+    link,
+  ].join("\n");
+
+  for (const p of (profiles || []).filter((p) => isRecipient(recipientRows, p))) {
+    await notifyVaPrivately({
+      chatId: p.telegram_chat_id,
+      vaName: p.full_name || p.username || "there",
+      topic: "Broadcast",
+      message,
+    });
+  }
+}
+
+/** Email plus Telegram for a newly saved published broadcast. Either failing leaves the other alone. */
+async function sendBroadcastNotices(
+  broadcast: Parameters<typeof sendBroadcastEmail>[0],
+  recipientRows: RecipientRow[]
+): Promise<void> {
+  await Promise.all([
+    sendBroadcastEmail(broadcast, recipientRows).catch(() => {}),
+    sendBroadcastTelegram(broadcast, recipientRows).catch(() => {}),
+  ]);
 }
 
 /** GET: List broadcasts visible to the current user */
@@ -475,7 +508,7 @@ export async function POST(request: Request) {
     }));
     // after() keeps the function alive until the send finishes; started and left,
     // the send can be cut off once the reply goes out and no one gets the email.
-    after(() => sendBroadcastEmail(broadcast, recipientRows).catch(() => {}));
+    after(() => sendBroadcastNotices(broadcast, recipientRows));
   }
 
   return Response.json({ broadcast }, { status: 201 });
@@ -545,7 +578,7 @@ export async function PATCH(request: Request) {
     await supabase.from("broadcast_recipients").insert(recipientInserts);
   }
 
-  // Every save of a published broadcast emails its recipients, so editing and
+  // Every save of a published broadcast emails and Telegrams its recipients, so editing and
   // re-saving an already-published one sends it again.
   if (broadcast.status === "published") {
     // Fetch recipients for this broadcast (may have just been updated above)
@@ -559,7 +592,7 @@ export async function PATCH(request: Request) {
       value: r.recipient_value,
     }));
 
-    after(() => sendBroadcastEmail(broadcast, recipients).catch(() => {}));
+    after(() => sendBroadcastNotices(broadcast, recipients));
   }
 
   return Response.json({ broadcast });

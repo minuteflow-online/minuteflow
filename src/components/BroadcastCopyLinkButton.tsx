@@ -1,21 +1,12 @@
 "use client";
 
 import { useState } from "react";
-
-// Portal tab that lists each broadcast category. Announcements have no portal tab, so no link.
-const PORTAL_TAB_BY_CATEGORY: Record<string, string> = {
-  memo: "memos",
-  training: "trainings",
-  coaching_notes: "coaching_notes",
-  onboarding: "onboarding",
-  job_posting: "jobs",
-};
+import { PORTAL_TAB_BY_CATEGORY, broadcastPortalPath } from "@/lib/broadcasts";
 
 /** Login-protected link that opens the portal on this broadcast, scrolled to and highlighted. */
 export function broadcastShareUrl(category: string, id: string): string | null {
-  const tab = PORTAL_TAB_BY_CATEGORY[category];
-  if (!tab) return null;
-  return `${window.location.origin}/portal?tab=${tab}&broadcast=${encodeURIComponent(id)}`;
+  const path = broadcastPortalPath(category, id);
+  return path ? `${window.location.origin}${path}` : null;
 }
 
 export default function BroadcastCopyLinkButton({ category, id }: { category: string; id: string }) {
