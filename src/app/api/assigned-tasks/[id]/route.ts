@@ -5,6 +5,7 @@ import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { weeklyBudgetRejection, weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
 import { syncFixedPayTaskStatus, syncFixedPayTaskPaid } from "@/lib/fixedPayTaskSync";
+import { boardStatus } from "@/lib/subtaskStatusColumns";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -699,14 +700,26 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   // acknowledgement that reviewed work is finished, and enforcing that here
   // rather than only in the checkbox is what stops the Assignment list, the
   // calendar or a stray API call being used to skip the review.
+  //
+  // "Approved" is read the way the board reads it (boardStatus): a reviewer's
+  // approval often lands on the assignee row only, leaving the task row at
+  // submitted, and those cards sit in the Approved column all the same.
+  let approvedForCompletion = false;
   if (status === "completed") {
     const { data: current } = await adminSupabase
       .from("assigned_tasks")
-      .select("status")
+      .select("status, assigned_task_assignees(status)")
       .eq("id", id)
       .single();
-    const from = (current?.status ?? "") as string;
-    if (from !== "approved" && from !== "completed" && from !== "paid") {
+    const taskRowStatus = (current?.status ?? "") as string;
+    const shown = boardStatus(
+      taskRowStatus,
+      (current?.assigned_task_assignees ?? []) as Array<{ status: string | null }>
+    );
+    // Either reading counts, so nothing that passed before is refused now.
+    approvedForCompletion = taskRowStatus === "approved" || shown === "approved";
+    const done = (s: string) => s === "completed" || s === "paid";
+    if (!approvedForCompletion && !done(taskRowStatus) && !done(shown)) {
       return Response.json(
         { error: "A task has to be approved before it can be marked completed." },
         { status: 409 }
@@ -962,7 +975,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
       // A VA may finish their own approved work: once a reviewer has approved it,
       // moving Approved → Completed is the VA's to make, not an admin-only step.
-      const finishingApproved = taskForReview?.status === "approved" && status === "completed";
+      const finishingApproved = approvedForCompletion && status === "completed";
       if (!finishingApproved && !VA_STATUSES_UNDER_REVIEW.includes(status)) {
         return Response.json({ error: VA_STATUS_UNDER_REVIEW_ERROR }, { status: 403 });
       }
