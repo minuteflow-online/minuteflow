@@ -53,6 +53,17 @@ function injectMagicWord(body: string, magicWord: string): string {
   return lines.join("\n");
 }
 
+/** Same normalization bug-reports' tags use (src/app/api/bug-reports/route.ts) — trimmed, lowercased, deduped, capped. */
+function normalizeTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const cleaned = value
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 10);
+  return Array.from(new Set(cleaned));
+}
+
 /**
  * Build a category label for use in email subjects.
  */
@@ -454,6 +465,7 @@ export async function POST(request: Request) {
     link,
     image_url,
     sort_order,
+    tags,
   } = body;
 
   if (!title?.trim()) return Response.json({ error: "title is required" }, { status: 400 });
@@ -477,6 +489,7 @@ export async function POST(request: Request) {
       link: link?.trim() || null,
       image_url: image_url?.trim() || null,
       sort_order: typeof sort_order === "number" ? sort_order : 0,
+      tags: normalizeTags(tags),
     })
     .select()
     .single();
@@ -557,6 +570,7 @@ export async function PATCH(request: Request) {
   if (body.link !== undefined) fields.link = body.link?.trim() || null;
   if (body.image_url !== undefined) fields.image_url = body.image_url?.trim() || null;
   if (body.sort_order !== undefined) fields.sort_order = typeof body.sort_order === "number" ? body.sort_order : 0;
+  if (body.tags !== undefined) fields.tags = normalizeTags(body.tags);
 
   const { data: broadcast, error } = await supabase
     .from("broadcasts")

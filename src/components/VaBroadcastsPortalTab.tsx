@@ -29,6 +29,7 @@ interface Broadcast {
   link: string | null;
   image_url: string | null;
   sort_order: number;
+  tags: string[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -184,6 +185,14 @@ function BroadcastCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <CategoryBadge category={broadcast.category} />
+            {broadcast.tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center rounded-full bg-slate-blue-soft px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-blue"
+              >
+                {tag}
+              </span>
+            ))}
             {broadcast.confirmed_by_me && (
               <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-semibold text-sage">
                 <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -290,6 +299,10 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const linkedId = useSearchParams().get("broadcast");
+  // "All" + a tab per tag actually in use here (Toni's call, 2026-11-04) —
+  // derived from what's loaded rather than a fixed list, so a brand-new tag
+  // shows up as its own tab the moment something is posted with it.
+  const [tagFilter, setTagFilter] = useState<string>("all");
 
   const fetchBroadcasts = useCallback(async () => {
     setLoading(true);
@@ -323,8 +336,38 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
     );
   }, []);
 
+  const availableTags = Array.from(new Set(broadcasts.flatMap((b) => b.tags))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const visibleBroadcasts =
+    tagFilter === "all" ? broadcasts : broadcasts.filter((b) => b.tags.includes(tagFilter));
+
   return (
     <div className="max-w-4xl space-y-6">
+      {!loading && availableTags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setTagFilter("all")}
+            className={`rounded-full px-3 py-1 text-[11px] font-semibold capitalize transition-colors cursor-pointer ${
+              tagFilter === "all" ? "bg-terracotta-soft text-terracotta" : "bg-stone/10 text-stone hover:bg-stone/20"
+            }`}
+          >
+            All
+          </button>
+          {availableTags.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => setTagFilter(tag)}
+              className={`rounded-full px-3 py-1 text-[11px] font-semibold capitalize transition-colors cursor-pointer ${
+                tagFilter === tag ? "bg-terracotta-soft text-terracotta" : "bg-stone/10 text-stone hover:bg-stone/20"
+              }`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading && (
         <div className="flex items-center gap-2 py-8 text-sm text-stone">
           <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
@@ -352,9 +395,13 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
         </div>
       )}
 
-      {!loading && broadcasts.length > 0 && (
+      {!loading && broadcasts.length > 0 && visibleBroadcasts.length === 0 && (
+        <p className="text-sm text-stone py-8 text-center">Nothing tagged &quot;{tagFilter}&quot; yet.</p>
+      )}
+
+      {!loading && visibleBroadcasts.length > 0 && (
         <div className="space-y-4">
-          {broadcasts.map((b) => (
+          {visibleBroadcasts.map((b) => (
             <BroadcastCard
               key={b.id}
               broadcast={b}
