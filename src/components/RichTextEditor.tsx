@@ -3,8 +3,15 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { escapeHtml, isRichEmpty, sanitizeRichHtml, IMAGE_SIZES, RICH_TEXT_CLASSES, type ImageSize } from "@/lib/richText";
 
-// amber-soft — the palette's highlight tone
-const HIGHLIGHT_COLOR = "#f5ecd0";
+// Highlight choices: the palette's soft accent tones (globals.css). Clay-rose-soft is
+// left out — next to terracotta-soft the two read as the same color.
+const HIGHLIGHT_COLORS: { label: string; value: string; swatch: string }[] = [
+  { label: "Yellow", value: "#f5ecd0", swatch: "bg-amber-soft" },
+  { label: "Green", value: "#dce8dd", swatch: "bg-sage-soft" },
+  { label: "Pink", value: "#f0ddd5", swatch: "bg-terracotta-soft" },
+  { label: "Blue", value: "#dfe5ea", swatch: "bg-slate-blue-soft" },
+  { label: "Purple", value: "#ede8f5", swatch: "bg-plum-soft" },
+];
 
 interface RichTextEditorProps {
   value: string;
@@ -57,11 +64,12 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
     emit();
   };
 
-  const highlight = () => {
+  // "transparent" removes a highlight without touching bold, links or other formatting.
+  const highlight = (color: string) => {
     editorRef.current?.focus();
     // CSS mode makes the browser emit <span style="background-color">, which the sanitizer keeps.
     document.execCommand("styleWithCSS", false, "true");
-    document.execCommand("hiliteColor", false, HIGHLIGHT_COLOR);
+    document.execCommand("hiliteColor", false, color);
     document.execCommand("styleWithCSS", false, "false");
     emit();
   };
@@ -166,8 +174,31 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
         <button type="button" title="Bold" onMouseDown={keep} onClick={() => exec("bold")} className={`${btn} font-bold`}>B</button>
         <button type="button" title="Italic" onMouseDown={keep} onClick={() => exec("italic")} className={`${btn} italic font-serif`}>I</button>
         <button type="button" title="Underline" onMouseDown={keep} onClick={() => exec("underline")} className={`${btn} underline`}>U</button>
-        <button type="button" title="Highlight" onMouseDown={keep} onClick={highlight} className={btn}>
-          <span className="px-1 rounded-sm bg-amber-soft text-espresso font-semibold">H</span>
+        <span className="mx-1 h-4 w-px bg-sand" />
+        <span className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-1">Highlight</span>
+        {HIGHLIGHT_COLORS.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            title={`Highlight ${c.label.toLowerCase()}`}
+            onMouseDown={keep}
+            onClick={() => highlight(c.value)}
+            className="h-7 w-6 inline-flex items-center justify-center rounded hover:bg-parchment cursor-pointer transition-colors"
+          >
+            <span className={`h-4 w-4 rounded-sm border border-sand ${c.swatch}`} />
+          </button>
+        ))}
+        <button
+          type="button"
+          title="Remove highlight"
+          onMouseDown={keep}
+          onClick={() => highlight("transparent")}
+          className="h-7 w-6 inline-flex items-center justify-center rounded hover:bg-parchment cursor-pointer transition-colors"
+        >
+          <svg className="h-4 w-4 text-terracotta" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <rect x="0.75" y="0.75" width="14.5" height="14.5" rx="2" className="text-sand" stroke="currentColor" />
+            <line x1="3" y1="13" x2="13" y2="3" />
+          </svg>
         </button>
         <span className="mx-1 h-4 w-px bg-sand" />
         <button type="button" title="Bulleted list" onMouseDown={keep} onClick={() => exec("insertUnorderedList")} className={btn}>

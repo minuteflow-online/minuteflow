@@ -13,6 +13,15 @@ describe("sanitizeRichHtml", () => {
     expect(sanitizeRichHtml("<b>bold</b> <i>it</i> <u>u</u>")).toBe("<b>bold</b> <i>it</i> <u>u</u>");
   });
 
+  it("keeps each highlight color and survives a removed highlight (Chrome output)", () => {
+    const green = sanitizeRichHtml('<div><span style="background-color: rgb(220, 232, 221);">Hello <b>bold</b></span></div>');
+    expect(green).toContain("background-color: rgb(220, 232, 221)");
+    const purple = sanitizeRichHtml('<div><span style="background-color: rgb(237, 232, 245);">Hello</span></div>');
+    expect(purple).toContain("background-color: rgb(237, 232, 245)");
+    // Removing a highlight leaves an empty style on the bold tag; nothing should break.
+    expect(sanitizeRichHtml('<div>Hello <b style="">bold world</b> today</div>')).toBe("<div>Hello <b>bold world</b> today</div>");
+  });
+
   it("keeps highlight colour but drops other styles", () => {
     expect(sanitizeRichHtml('<span style="background-color: rgb(245, 236, 208); position: fixed">x</span>')).toBe(
       '<span style="background-color: rgb(245, 236, 208)">x</span>'
