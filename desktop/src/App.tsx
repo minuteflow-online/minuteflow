@@ -16,6 +16,7 @@ import { fetchTeamRoster, fetchTeamTimeLogs, type TeamRosterMember, type TeamTim
 import TeamPanel from "./components/TeamPanel";
 import ClockOutModal from "./components/ClockOutModal";
 import QuickPickPanel from "./components/QuickPickPanel";
+import pkg from "../package.json";
 
 // Desktop has no realtime channel (no supabase-js here), so this poll is the
 // whole web -> desktop sync latency; 15s was noticeably laggy in testing. It's
@@ -590,7 +591,9 @@ export default function App() {
       {/* Top bar */}
       <div className="flex items-center justify-between border-b border-sand bg-white px-5 py-3 shrink-0">
         <div>
-          <p className="text-sm font-bold text-espresso">MinuteFlow</p>
+          <p className="text-sm font-bold text-espresso">
+            MinuteFlow <span className="text-[10px] font-normal text-stone">v{pkg.version}</span>
+          </p>
           <p className="text-[11px] text-stone">{profile?.full_name || "—"}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -716,6 +719,7 @@ export default function App() {
             onSelect={setSelectedTask}
             startingId={startingId}
             onStart={handleStart}
+            userId={userId}
             stoppingId={stoppingId}
             onStop={handleStop}
             activeAssignedTaskId={sessionRow?.active_task?.assignedTaskId ?? null}

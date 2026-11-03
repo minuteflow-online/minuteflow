@@ -195,3 +195,30 @@ export async function setAssignedTaskStatus(params: {
     return false;
   }
 }
+
+/**
+ * Mirrors web's src/lib/syncTaskDetailFromMemo.ts exactly (same endpoint,
+ * same body, same "best-effort, the memo already saved either way"
+ * reasoning) — Add Memo port, Toni's call, 2026-11-03. Bearer token in place
+ * of the cookie session web authenticates with, same as setAssignedTaskStatus
+ * above.
+ */
+export async function syncTaskDetailFromMemo(assignedTaskId: number | null | undefined, memo: string): Promise<void> {
+  if (assignedTaskId == null) return;
+  const trimmed = memo.trim();
+  if (!trimmed) return;
+  try {
+    const session = await ensureAuth();
+    if (!session) return;
+    await fetch(`${API_BASE}/api/assigned-tasks/${assignedTaskId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ task_detail: trimmed }),
+    });
+  } catch {
+    // Best-effort — the memo itself already saved on the log either way.
+  }
+}

@@ -21,6 +21,8 @@ interface TaskWidgetsTabsProps {
   onSelect: (task: VAAssignedTask) => void;
   startingId: number | null;
   onStart: (task: VAAssignedTask) => void;
+  /** For TasksPanel's Add Memo lookup. */
+  userId: string;
   /** Real Stop (Phase 1/4, Toni's call, 2026-11-02) — see TasksPanel's own
    *  comment on why activeAssignedTaskId gates it rather than status alone. */
   stoppingId: number | null;
@@ -40,6 +42,7 @@ export default function TaskWidgetsTabs({
   onSelect,
   startingId,
   onStart,
+  userId,
   stoppingId,
   onStop,
   activeAssignedTaskId,
@@ -81,6 +84,7 @@ export default function TaskWidgetsTabs({
             onSelect={onSelect}
             startingId={startingId}
             onStart={onStart}
+            userId={userId}
             stoppingId={stoppingId}
             onStop={onStop}
             activeAssignedTaskId={activeAssignedTaskId}
