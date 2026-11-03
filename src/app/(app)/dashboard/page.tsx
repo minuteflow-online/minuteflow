@@ -948,19 +948,12 @@ export default function DashboardPage() {
       console.error("[stopCurrentTask] session upsert failed:", stopSessionError.message);
     }
 
-    // The log is closed, but until now nothing ever told the assignment
-    // itself to stop being "in_progress" — it just sat there forever, which
-    // is how a task could look In Progress on the dashboard with no running
-    // timer behind it at all, or two tasks both show In Progress at once.
-    // Demoted to on_queue, same status Start already resumes from — Phase 1
-    // of the Start/Stop/Submit rework (Toni's call, 2026-11-02).
-    if (activeTask?.assignedTaskId) {
-      void setAssignedTaskStatus({
-        assignedTaskId: activeTask.assignedTaskId,
-        status: "on_queue",
-        vaId: userId,
-      }).then(() => setWidgetRefetchCount((c) => c + 1));
-    }
+    // The assignment itself stays "in_progress" — Stop just pauses the
+    // timer, it doesn't send the task back to on_queue (Toni's call,
+    // 2026-11-03, reversing the Phase 1 auto-demote). A task left
+    // in_progress with nothing running behind it is expected: the Start
+    // button already shows again for any in_progress task that isn't the
+    // live active one, so it's always one click to resume.
 
     // Stop the capture sequence for the closed task (keep the screen-share
     // stream alive — the next task may schedule its own captures). Inlined
@@ -1038,18 +1031,9 @@ export default function DashboardPage() {
           })
         );
 
-        // Shared safety-net sweep used by several callers (break start, task
-        // resume, clock-in races) — same demotion fix as stopCurrentTask,
-        // since any of those can be the thing that closes an assigned task's
-        // last open log (Phase 1, Toni's call, 2026-11-02).
-        const demotedIds = new Set(
-          openLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
-        );
-        for (const assignedTaskId of demotedIds) {
-          void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
-            setWidgetRefetchCount((c) => c + 1)
-          );
-        }
+        // No demotion here (Toni's call, 2026-11-03) — closing a log never
+        // sends its assignment back to on_queue; it stays in_progress until
+        // Submit, same as every other close path below.
       }
     },
     [supabase, userId, orgTimezone]
@@ -1397,16 +1381,7 @@ export default function DashboardPage() {
           })
         );
 
-        // Same demotion fix as the other close-paths — an orphaned log here
-        // can still belong to an assigned task (Phase 1, Toni's call, 2026-11-02).
-        const demotedIds = new Set(
-          orphanedLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
-        );
-        for (const assignedTaskId of demotedIds) {
-          void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
-            setWidgetRefetchCount((c) => c + 1)
-          );
-        }
+        // No demotion (Toni's call, 2026-11-03) — see stopCurrentTask.
       }
     }
 
@@ -1851,15 +1826,7 @@ export default function DashboardPage() {
           })
         );
 
-        // Same demotion fix as the other close-paths (Phase 1, Toni's call, 2026-11-02).
-        const demotedIds = new Set(
-          openLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
-        );
-        for (const assignedTaskId of demotedIds) {
-          void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
-            setWidgetRefetchCount((c) => c + 1)
-          );
-        }
+        // No demotion (Toni's call, 2026-11-03) — see stopCurrentTask.
       }
     }
 
@@ -2609,20 +2576,8 @@ export default function DashboardPage() {
               })
             );
 
-            // Same demotion as stopCurrentTask, for whatever this sweep just
-            // closed — this is the DB-level path (catches stray open logs
-            // React state didn't know about), so it has to carry its own fix
-            // rather than relying on activeTask alone. Without it, a task
-            // auto-stopped by starting a different one kept reading
-            // "in_progress" forever (Phase 1, Toni's call, 2026-11-02).
-            const demotedIds = new Set(
-              openLogs.map((o) => o.assigned_task_id).filter((id): id is number => id != null)
-            );
-            for (const assignedTaskId of demotedIds) {
-              void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId }).then(() =>
-                setWidgetRefetchCount((c) => c + 1)
-              );
-            }
+            // No demotion (Toni's call, 2026-11-03) — see stopCurrentTask. A
+            // task switched away from stays in_progress, same as a plain Stop.
           }
         }
         setActiveTask(null);

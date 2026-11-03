@@ -775,7 +775,14 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
-                        {effectiveStatus === "on_queue" && (
+                        {/* Also covers an in_progress task that isn't the
+                            live active one (left behind by a switch, a
+                            break, or legacy data) — Start just resumes it,
+                            same flow as any other Start (Toni's call,
+                            2026-11-03, now that Stop/switch no longer
+                            demotes a task back to on_queue). */}
+                        {(effectiveStatus === "on_queue" ||
+                          (effectiveStatus === "in_progress" && activeAssignedTaskId !== detail.id)) && (
                           <button
                             onClick={() => handlePlay(task)}
                             disabled={isUpdating}

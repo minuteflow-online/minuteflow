@@ -273,7 +273,8 @@ export default function TasksPanel({
 
                     {(task.status === "on_queue" || task.status === "in_progress") && (
                       <div className="mt-1.5 flex items-center gap-1.5">
-                        {task.status === "on_queue" && (
+                        {(task.status === "on_queue" ||
+                          (task.status === "in_progress" && activeAssignedTaskId !== detail.id)) && (
                           <button
                             onClick={() => onStart(task)}
                             disabled={isStarting || isFixedPay}
