@@ -21,6 +21,11 @@ interface TaskWidgetsTabsProps {
   onSelect: (task: VAAssignedTask) => void;
   startingId: number | null;
   onStart: (task: VAAssignedTask) => void;
+  /** Real Stop (Phase 1/4, Toni's call, 2026-11-02) — see TasksPanel's own
+   *  comment on why activeAssignedTaskId gates it rather than status alone. */
+  stoppingId: number | null;
+  onStop: (task: VAAssignedTask) => void;
+  activeAssignedTaskId: number | null;
   onSubmit: (task: VAAssignedTask) => void;
   onReorder: (source: VAAssignedTask, target: VAAssignedTask) => void;
   hasActiveTask: boolean;
@@ -35,6 +40,9 @@ export default function TaskWidgetsTabs({
   onSelect,
   startingId,
   onStart,
+  stoppingId,
+  onStop,
+  activeAssignedTaskId,
   onSubmit,
   onReorder,
   hasActiveTask,
@@ -73,6 +81,9 @@ export default function TaskWidgetsTabs({
             onSelect={onSelect}
             startingId={startingId}
             onStart={onStart}
+            stoppingId={stoppingId}
+            onStop={onStop}
+            activeAssignedTaskId={activeAssignedTaskId}
             onSubmit={onSubmit}
             onReorder={onReorder}
             bare

@@ -59,6 +59,11 @@ export default function SubmitWorkModal({
 }: SubmitWorkModalProps) {
   const [message, setMessage] = useState("");
   const [link, setLink] = useState("");
+  // Defaults to Completed — the pre-existing behavior for every caller that
+  // never saw this choice before. In Progress is Toni's call, 2026-11-02:
+  // a status report that stays on the dashboard rather than a handoff.
+  const [progressStatus, setProgressStatus] = useState<"in_progress" | "completed">("completed");
+  const [reviewRequested, setReviewRequested] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -211,6 +216,8 @@ export default function SubmitWorkModal({
           message: message.trim() || undefined,
           link: link.trim() || undefined,
           attachments,
+          progress_status: progressStatus,
+          review_requested: progressStatus === "in_progress" && reviewRequested,
         }),
       });
 
@@ -278,6 +285,55 @@ export default function SubmitWorkModal({
         </div>
 
         <div className="space-y-3 p-4">
+          <div>
+            <label className={labelClass}>This submission is</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setProgressStatus("in_progress")}
+                disabled={saving}
+                className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                  progressStatus === "in_progress"
+                    ? "bg-amber text-white"
+                    : "border border-sand bg-white text-bark hover:border-amber"
+                }`}
+              >
+                In Progress
+              </button>
+              <button
+                type="button"
+                onClick={() => setProgressStatus("completed")}
+                disabled={saving}
+                className={`flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                  progressStatus === "completed"
+                    ? "bg-sage text-white"
+                    : "border border-sand bg-white text-bark hover:border-sage"
+                }`}
+              >
+                Completed
+              </button>
+            </div>
+            <p className="mt-1 text-[10px] text-stone/70">
+              {progressStatus === "in_progress"
+                ? "A status update — the task stays on your dashboard, auto-approved unless you ask for a review below."
+                : "Done — this goes to review (or completes automatically, depending on the task) and leaves your dashboard."}
+            </p>
+            {progressStatus === "in_progress" && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-sand bg-cream/40 p-2">
+                <input
+                  type="checkbox"
+                  checked={reviewRequested}
+                  onChange={(e) => setReviewRequested(e.target.checked)}
+                  disabled={saving}
+                  className="mt-[2px] cursor-pointer accent-terracotta"
+                />
+                <span className="text-[11px] leading-snug text-espresso">
+                  Review required — flag this for Toni instead of auto-approving
+                </span>
+              </label>
+            )}
+          </div>
+
           <div>
             <label className={labelClass}>Attachment</label>
             <input

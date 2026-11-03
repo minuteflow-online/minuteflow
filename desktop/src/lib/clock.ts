@@ -11,6 +11,7 @@
 import { query, PostgrestError } from "./db";
 import { cappedCloseTime } from "./cappedCloseTime";
 import { isBillableCategory } from "./billable";
+import { setAssignedTaskStatus } from "./tasks";
 
 export interface Profile {
   id: string;
@@ -148,10 +149,10 @@ export async function fetchSession(userId: string): Promise<SessionRow | null> {
  *  clock-out, same as the web app — a stale open row otherwise blocks the
  *  next clock-in via the one-active-log unique index. */
 export async function closeOpenLogs(userId: string, now: string, orgTimezone: string, excludeLogId?: number): Promise<void> {
-  let filters = `user_id=eq.${userId}&end_time=is.null&category=neq.${encodeURIComponent("Clock Out")}&select=id,start_time`;
+  let filters = `user_id=eq.${userId}&end_time=is.null&category=neq.${encodeURIComponent("Clock Out")}&select=id,start_time,assigned_task_id`;
   if (excludeLogId !== undefined) filters += `&id=neq.${excludeLogId}`;
 
-  const openLogs = await query<{ id: number; start_time: string }[]>("time_logs", { filters });
+  const openLogs = await query<{ id: number; start_time: string; assigned_task_id: number | null }[]>("time_logs", { filters });
   for (const log of openLogs) {
     const { endTime, durationMs } = cappedCloseTime(log.start_time, now, orgTimezone);
     await query("time_logs", {
@@ -159,6 +160,20 @@ export async function closeOpenLogs(userId: string, now: string, orgTimezone: st
       filters: `id=eq.${log.id}`,
       body: { end_time: endTime, duration_ms: durationMs },
     });
+  }
+
+  // Same gap the web app had (Phase 1, Toni's call, 2026-11-02): closing a
+  // log here never used to touch the assignment's own status, so a task
+  // auto-stopped by clocking out, clocking in, or starting a different task
+  // kept reading "in_progress" forever even with nothing running behind it.
+  // Shared by every caller of this function (clock-in, clock-out,
+  // startAssignedTask's switch), so one fix here covers all three — unlike
+  // the web app, which had this sweep duplicated in several places.
+  const demotedIds = new Set(
+    openLogs.map((l) => l.assigned_task_id).filter((id): id is number => id != null)
+  );
+  for (const assignedTaskId of demotedIds) {
+    void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId });
   }
 }
 
@@ -274,6 +289,56 @@ export async function closeActiveTaskWithMemos(
   if (clientMemo.trim()) body.client_memo = clientMemo.trim();
   if (internalMemo.trim()) body.internal_memo = internalMemo.trim();
   await query("time_logs", { method: "PATCH", filters: `id=eq.${logId}`, body });
+}
+
+export interface StopTaskResult {
+  ok: boolean;
+  error?: string;
+  session?: SessionRow;
+}
+
+/** Real Stop — mirrors web's stopCurrentTask (Phase 1/4, Toni's call,
+ *  2026-11-02): closes the running task's own log, demotes its assignment
+ *  back to on_queue, and clears the session's active_task to null while
+ *  staying clocked in. Nothing else starts — the clock-in timer (shown by
+ *  ClockPanel) keeps running on its own, same as web's top-bar clock. */
+export async function stopCurrentTask(
+  userId: string,
+  currentSession: SessionRow | null
+): Promise<StopTaskResult> {
+  const activeTask = currentSession?.active_task;
+  if (!activeTask?.logId) return { ok: false, error: "Nothing is currently running." };
+
+  const now = Date.now();
+  const startMs = activeTask.start_time ? new Date(activeTask.start_time).getTime() : now;
+  await query("time_logs", {
+    method: "PATCH",
+    filters: `id=eq.${activeTask.logId}`,
+    body: {
+      end_time: new Date(now).toISOString(),
+      duration_ms: Math.max(0, now - startMs),
+    },
+  });
+
+  if (activeTask.assignedTaskId != null) {
+    void setAssignedTaskStatus({ assignedTaskId: activeTask.assignedTaskId, status: "on_queue", vaId: userId });
+  }
+
+  const rows = await query<SessionRow[]>("sessions", {
+    method: "POST",
+    filters: "on_conflict=user_id",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: {
+      user_id: userId,
+      clocked_in: true,
+      clock_in_time: currentSession?.clock_in_time ?? null,
+      active_task: null,
+      session_date: currentSession?.session_date ?? null,
+      updated_at: new Date(now).toISOString(),
+    },
+  });
+
+  return { ok: true, session: rows[0] };
 }
 
 /** Mirrors performClockOut(): closes any orphaned open logs (including a

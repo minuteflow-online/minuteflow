@@ -19,6 +19,8 @@ interface TaskWidgetsTabsProps {
   hasActiveTask: boolean;
   onPlayAssignedTask: (task: VAAssignedTask) => void;
   onPlayTodo: (task: VAAssignedTask, todo: TaskTodo) => void;
+  /** Stops whatever task is currently running — real Stop action (Phase 1, Toni's call, 2026-11-02). */
+  onStopActiveTask?: () => void;
   /** Called when the task submitted was the one the VA is currently clocked into. */
   onActiveTaskSubmitted?: () => void;
   orgTimezone: string;
@@ -48,6 +50,7 @@ export default function TaskWidgetsTabs({
   hasActiveTask,
   onPlayAssignedTask,
   onPlayTodo,
+  onStopActiveTask,
   onActiveTaskSubmitted,
   orgTimezone,
   isAdmin,
@@ -100,6 +103,7 @@ export default function TaskWidgetsTabs({
             hasActiveTask={hasActiveTask}
             onPlayAssignedTask={onPlayAssignedTask}
             onPlayTodo={onPlayTodo}
+            onStopActiveTask={onStopActiveTask}
             onActiveTaskSubmitted={onActiveTaskSubmitted}
             orgTimezone={orgTimezone}
             isAdmin={isAdmin}

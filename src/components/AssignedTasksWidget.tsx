@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { VAAssignedTask, AssignedTaskStatus } from "@/types/database";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { fetchTodos, todoLabel, type TaskTodo } from "@/lib/taskTodos";
@@ -10,6 +10,8 @@ import RecurringBadge from "@/components/RecurringBadge";
 import { collapseRecurringSeriesBy } from "@/lib/taskSchedule";
 import { formatPayMoney } from "@/lib/payroll";
 import { usePayCurrency } from "@/hooks/usePayCurrency";
+import { createClient } from "@/lib/supabase/client";
+import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
 
 interface AssignedTasksWidgetProps {
   userId: string;
@@ -18,6 +20,10 @@ interface AssignedTasksWidgetProps {
   hasActiveTask: boolean;
   onPlayAssignedTask: (task: VAAssignedTask) => void;
   onPlayTodo: (task: VAAssignedTask, todo: TaskTodo) => void;
+  /** Stops whatever task is currently running (Phase 1 of the Start/Stop/Submit
+   *  rework, Toni's call 2026-11-02) — owned by the dashboard page since it has
+   *  to touch the running time_log and session state, not just this widget. */
+  onStopActiveTask?: () => void;
   /** Called after a submit whose task matches activeAssignedTaskId — the VA just
    *  submitted the task they're currently clocked into, so the caller should
    *  prompt for the next activity right away instead of leaving them to dwell
@@ -119,6 +125,7 @@ export default function AssignedTasksWidget({
   isAdmin = false,
   onPlayAssignedTask,
   onPlayTodo,
+  onStopActiveTask,
   onActiveTaskSubmitted,
   orgTimezone = "UTC",
   refetchCount = 0,
@@ -149,7 +156,90 @@ export default function AssignedTasksWidget({
   // drop-target highlight.
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
+  // Stop acts on whatever's currently active (there's only ever one), so one
+  // flag covers every row rather than a per-id Set like updatingIds.
+  const [stopping, setStopping] = useState(false);
+  // Add Memo: which task's modal is open, the time_log it's editing (found by
+  // lookup — the widget doesn't otherwise know raw log ids), and its fields.
+  const [memoTask, setMemoTask] = useState<VAAssignedTask | null>(null);
+  const [memoLogId, setMemoLogId] = useState<number | null>(null);
+  const [memoClientText, setMemoClientText] = useState("");
+  const [memoInternalText, setMemoInternalText] = useState("");
+  const [memoLoading, setMemoLoading] = useState(false);
+  const [memoSaving, setMemoSaving] = useState(false);
+  const [memoError, setMemoError] = useState("");
+  const memoSupabase = useMemo(() => createClient(), []);
 
+  const handleStop = useCallback(async () => {
+    if (!onStopActiveTask || stopping) return;
+    setStopping(true);
+    try {
+      await onStopActiveTask();
+    } finally {
+      setStopping(false);
+    }
+  }, [onStopActiveTask, stopping]);
+
+  const openMemoModal = useCallback(
+    async (task: VAAssignedTask) => {
+      setMemoTask(task);
+      setMemoError("");
+      setMemoLoading(true);
+      setMemoClientText("");
+      setMemoInternalText("");
+      setMemoLogId(null);
+      try {
+        const { data, error } = await memoSupabase
+          .from("time_logs")
+          .select("id, client_memo, internal_memo")
+          .eq("assigned_task_id", task.assigned_tasks.id)
+          .eq("user_id", userId)
+          .order("start_time", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          setMemoError("Start this task at least once before adding a memo — there's no logged time to attach it to yet.");
+          return;
+        }
+        setMemoLogId(data.id);
+        setMemoClientText(data.client_memo || "");
+        setMemoInternalText(data.internal_memo || "");
+      } catch {
+        setMemoError("Couldn't load this task's memo. Please try again.");
+      } finally {
+        setMemoLoading(false);
+      }
+    },
+    [memoSupabase, userId]
+  );
+
+  const closeMemoModal = useCallback(() => {
+    setMemoTask(null);
+    setMemoLogId(null);
+    setMemoError("");
+  }, []);
+
+  const saveMemo = useCallback(async () => {
+    if (!memoLogId) return;
+    setMemoSaving(true);
+    try {
+      const { error } = await memoSupabase
+        .from("time_logs")
+        .update({
+          client_memo: memoClientText || null,
+          internal_memo: memoInternalText || null,
+        })
+        .eq("id", memoLogId);
+      if (error) throw error;
+      void syncTaskDetailFromMemo(memoTask?.assigned_tasks.id ?? null, memoClientText);
+      closeMemoModal();
+    } catch {
+      setMemoError("Couldn't save — please try again.");
+    } finally {
+      setMemoSaving(false);
+    }
+  }, [memoSupabase, memoLogId, memoClientText, memoInternalText, memoTask, closeMemoModal]);
 
   const fetchTasks = useCallback(async () => {
     if (!userId) return;
@@ -708,13 +798,44 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
-                        {effectiveStatus === "in_progress" && (
+                        {/* Stop — Phase 1 of the Start/Stop/Submit rework
+                            (Toni's call, 2026-11-02). Only the one task
+                            actually running shows it; there's only ever one. */}
+                        {effectiveStatus === "in_progress" && activeAssignedTaskId === detail.id && (
+                          <button
+                            onClick={() => void handleStop()}
+                            disabled={stopping || !onStopActiveTask}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-[#a85840] cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor">
+                              <rect x="4" y="4" width="16" height="16" rx="2" />
+                            </svg>
+                            {stopping ? "Stopping..." : "Stop"}
+                          </button>
+                        )}
+
+                        {/* Submit now stays available on_queue or in_progress
+                            — stopping doesn't force an immediate submit, and
+                            a stopped task that's not resumed yet is exactly
+                            what still needs this button (Toni's call). */}
+                        {(effectiveStatus === "on_queue" || effectiveStatus === "in_progress") && (
                           <button
                             onClick={() => setSubmitTarget(task)}
                             disabled={isUpdating}
                             className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sky-500 text-white hover:bg-sky-600 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {isUpdating ? "Submitting..." : "Submit"}
+                          </button>
+                        )}
+
+                        {/* Add Memo — standalone, not folded into Submit
+                            (confirmed by Toni's own mockup, 2026-11-02). */}
+                        {(effectiveStatus === "on_queue" || effectiveStatus === "in_progress") && (
+                          <button
+                            onClick={() => void openMemoModal(task)}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-amber text-white hover:bg-amber/90 cursor-pointer transition-colors"
+                          >
+                            Add Memo
                           </button>
                         )}
                       </div>
@@ -753,6 +874,84 @@ export default function AssignedTasksWidget({
             }
           }}
         />
+      )}
+
+      {memoTask && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeMemoModal();
+          }}
+        >
+          <div className="mx-4 w-full max-w-md rounded-xl border border-sand bg-white shadow-xl">
+            <div className="flex items-start justify-between border-b border-sand px-4 py-3">
+              <div className="min-w-0">
+                <h3 className="text-xs font-bold uppercase tracking-wide text-espresso">Add Memo</h3>
+                <p className="truncate text-[13px] font-semibold leading-snug text-espresso">
+                  {memoTask.assigned_tasks.task_name}
+                </p>
+              </div>
+              <button
+                onClick={closeMemoModal}
+                className="shrink-0 text-stone hover:text-espresso"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 p-4">
+              {memoLoading ? (
+                <p className="text-[12px] italic text-stone/60">Loading…</p>
+              ) : memoError ? (
+                <p className="text-[12px] text-terracotta">{memoError}</p>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                      Client memo
+                    </label>
+                    <textarea
+                      value={memoClientText}
+                      onChange={(e) => setMemoClientText(e.target.value)}
+                      rows={3}
+                      placeholder="Visible on the client-facing report..."
+                      className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                      Internal memo
+                    </label>
+                    <textarea
+                      value={memoInternalText}
+                      onChange={(e) => setMemoInternalText(e.target.value)}
+                      rows={3}
+                      placeholder="Internal only — not shown to the client..."
+                      className="w-full resize-none rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => void saveMemo()}
+                      disabled={memoSaving}
+                      className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                    >
+                      {memoSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      onClick={closeMemoModal}
+                      disabled={memoSaving}
+                      className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
