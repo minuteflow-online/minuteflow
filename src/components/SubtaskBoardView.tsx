@@ -351,12 +351,15 @@ export default function SubtaskBoardView({
                     <p className="text-[11px] text-stone/60 italic px-1 py-2">Nothing here</p>
                   )}
                   {pageSubtasks.map((sub) => {
-                    const isDraggable = Boolean(onMoveStatus) && sub.status === DRAG_FROM_STATUS;
+                    // The status the card is shown under, not the raw task row:
+                    // a reviewer's approval often lands on the assignee row only,
+                    // so a card sitting in Approved used to refuse to drag.
+                    const isDraggable = Boolean(onMoveStatus) && shownStatus(sub) === DRAG_FROM_STATUS;
                     return (
                     <div
                       key={sub.id}
                       draggable={isDraggable}
-                      onDragStart={isDraggable ? (e) => { e.dataTransfer.effectAllowed = "move"; setDragging({ id: sub.id, status: sub.status }); } : undefined}
+                      onDragStart={isDraggable ? (e) => { e.dataTransfer.effectAllowed = "move"; setDragging({ id: sub.id, status: shownStatus(sub) }); } : undefined}
                       onDragEnd={isDraggable ? () => { setDragging(null); setOverCol(null); } : undefined}
                       onClick={() => onOpenEdit(sub)}
                       title={isDraggable ? "Drag to Completed to finish this task" : undefined}

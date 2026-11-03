@@ -371,6 +371,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // the team, most often) looking at "No subtasks match this filter" with
   // no visible indication why, since the toggle already read as active.
   const [listMyOnly, setListMyOnly] = useState(false);
+  // List/Board View: one account at a time, "" for all.
+  const [listAccountFilter, setListAccountFilter] = useState<string>("");
   // Batch-select subtasks in List View for one trash action.
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
@@ -959,7 +961,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // the card jumps columns at once; a failed PATCH refetches to undo it. The
   // dashboard bump re-pulls the checklist/other views so the change shows there.
   const handleMoveSubtaskStatus = useCallback(async (subtaskId: number, toStatus: string) => {
-    setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status: toStatus } : t)));
+    // The server writes the new status to every assignee row too, and the board
+    // places cards by assignee status — so the optimistic copy mirrors both, or
+    // the card would sit in Approved until the next refetch.
+    setSubtasks((prev) => prev.map((t) => (t.id === subtaskId
+      ? {
+          ...t,
+          status: toStatus,
+          assigned_task_assignees: (t.assigned_task_assignees ?? []).map((a) => ({ ...a, status: toStatus })),
+        }
+      : t)));
     try {
       const res = await fetch(`/api/assigned-tasks/${subtaskId}`, {
         method: "PATCH",
@@ -1087,15 +1098,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     return [...m.entries()].sort((x, y) => x[1].localeCompare(y[1]));
   }, [visibleSubtasks, activeProfiles]);
 
+  // Accounts present on this page's subtasks, for the account filter.
+  const listAccounts = useMemo(() => {
+    const names = new Set<string>();
+    for (const st of visibleSubtasks) if (st.account) names.add(st.account);
+    for (const t of outputSubtasks) if (t.account) names.add(t.account);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [visibleSubtasks, outputSubtasks]);
+
   const filteredListSubtasks = useMemo(() => {
-    if (!listMyOnly && !listMemberFilter) return visibleSubtasks;
+    if (!listMyOnly && !listMemberFilter && !listAccountFilter) return visibleSubtasks;
     return visibleSubtasks.filter((st) => {
       const assignees = st.assigned_task_assignees ?? [];
       if (listMyOnly && !assignees.some((a) => a.va_id === currentUserId)) return false;
       if (listMemberFilter && !assignees.some((a) => a.va_id === listMemberFilter)) return false;
+      if (listAccountFilter && st.account !== listAccountFilter) return false;
       return true;
     });
-  }, [visibleSubtasks, listMyOnly, listMemberFilter, currentUserId]);
+  }, [visibleSubtasks, listMyOnly, listMemberFilter, listAccountFilter, currentUserId]);
 
   // Output Based subtasks in List View used to ignore My Subtasks/member
   // filtering entirely — always showing every assignee's fixed-pay work
@@ -1103,13 +1123,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // one assignee per output task, so it's a plain equality check rather
   // than the array-of-assignees search above.
   const filteredOutputSubtasks = useMemo(() => {
-    if (!listMyOnly && !listMemberFilter) return outputSubtasks;
+    if (!listMyOnly && !listMemberFilter && !listAccountFilter) return outputSubtasks;
     return outputSubtasks.filter((task) => {
       if (listMyOnly && task.assigned_to !== currentUserId) return false;
       if (listMemberFilter && task.assigned_to !== listMemberFilter) return false;
+      if (listAccountFilter && task.account !== listAccountFilter) return false;
       return true;
     });
-  }, [outputSubtasks, listMyOnly, listMemberFilter, currentUserId]);
+  }, [outputSubtasks, listMyOnly, listMemberFilter, listAccountFilter, currentUserId]);
 
   // "Where they are" — per assigned VA, completed/total on the selected node's own
   // subtasks. Scoped to this node only (not nested sub-objectives): each sub-objective
@@ -1315,6 +1336,45 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     </div>
   );
 
+  // List/Board View filters — My Subtasks, member, account. One render shared
+  // by both views so they can't drift.
+  const renderListFilters = () =>
+    visibleSubtasks.length > 0 && (
+      <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
+        <button
+          type="button"
+          onClick={() => setListMyOnly((v) => !v)}
+          className={`px-2 py-[3px] rounded-full text-[10px] font-semibold border transition-colors ${listMyOnly ? "bg-sage text-white border-sage" : "bg-white text-walnut border-sand hover:border-stone"}`}
+        >
+          My Subtasks
+        </button>
+        {listMembers.length > 0 && (
+          <select
+            value={listMemberFilter}
+            onChange={(e) => setListMemberFilter(e.target.value)}
+            className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+          >
+            <option value="">All members</option>
+            {listMembers.map(([id, name]) => (
+              <option key={id} value={id}>{name}</option>
+            ))}
+          </select>
+        )}
+        {listAccounts.length > 0 && (
+          <select
+            value={listAccountFilter}
+            onChange={(e) => setListAccountFilter(e.target.value)}
+            className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+          >
+            <option value="">All accounts</option>
+            {listAccounts.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        )}
+      </div>
+    );
+
   // No early "if (!selectedProject) return null" — this same card renders on
   // the landing page too (nothing selected), scoped to every objective of
   // this kind instead of one branch. Every selectedProject reference below is
@@ -1383,7 +1443,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             sight behind the overlay. */}
         {subtaskView === "board" && (
         <div className={boardExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6" : "space-y-3"}>
-          <div className={boardExpanded ? "flex-1 min-w-0 overflow-auto" : undefined}>
+          <div className={boardExpanded ? "flex-1 min-w-0 overflow-auto space-y-2" : "space-y-2"}>
+          {/* Above the columns in Board View (below them read as belonging to
+              the next section) and inside the overlay, so filtering still
+              works in full screen. */}
+          {renderListFilters()}
           <SubtaskBoardView
             subtasks={filteredListSubtasks}
             editingSubId={editingSubId}
@@ -1493,29 +1557,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         </div>
         )}
 
-        {(subtaskView === "list" || subtaskView === "board") && visibleSubtasks.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
-            <button
-              type="button"
-              onClick={() => setListMyOnly((v) => !v)}
-              className={`px-2 py-[3px] rounded-full text-[10px] font-semibold border transition-colors ${listMyOnly ? "bg-sage text-white border-sage" : "bg-white text-walnut border-sand hover:border-stone"}`}
-            >
-              My Subtasks
-            </button>
-            {listMembers.length > 0 && (
-              <select
-                value={listMemberFilter}
-                onChange={(e) => setListMemberFilter(e.target.value)}
-                className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-              >
-                <option value="">All members</option>
-                {listMembers.map(([id, name]) => (
-                  <option key={id} value={id}>{name}</option>
-                ))}
-              </select>
-            )}
-          </div>
-        )}
+        {subtaskView === "list" && renderListFilters()}
         {subtaskView === "list" && visibleSubtasks.length > 0 && (() => {
           const SIZE = 8;
           const pages = Math.max(1, Math.ceil(filteredListSubtasks.length / SIZE));
