@@ -11,7 +11,6 @@
 import { query, PostgrestError } from "./db";
 import { cappedCloseTime } from "./cappedCloseTime";
 import { isBillableCategory } from "./billable";
-import { setAssignedTaskStatus } from "./tasks";
 
 export interface Profile {
   id: string;
@@ -162,19 +161,13 @@ export async function closeOpenLogs(userId: string, now: string, orgTimezone: st
     });
   }
 
-  // Same gap the web app had (Phase 1, Toni's call, 2026-11-02): closing a
-  // log here never used to touch the assignment's own status, so a task
-  // auto-stopped by clocking out, clocking in, or starting a different task
-  // kept reading "in_progress" forever even with nothing running behind it.
-  // Shared by every caller of this function (clock-in, clock-out,
-  // startAssignedTask's switch), so one fix here covers all three — unlike
-  // the web app, which had this sweep duplicated in several places.
-  const demotedIds = new Set(
-    openLogs.map((l) => l.assigned_task_id).filter((id): id is number => id != null)
-  );
-  for (const assignedTaskId of demotedIds) {
-    void setAssignedTaskStatus({ assignedTaskId, status: "on_queue", vaId: userId });
-  }
+  // Closing a log here does NOT touch the assignment's own status — once a
+  // task is started it stays "in_progress" until Submit, even across a
+  // clock-out, clock-in, or switching to a different task (Toni's call,
+  // 2026-11-03, reversing the auto-demote-to-on_queue behavior from Phase 1).
+  // A task left in_progress with nothing running behind it is expected and
+  // fine: TasksPanel's Start button already shows for any in_progress task
+  // that isn't the live active one, so it's always one click to resume.
 }
 
 export interface ClockInResult {
@@ -298,10 +291,12 @@ export interface StopTaskResult {
 }
 
 /** Real Stop — mirrors web's stopCurrentTask (Phase 1/4, Toni's call,
- *  2026-11-02): closes the running task's own log, demotes its assignment
- *  back to on_queue, and clears the session's active_task to null while
- *  staying clocked in. Nothing else starts — the clock-in timer (shown by
- *  ClockPanel) keeps running on its own, same as web's top-bar clock. */
+ *  2026-11-02): closes the running task's own log and clears the session's
+ *  active_task to null while staying clocked in. The assignment itself
+ *  stays "in_progress" — Stop just pauses the timer, it doesn't send the
+ *  task back to on_queue (Toni's call, 2026-11-03). Nothing else starts —
+ *  the clock-in timer (shown by ClockPanel) keeps running on its own, same
+ *  as web's top-bar clock. */
 export async function stopCurrentTask(
   userId: string,
   currentSession: SessionRow | null
@@ -319,10 +314,6 @@ export async function stopCurrentTask(
       duration_ms: Math.max(0, now - startMs),
     },
   });
-
-  if (activeTask.assignedTaskId != null) {
-    void setAssignedTaskStatus({ assignedTaskId: activeTask.assignedTaskId, status: "on_queue", vaId: userId });
-  }
 
   const rows = await query<SessionRow[]>("sessions", {
     method: "POST",
