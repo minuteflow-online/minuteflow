@@ -72,16 +72,18 @@ function memberLabel(m: TeamMember): string {
   return m.full_name || m.username || "?";
 }
 
-function AvatarCircle({ name, size = 18 }: { name: string; size?: number }) {
+// Their photo when they have one, otherwise the initials circle used
+// everywhere else in the app — same fallback rule as web's Avatar
+// (DashboardMessagePanel.tsx).
+function AvatarCircle({ name, avatarUrl, size = 18 }: { name: string; avatarUrl?: string | null; size?: number }) {
+  const style = { width: size, height: size, fontSize: Math.round(size * 0.42) };
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt={name} title={name} style={style} className="rounded-full object-cover shrink-0 border border-white" />;
+  }
   return (
     <span
       title={name}
-      style={{
-        width: size,
-        height: size,
-        fontSize: Math.round(size * 0.42),
-        backgroundColor: getAvatarColor(name),
-      }}
+      style={{ ...style, backgroundColor: getAvatarColor(name) }}
       className="inline-flex items-center justify-center rounded-full font-bold text-white shrink-0 border border-white"
     >
       {getInitials(name)}
@@ -94,7 +96,7 @@ const inputClass = "w-full rounded-lg border border-sand px-2 py-1.5 text-xs tex
 // The DM autocomplete's stand-in for "everyone in this chat" — matched by
 // notifyMentions() server-side the same way a real name is, scoped to the
 // conversation's own members (see PR #253's restrictToIds).
-const EVERYONE_MENTION: ConversationMember = { id: "__everyone__", name: "Everyone" };
+const EVERYONE_MENTION: ConversationMember = { id: "__everyone__", name: "Everyone", avatar_url: null };
 
 /** The partial name being typed after an "@", or null when the caret isn't
  *  in a mention. Only the run of characters since the last "@" counts — a
@@ -549,7 +551,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
 
               <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-0.5">
                 <div className="flex items-start gap-2">
-                  <AvatarCircle name={authorName(activeTopic.author)} size={20} />
+                  <AvatarCircle name={authorName(activeTopic.author)} avatarUrl={activeTopic.author?.avatar_url} size={20} />
                   <div className="min-w-0 flex-1 rounded-lg bg-parchment/40 px-2.5 py-2">
                     {editingTopic ? (
                       <div className="space-y-1.5">
@@ -588,7 +590,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
 
                 {activeTopic.project_message_comments.map((c) => (
                   <div key={c.id} className="flex items-start gap-2 pl-4">
-                    <AvatarCircle name={authorName(c.author)} size={18} />
+                    <AvatarCircle name={authorName(c.author)} avatarUrl={c.author?.avatar_url} size={18} />
                     <div className="min-w-0 flex-1 rounded-lg bg-cream px-2.5 py-1.5">
                       {editingComment === c.id ? (
                         <div className="space-y-1.5">
@@ -720,7 +722,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                           {t.title || "Untitled"}
                         </span>
                         <span className="flex items-center gap-1.5 shrink-0">
-                          <AvatarCircle name={authorName(t.author)} size={16} />
+                          <AvatarCircle name={authorName(t.author)} avatarUrl={t.author?.avatar_url} size={16} />
                           {t.project_message_comments.length > 0 && (
                             <span className="text-[10px] text-stone">{t.project_message_comments.length}</span>
                           )}
@@ -779,7 +781,13 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                 {dms.length === 0 && <p className="text-[11px] text-walnut">No messages yet — say hi.</p>}
                 {dms.map((m) => (
                   <div key={m.id} className={`flex items-end gap-1.5 ${m.mine ? "flex-row-reverse" : ""}`}>
-                    {!m.mine && <AvatarCircle name={m.sender_name} size={20} />}
+                    {!m.mine && (
+                      <AvatarCircle
+                        name={m.sender_name}
+                        avatarUrl={activeConv.members.find((p) => p.id === m.sender_id)?.avatar_url}
+                        size={20}
+                      />
+                    )}
                     <div
                       className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[11px] ${
                         m.mine ? "bg-amber-soft text-espresso border border-amber/20" : "bg-parchment text-espresso"
@@ -981,7 +989,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                     <span className="flex items-center gap-1.5">
                       <span className="flex -space-x-1 shrink-0">
                         {c.members.slice(0, 3).map((m) => (
-                          <AvatarCircle key={m.id} name={m.name} size={18} />
+                          <AvatarCircle key={m.id} name={m.name} avatarUrl={m.avatar_url} size={18} />
                         ))}
                       </span>
                       <span className="text-[12px] font-semibold text-espresso truncate">
@@ -1035,7 +1043,7 @@ export default function MessageBoardPanel({ userId, openDmRequest }: MessageBoar
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="flex -space-x-1 shrink-0">
                           {c.members.slice(0, 3).map((m) => (
-                            <AvatarCircle key={m.id} name={m.name} size={18} />
+                            <AvatarCircle key={m.id} name={m.name} avatarUrl={m.avatar_url} size={18} />
                           ))}
                         </span>
                         <span className="text-[12px] font-semibold text-espresso truncate">
