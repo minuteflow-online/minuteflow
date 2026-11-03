@@ -8,6 +8,7 @@
 //      safeStorage (OS keychain / DPAPI), so a login survives an app
 //      restart without the token sitting around as plain text.
 const { app, BrowserWindow, ipcMain, desktopCapturer, safeStorage, session, dialog, Tray, Menu, nativeImage, powerMonitor, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const { SUPABASE_URL, API_BASE } = require("./config");
@@ -236,11 +237,60 @@ if (gotSingleInstanceLock) {
 
     createWindow();
     createTray();
+    setupAutoUpdater();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
+}
+
+// ── Auto-update ──────────────────────────────────────────────────────────
+// Checks GitHub Releases (configured via package.json's "build.publish") for
+// a newer version than the one currently running. Downloads quietly in the
+// background, but — same "never force something disruptive mid-work"
+// reasoning as the quit-while-clocked-in warning above — only prompts to
+// restart rather than installing on its own; "Later" just means it asks
+// again at the next check instead of forcing a quit-time install. Skipped in
+// dev (unpackaged) runs, since electron-updater expects a real packaged
+// build with update metadata that `npm run dev` never produces.
+const UPDATE_RECHECK_MS = 4 * 60 * 60 * 1000;
+
+function setupAutoUpdater() {
+  if (isDev) return;
+
+  autoUpdater.autoDownload = true;
+  // Don't force an install just because the app happened to quit — only the
+  // explicit "Restart Now" below should ever trigger one.
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  autoUpdater.on("update-downloaded", (info) => {
+    // Read fresh rather than captured at setup time — mainWindow can be
+    // recreated (app.on("activate")) well after this listener was attached.
+    dialog
+      .showMessageBox(mainWindow, {
+        type: "info",
+        buttons: ["Restart Now", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+        title: "Update Ready",
+        message: `MinuteFlow ${info.version} is ready to install.`,
+        detail: "Restart now to apply it, or keep working — it'll ask again later.",
+      })
+      .then(({ response }) => {
+        if (response === 0) autoUpdater.quitAndInstall();
+      });
+  });
+
+  autoUpdater.on("error", (err) => {
+    console.error("auto-updater error:", err);
+  });
+
+  const check = () => {
+    autoUpdater.checkForUpdates().catch((err) => console.error("update check failed:", err));
+  };
+  check();
+  setInterval(check, UPDATE_RECHECK_MS);
 }
 
 // Closing to tray means the window is hidden, not destroyed, so this only
