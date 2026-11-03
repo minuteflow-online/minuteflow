@@ -42,6 +42,7 @@ interface Broadcast {
   link: string | null;
   image_url: string | null;
   sort_order: number;
+  tags: string[];
 }
 
 interface TeamMember {
@@ -61,6 +62,11 @@ const CATEGORY_OPTIONS: { label: string; value: Broadcast["category"] }[] = [
   { label: "Job Posting", value: "job_posting" },
   { label: "Onboarding", value: "onboarding" },
 ];
+
+// Offered alongside whatever's already in use (knownTags, computed from
+// existing broadcasts) — same suggestions-plus-ad-hoc pattern as bug
+// reports' REPORT_TAG_SUGGESTIONS.
+const TAG_SUGGESTIONS = ["minuteflow", "covap operations", "from the ceo", "tech"];
 
 const EMPLOYMENT_TYPE_OPTIONS: { label: string; value: string }[] = [
   { label: "Full Time", value: "full_time" },
@@ -205,6 +211,8 @@ export default function VaBroadcastsAdminTab() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [category, setCategory] = useState<Broadcast["category"]>("memo");
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
 
   // Recipients
   const [recipientMode, setRecipientMode] = useState<RecipientMode>("all");
@@ -261,6 +269,8 @@ export default function VaBroadcastsAdminTab() {
     setTitle("");
     setBody("");
     setCategory("memo");
+    setTags([]);
+    setTagDraft("");
     setRecipientMode("all");
     setSelectedEmpTypes([]);
     setSelectedIndividuals([]);
@@ -279,6 +289,8 @@ export default function VaBroadcastsAdminTab() {
     setTitle(b.title);
     setBody(isRichHtml(b.body) ? b.body : plainToHtml(b.body));
     setCategory(b.category);
+    setTags(b.tags ?? []);
+    setTagDraft("");
 
     const { mode, empTypes, individuals } = parseRecipientsForEdit(b.recipients);
     setRecipientMode(mode);
@@ -367,6 +379,7 @@ export default function VaBroadcastsAdminTab() {
         link: link.trim() || null,
         image_url: imageUrl.trim() || null,
         sort_order: sortOrder,
+        tags,
       };
 
       const res = editing
@@ -402,7 +415,7 @@ export default function VaBroadcastsAdminTab() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [title, body, category, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder]
+    [title, body, category, tags, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder]
   );
 
   const handleDelete = useCallback(
@@ -484,6 +497,12 @@ export default function VaBroadcastsAdminTab() {
   // Every active team member, admins included, for individual selection
   const pickableMembers = teamMembers;
 
+  // Suggestions plus whatever tags are already in use elsewhere — same
+  // "standard options + ad-hoc" pattern as bug reports' knownTags.
+  const tagOptions = Array.from(
+    new Set([...TAG_SUGGESTIONS, ...broadcasts.flatMap((b) => b.tags ?? [])])
+  ).sort((a, b) => a.localeCompare(b));
+
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
@@ -557,6 +576,62 @@ export default function VaBroadcastsAdminTab() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Tags — lets the portal filter memos by topic (Toni's call, 2026-11-04) */}
+            <div>
+              <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
+                Tags
+              </label>
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center gap-1 rounded-full bg-slate-blue-soft px-2 py-[2px] text-[10px] font-semibold capitalize text-slate-blue"
+                    >
+                      {tag}
+                      <button
+                        type="button"
+                        onClick={() => setTags((t) => t.filter((x) => x !== tag))}
+                        className="cursor-pointer text-slate-blue/70 hover:text-slate-blue"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {tagOptions.filter((t) => !tags.includes(t)).length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {tagOptions
+                    .filter((t) => !tags.includes(t))
+                    .map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => setTags((t) => [...t, tag])}
+                        className="cursor-pointer rounded-full bg-stone/10 px-2 py-[2px] text-[10px] font-semibold capitalize text-stone hover:bg-stone/20"
+                      >
+                        + {tag}
+                      </button>
+                    ))}
+                </div>
+              )}
+              <input
+                type="text"
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const next = tagDraft.trim().toLowerCase();
+                  setTagDraft("");
+                  if (next && !tags.includes(next)) setTags((t) => [...t, next]);
+                }}
+                placeholder="New tag — press Enter"
+                className="w-full py-1.5 px-3 border border-sand rounded-lg text-[12px] text-ink bg-white outline-none focus:border-terracotta"
+              />
             </div>
 
             {/* Recipients */}
@@ -896,6 +971,14 @@ export default function VaBroadcastsAdminTab() {
                     <span className="text-[11px] text-stone">{fmtDate(b.created_at)}</span>
                     <CategoryBadge category={b.category} />
                     <StatusBadge status={b.status} scheduledAt={b.scheduled_at} />
+                    {(b.tags ?? []).map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-blue"
+                      >
+                        {tag}
+                      </span>
+                    ))}
                     <button
                       onClick={() => setShowAcks((s) => ({ ...s, [b.id]: !s[b.id] }))}
                       className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-medium text-sage cursor-pointer hover:bg-sage/20 transition-colors"
