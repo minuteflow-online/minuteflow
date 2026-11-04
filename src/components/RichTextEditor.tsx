@@ -74,6 +74,40 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
     emit();
   };
 
+  // Walks up from the selection to the nearest <ol> inside the editor, if any.
+  const findAncestorOl = (): HTMLOListElement | null => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    let node: Node | null = sel.getRangeAt(0).startContainer;
+    while (node && node !== editorRef.current) {
+      if (node instanceof HTMLOListElement) return node;
+      node = node.parentNode;
+    }
+    return null;
+  };
+
+  // Numbered and lettered lists are both an <ol> — only list-style-type
+  // differs. Already-in-a-list just switches its style in place (so Letters
+  // on an existing numbered list doesn't insert a nested list); clicking the
+  // active style again turns the list off, same as a normal toggle button.
+  const orderedList = (style: "decimal" | "lower-alpha") => {
+    editorRef.current?.focus();
+    const existing = findAncestorOl();
+    if (existing) {
+      const current = existing.style.listStyleType || "decimal";
+      if (current === style) {
+        document.execCommand("insertOrderedList");
+      } else {
+        existing.style.listStyleType = style === "decimal" ? "" : style;
+      }
+    } else {
+      document.execCommand("insertOrderedList");
+      const created = findAncestorOl();
+      if (created && style !== "decimal") created.style.listStyleType = style;
+    }
+    emit();
+  };
+
   const addLink = () => {
     saveSelection();
     const raw = window.prompt("Link URL", "https://");
@@ -201,11 +235,33 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
           </svg>
         </button>
         <span className="mx-1 h-4 w-px bg-sand" />
+        <button type="button" title="Align left" onMouseDown={keep} onClick={() => exec("justifyLeft")} className={btn}>
+          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="14" y2="12" /><line x1="4" y1="18" x2="20" y2="18" />
+          </svg>
+        </button>
+        <button type="button" title="Align center" onMouseDown={keep} onClick={() => exec("justifyCenter")} className={btn}>
+          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="4" y1="6" x2="20" y2="6" /><line x1="7" y1="12" x2="17" y2="12" /><line x1="4" y1="18" x2="20" y2="18" />
+          </svg>
+        </button>
+        <button type="button" title="Align right" onMouseDown={keep} onClick={() => exec("justifyRight")} className={btn}>
+          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="4" y1="6" x2="20" y2="6" /><line x1="10" y1="12" x2="20" y2="12" /><line x1="4" y1="18" x2="20" y2="18" />
+          </svg>
+        </button>
+        <span className="mx-1 h-4 w-px bg-sand" />
+        <button type="button" title="Numbered list" onMouseDown={keep} onClick={() => orderedList("decimal")} className={`${btn} font-semibold`}>
+          1.
+        </button>
         <button type="button" title="Bulleted list" onMouseDown={keep} onClick={() => exec("insertUnorderedList")} className={btn}>
           <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="9" y1="6" x2="20" y2="6" /><line x1="9" y1="12" x2="20" y2="12" /><line x1="9" y1="18" x2="20" y2="18" />
             <circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" />
           </svg>
+        </button>
+        <button type="button" title="Lettered list" onMouseDown={keep} onClick={() => orderedList("lower-alpha")} className={`${btn} font-semibold`}>
+          a.
         </button>
         <button type="button" title="Insert link" onMouseDown={keep} onClick={addLink} className={btn}>
           <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
