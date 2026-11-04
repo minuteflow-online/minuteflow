@@ -1851,7 +1851,12 @@ export default function DashboardPage() {
     // Excludes anything younger than SWITCH_MIN_AGE_MS — a log some OTHER
     // tab or action just created is not what this is here to catch, and
     // closing it out from under that tab is exactly what happened to
-    // Charinade on 2026-09-09 (see SWITCH_MIN_AGE_MS's own comment).
+    // Charinade on 2026-09-09 (see SWITCH_MIN_AGE_MS's own comment). The
+    // Clock In marker log is exempted from that age check regardless — it's
+    // never "someone else's" work, so there's no race to protect, and
+    // leaving it exempt meant resuming within 30s of clocking in hit the
+    // one-open-log DB constraint instead of switching cleanly (confirmed
+    // live, 2026-11-04).
     {
       const gapCutoff = new Date(new Date(now).getTime() - SWITCH_MIN_AGE_MS).toISOString();
       const { data: openLogs } = await supabase
@@ -1860,7 +1865,7 @@ export default function DashboardPage() {
         .eq("user_id", userId)
         .is("end_time", null)
         .neq("category", "Clock Out")
-        .lt("start_time", gapCutoff);
+        .or(`start_time.lt.${gapCutoff},task_name.eq.Clock In`);
 
       if (openLogs && openLogs.length > 0) {
         const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now, orgTimezone)]));
@@ -2594,7 +2599,13 @@ export default function DashboardPage() {
         // Excludes anything younger than SWITCH_MIN_AGE_MS — a log some OTHER
         // tab or action just created is not what this is here to catch, and
         // closing it out from under that tab is exactly what happened to
-        // Charinade on 2026-09-09 (see SWITCH_MIN_AGE_MS's own comment).
+        // Charinade on 2026-09-09 (see SWITCH_MIN_AGE_MS's own comment). The
+        // Clock In marker log is exempted from that age check regardless —
+        // it's never "someone else's" work, so there's no race to protect,
+        // and leaving it exempt meant starting a task within 30s of clocking
+        // in hit the one-open-log DB constraint instead of switching
+        // cleanly, with the ONLY symptom being a confusing "you're already
+        // tracking something else" alert (confirmed live, 2026-11-04).
         {
           const gapCutoff = new Date(new Date(now).getTime() - SWITCH_MIN_AGE_MS).toISOString();
           const { data: openLogs } = await supabase
@@ -2603,7 +2614,7 @@ export default function DashboardPage() {
             .eq("user_id", userId)
             .is("end_time", null)
             .neq("category", "Clock Out")
-            .lt("start_time", gapCutoff);
+            .or(`start_time.lt.${gapCutoff},task_name.eq.Clock In`);
 
           if (openLogs && openLogs.length > 0) {
             // A log abandoned overnight (a "Clock In" nobody switched off:
