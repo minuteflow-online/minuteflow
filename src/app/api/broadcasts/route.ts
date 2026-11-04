@@ -18,6 +18,8 @@ type Profile = {
   id: string;
   role: string;
   employment_type: string | null;
+  position: string | null;
+  pay_rate_type: string | null;
   is_active: boolean;
   full_name: string | null;
 };
@@ -158,7 +160,7 @@ async function sendBroadcastEmail(
   // Fetch active profiles
   const { data: profiles } = await adminClient
     .from("profiles")
-    .select("id, role, employment_type, is_active, full_name")
+    .select("id, role, employment_type, position, pay_rate_type, is_active, full_name")
     .eq("is_active", true);
 
   if (!profiles || profiles.length === 0) return;
@@ -221,7 +223,7 @@ async function sendBroadcastTelegram(
 
   const { data: profiles } = await adminClient
     .from("profiles")
-    .select("id, role, employment_type, is_active, full_name, username, telegram_chat_id")
+    .select("id, role, employment_type, position, pay_rate_type, is_active, full_name, username, telegram_chat_id")
     .eq("is_active", true);
 
   const path = broadcastPortalPath(broadcast.category, broadcast.id);
@@ -266,7 +268,7 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, employment_type, department, is_active")
+    .select("role, employment_type, position, pay_rate_type, department, is_active")
     .eq("id", user.id)
     .single();
 
@@ -304,7 +306,7 @@ export async function GET(request: Request) {
     });
     const { data: members } = await adminClient
       .from("profiles")
-      .select("id, role, employment_type, is_active, full_name");
+      .select("id, role, employment_type, position, pay_rate_type, is_active, full_name");
     const memberList: Profile[] = members || [];
     const memberName = new Map(memberList.map((m) => [m.id, m.full_name || "Unknown"]));
 
@@ -397,6 +399,8 @@ export async function GET(request: Request) {
     id: user.id,
     role: profile.role,
     employment_type: profile.employment_type,
+    position: profile.position,
+    pay_rate_type: profile.pay_rate_type,
     is_active: profile.is_active !== false,
   };
   const visibleBroadcasts = allPublished.filter((b) =>
