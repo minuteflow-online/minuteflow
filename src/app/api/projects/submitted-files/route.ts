@@ -13,6 +13,9 @@ function serviceClient() {
   );
 }
 
+/** Same cap as files-overview — high enough that filtering finds old work. */
+const LIMIT = 300;
+
 /**
  * GET /api/projects/submitted-files?projectIds=a,b,c
  * Files that came IN through a task submission for the given objectives/
@@ -21,7 +24,8 @@ function serviceClient() {
  * attachment (assigned_task_attachments rows tied to a submission) or a link
  * the VA pasted (task_submissions.submission_link). Both are scoped through the
  * objective's own subtasks (assigned_tasks.project_id).
- * Returns { files: [{ id, project_id, filename, uploaded_at, href? }] }.
+ * Returns { files: [{ id, project_id, filename, uploaded_at, href?, account,
+ * task_id, task_name, person_id, person_name }] } — person is whoever submitted.
  */
 export async function GET(request: Request) {
   const authClient = await createClient();
@@ -45,28 +49,47 @@ export async function GET(request: Request) {
   const ids = await filterAccessibleProjectIds(supabase, profile, user.id, requestedIds);
   if (ids.length === 0) return Response.json({ files: [] });
 
-  // 1. Subtasks under these objectives → task id → project id.
+  // 1. Subtasks under these objectives → task id → project, name, account.
   const { data: tasks, error: tErr } = await supabase
     .from("assigned_tasks")
-    .select("id, project_id")
+    .select("id, project_id, task_name, account")
     .in("project_id", ids)
     .is("deleted_at", null);
   if (tErr) return Response.json({ error: tErr.message }, { status: 500 });
-  const taskProject = new Map<number, string>();
-  for (const t of tasks ?? []) taskProject.set(t.id as number, t.project_id as string);
-  const taskIds = Array.from(taskProject.keys());
+  const taskById = new Map<number, { project_id: string; task_name: string | null; account: string | null }>();
+  for (const t of tasks ?? []) {
+    taskById.set(t.id as number, {
+      project_id: t.project_id as string,
+      task_name: (t.task_name as string | null) ?? null,
+      account: (t.account as string | null) ?? null,
+    });
+  }
+  const taskIds = Array.from(taskById.keys());
   if (taskIds.length === 0) return Response.json({ files: [] });
 
   // 2. Submissions on those subtasks → submission id → task id, plus any link.
   const { data: subs, error: sErr } = await supabase
     .from("task_submissions")
-    .select("id, assigned_task_id, submission_link, created_at")
+    .select("id, assigned_task_id, user_id, submission_link, created_at")
     .in("assigned_task_id", taskIds);
   if (sErr) return Response.json({ error: sErr.message }, { status: 500 });
-  const subTask = new Map<number, number>();
-  for (const s of subs ?? []) subTask.set(s.id as number, s.assigned_task_id as number);
+  const subById = new Map<number, { task_id: number; user_id: string | null }>();
+  for (const s of subs ?? []) {
+    subById.set(s.id as number, { task_id: s.assigned_task_id as number, user_id: (s.user_id as string | null) ?? null });
+  }
 
-  type Item = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string };
+  type Item = {
+    id: string;
+    project_id: string;
+    filename: string;
+    uploaded_at: string;
+    href?: string;
+    account: string | null;
+    task_id: number;
+    task_name: string | null;
+    person_id: string | null;
+    person_name: string | null;
+  };
   const items: Item[] = [];
 
   // Pasted links count as submitted docs too — a submission can carry more
@@ -75,29 +98,66 @@ export async function GET(request: Request) {
   for (const s of subs ?? []) {
     const links = splitSubmissionLinks(s.submission_link as string | null);
     if (links.length === 0) continue;
-    const pid = taskProject.get(s.assigned_task_id as number);
-    if (!pid) continue;
+    const taskId = s.assigned_task_id as number;
+    const task = taskById.get(taskId);
+    if (!task) continue;
     links.forEach((link, i) => {
-      items.push({ id: `link-${s.id}-${i}`, project_id: pid, filename: link, uploaded_at: s.created_at as string, href: link });
+      items.push({
+        id: `link-${s.id}-${i}`,
+        project_id: task.project_id,
+        filename: link,
+        uploaded_at: s.created_at as string,
+        href: link,
+        account: task.account,
+        task_id: taskId,
+        task_name: task.task_name,
+        person_id: (s.user_id as string | null) ?? null,
+        person_name: null,
+      });
     });
   }
 
   // 3. Attachments tied to those submissions.
-  const subIds = Array.from(subTask.keys());
+  const subIds = Array.from(subById.keys());
   if (subIds.length > 0) {
     const { data: atts, error: aErr } = await supabase
       .from("assigned_task_attachments")
-      .select("id, submission_id, filename, uploaded_at")
+      .select("id, submission_id, filename, uploaded_at, uploaded_by")
       .in("submission_id", subIds);
     if (aErr) return Response.json({ error: aErr.message }, { status: 500 });
     for (const a of atts ?? []) {
-      const taskId = subTask.get(a.submission_id as number);
-      const pid = taskId != null ? taskProject.get(taskId) : undefined;
-      if (!pid) continue;
-      items.push({ id: `att-${a.id}`, project_id: pid, filename: (a.filename as string) || "Attachment", uploaded_at: a.uploaded_at as string });
+      const sub = subById.get(a.submission_id as number);
+      const task = sub ? taskById.get(sub.task_id) : undefined;
+      if (!sub || !task) continue;
+      items.push({
+        id: `att-${a.id}`,
+        project_id: task.project_id,
+        filename: (a.filename as string) || "Attachment",
+        uploaded_at: a.uploaded_at as string,
+        account: task.account,
+        task_id: sub.task_id,
+        task_name: task.task_name,
+        // The submitter, falling back to whoever stored the file.
+        person_id: sub.user_id ?? ((a.uploaded_by as string | null) ?? null),
+        person_name: null,
+      });
     }
   }
 
   items.sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
-  return Response.json({ files: items.slice(0, 50) });
+  const page = items.slice(0, LIMIT);
+
+  // Names for the "who" filter, in one lookup.
+  const personIds = Array.from(new Set(page.map((f) => f.person_id).filter((p): p is string => Boolean(p))));
+  if (personIds.length > 0) {
+    const { data: people } = await supabase
+      .from("profiles")
+      .select("id, full_name, username")
+      .in("id", personIds);
+    const nameById = new Map<string, string>();
+    for (const p of people ?? []) nameById.set(p.id as string, (p.full_name as string) || (p.username as string) || "");
+    for (const f of page) if (f.person_id) f.person_name = nameById.get(f.person_id) || null;
+  }
+
+  return Response.json({ files: page });
 }
