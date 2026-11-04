@@ -272,7 +272,10 @@ export default function DashboardPage() {
   // started-then-stopped-but-never-submitted work. Null means "not checked
   // /nothing open"; a non-empty array means Clock Out is blocked until each
   // is Stopped or Submitted.
-  const [clockOutBlockedTasks, setClockOutBlockedTasks] = useState<{ id: number; task_name: string }[] | null>(null);
+  const [clockOutBlockedTasks, setClockOutBlockedTasks] = useState<
+    { id: number; task_name: string; logId: number; start_time: string }[] | null
+  >(null);
+  const [stoppingBlockedLogId, setStoppingBlockedLogId] = useState<number | null>(null);
 
   // Close-task-before-clockout modal state
   const [showClockOutModal, setShowClockOutModal] = useState(false);
@@ -969,6 +972,59 @@ export default function DashboardPage() {
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
   }, [activeTask, userId, supabase, session]);
 
+  // Closes a stray open log surfaced by the Clock Out gate directly — same
+  // close-the-row logic as stopCurrentTask above, generalized to any open
+  // log rather than just whatever's in activeTask. A blocked task here is
+  // exactly the invisible, already-submitted-but-still-running log that has
+  // no Stop button reachable anywhere else in the app (confirmed live, two
+  // independent reports, 2026-11-04) — this is the escape hatch for it,
+  // and for anything else that might leave a log open this way in the future.
+  const stopBlockedTask = useCallback(
+    async (task: { id: number; task_name: string; logId: number; start_time: string }) => {
+      if (!userId) return;
+      setStoppingBlockedLogId(task.logId);
+      try {
+        const now = new Date().toISOString();
+        const durationMs = Math.max(0, new Date(now).getTime() - new Date(task.start_time).getTime());
+        const { error } = await supabase
+          .from("time_logs")
+          .update({ end_time: now, duration_ms: durationMs })
+          .eq("id", task.logId);
+        if (error) {
+          alert("Couldn't stop that task: " + error.message + ". Please try again.");
+          return;
+        }
+        setTimeLogs((prev) =>
+          prev.map((log) => (log.id === task.logId ? { ...log, end_time: now, duration_ms: durationMs } : log))
+        );
+        // If the UI still thinks this one is active (shouldn't normally
+        // happen — a blocked task is by definition not reachable any other
+        // way — but cheap to cover), clear it too.
+        if (activeTask?.logId === String(task.logId)) {
+          setActiveTask(null);
+          await supabase.from("sessions").upsert(
+            {
+              user_id: userId,
+              clocked_in: true,
+              clock_in_time: session?.clock_in_time || now,
+              active_task: null,
+              updated_at: now,
+            },
+            { onConflict: "user_id" }
+          );
+          setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
+        }
+        setClockOutBlockedTasks((prev) => {
+          const next = (prev ?? []).filter((t) => t.logId !== task.logId);
+          return next.length > 0 ? next : null;
+        });
+      } finally {
+        setStoppingBlockedLogId(null);
+      }
+    },
+    [userId, supabase, activeTask, session]
+  );
+
   // Sweeps up ANY open log for this user — Break included. One activity runs
   // at a time, no exceptions; a Break-category log left open (whether started
   // from the dedicated Break button or by picking "Break" as a category in
@@ -1500,13 +1556,18 @@ export default function DashboardPage() {
     try {
       const { data: openLogs } = await supabase
         .from("time_logs")
-        .select("assigned_task_id, task_name")
+        .select("id, assigned_task_id, task_name, start_time")
         .eq("user_id", userId)
         .is("end_time", null)
         .not("assigned_task_id", "is", null);
       const blocked = (openLogs ?? [])
         .filter((l) => l.assigned_task_id != null)
-        .map((l) => ({ id: l.assigned_task_id as number, task_name: l.task_name as string }));
+        .map((l) => ({
+          id: l.assigned_task_id as number,
+          task_name: l.task_name as string,
+          logId: l.id as number,
+          start_time: l.start_time as string,
+        }));
       if (blocked.length > 0) {
         setClockOutBlockedTasks(blocked);
         return;
@@ -3237,20 +3298,26 @@ export default function DashboardPage() {
     handleCheckAndStartTask(formData);
   }, [handleCheckAndStartTask, accountClientMap]);
 
-  // Submitting the assigned task the VA is currently clocked into should hand
-  // them straight to the next thing — but the clock and screen monitoring for
-  // the just-submitted task keep running through that transition, same as
-  // switching tasks anywhere else in the app. The Log an Activity form below
-  // still has an active task (hasActiveTask stays tied to activeTask), so
-  // starting the next one goes through its own close-old-task wizard and
-  // closes this one atomically at that moment — no gap, and the time spent
-  // picking what's next still counts against the task just submitted instead
-  // of vanishing. AssignedTasksWidget calls this only when the submitted task
-  // matches activeAssignedTaskId, i.e. it really is the one running right now.
+  // Submitting the assigned task the VA is currently clocked into closes its
+  // timer right away, same as Stop — deliberately reversed from the earlier
+  // design (which left the log open until the VA picked a next activity, so
+  // the in-between time "counted" against the just-submitted task). That left
+  // a real dead end: the "what's next" modal below has no way to dismiss
+  // without picking something, and once submitted a task drops off Assigned
+  // Tasks (no more Stop button reachable for it either) — so a VA who
+  // reloaded or navigated away instead of picking a next activity was left
+  // with an invisible timer running forever, silently blocking both new
+  // Starts (the one-open-log guard) and Clock Out (confirmed live, two
+  // independent reports, 2026-11-04). Closing it here means there's nothing
+  // left to get stuck: the modal below is now just a convenience prompt, not
+  // the only way out. AssignedTasksWidget calls this only when the submitted
+  // task matches activeAssignedTaskId, i.e. it really is the one running
+  // right now.
   const handleActiveTaskSubmitted = useCallback(() => {
+    void stopCurrentTask();
     setNextActivityReason("submit");
     setShowNextActivityModal(true);
-  }, []);
+  }, [stopCurrentTask]);
 
   // ─── Notes modal ──────────────────────────────────────────
 
@@ -4112,6 +4179,11 @@ export default function DashboardPage() {
       )}
 
       {/* ─── Clock Out gate (Phase 3, Toni's call, 2026-11-02) ─── */}
+      {/* The copy below used to promise "Stop or Submit each one" with no
+          actual button to do either — a VA who ended up here (confirmed
+          live, 2026-11-04) had no way to resolve it short of guessing a
+          workaround. Each row now has a real Stop, so this is never a dead
+          end even if something else leaves a stray log open in the future. */}
       {clockOutBlockedTasks && clockOutBlockedTasks.length > 0 && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-lg mx-4">
@@ -4123,19 +4195,26 @@ export default function DashboardPage() {
                 {clockOutBlockedTasks.length === 1
                   ? "This task is still running:"
                   : `${clockOutBlockedTasks.length} tasks are still running:`}{" "}
-                Stop or Submit each one, then try Clock Out again.
+                Stop each one, then try Clock Out again.
               </p>
             </div>
             <div className="p-5 space-y-2">
               {clockOutBlockedTasks.map((t) => (
                 <div
-                  key={t.id}
+                  key={t.logId}
                   className="flex items-center gap-2 py-2 px-3 rounded-lg border border-sand bg-cream/40"
                 >
                   <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200">
                     In Progress
                   </span>
-                  <span className="text-[13px] font-semibold text-espresso">{t.task_name}</span>
+                  <span className="text-[13px] font-semibold text-espresso flex-1 min-w-0 truncate">{t.task_name}</span>
+                  <button
+                    onClick={() => void stopBlockedTask(t)}
+                    disabled={stoppingBlockedLogId === t.logId}
+                    className="shrink-0 px-2.5 py-1 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#a85840] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {stoppingBlockedLogId === t.logId ? "Stopping..." : "Stop"}
+                  </button>
                 </div>
               ))}
             </div>
@@ -4398,27 +4477,35 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      {/* ─── Forced Next Activity ─── */}
+      {/* ─── Next Activity (convenience prompt, not a gate) ─── */}
       {/* Shown right after an activity wraps up with nothing to auto-continue
           into — a break ending with the old task Completed (In Progress / On
           Hold ones just auto-resume in endBreak, no modal), or submitting the
-          task currently being worked (handleActiveTaskSubmitted) — so the VA
-          transitions straight to picking what's next instead of dwelling on
-          something already done. In the submit case the just-submitted task
-          is still running underneath this: picking the next activity below
-          goes through the normal close-old-task wizard and closes it
-          atomically at that moment, so the time spent choosing still counts
-          toward the task just submitted instead of vanishing into a gap.
-          Same tab pattern as the dashboard's own Log an Activity / Assigned
-          Tasks box. */}
+          task currently being worked (handleActiveTaskSubmitted). The
+          just-submitted task's timer is already closed by the time this
+          shows (Toni's call, 2026-11-04) — this is just a nudge toward
+          picking what's next, not the only way to get past it, so it's
+          dismissible: a VA who wants to clock out or just sit idle for a
+          moment isn't forced through it. Same tab pattern as the dashboard's
+          own Log an Activity / Assigned Tasks box. */}
       {showNextActivityModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4 py-8 overflow-y-auto">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md my-auto">
-            <div className="py-4 px-5 border-b border-parchment">
-              <h3 className="text-sm font-bold text-espresso">
-                {nextActivityReason === "submit" ? "Task Submitted!" : "Welcome Back!"}
-              </h3>
-              <p className="text-xs text-bark mt-1">Log an activity to keep your time tracked.</p>
+            <div className="py-4 px-5 border-b border-parchment flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-espresso">
+                  {nextActivityReason === "submit" ? "Task Submitted!" : "Welcome Back!"}
+                </h3>
+                <p className="text-xs text-bark mt-1">Log an activity to keep your time tracked.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNextActivityModal(false)}
+                title="Not now"
+                className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer shrink-0"
+              >
+                &times;
+              </button>
             </div>
             <div className="flex border-b border-parchment">
               {(["log", "assigned"] as const).map((tab) => (
@@ -4443,13 +4530,11 @@ export default function DashboardPage() {
                     setShowNextActivityModal(false);
                     await handleCheckAndStartTask(data);
                   }}
-                  // Still tied to activeTask on purpose: after a submit, the
-                  // just-submitted task is still running (see
-                  // handleActiveTaskSubmitted), so this must go through the
-                  // close-old-task wizard rather than skip straight to
-                  // starting the new one. After a break-with-nothing-to-
-                  // resume, activeTask is already null and this is false,
-                  // same as before.
+                  // activeTask is already null by now in both cases that get
+                  // here (the just-submitted task's timer closes before this
+                  // modal shows — see handleActiveTaskSubmitted — and a
+                  // break-with-nothing-to-resume clears it the same way), so
+                  // starting the next one never needs to close anything first.
                   hasActiveTask={!!activeTask}
                   activeTaskClientMemo={activeTask?.client_memo || ""}
                   role={role}
