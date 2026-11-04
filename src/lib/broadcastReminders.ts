@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isRecipient, broadcastPortalPath } from "@/lib/broadcasts";
+import { isRecipient, broadcastPortalPath, RECIPIENT_PROFILE_COLUMNS } from "@/lib/broadcasts";
 import { notifyOne } from "@/lib/notifyOne";
 import { esc } from "@/lib/telegram";
 import { sendResendEmail } from "@/lib/sendEmail";
@@ -44,7 +44,7 @@ export async function remindPendingBroadcast(
   const [{ data: recipientRows }, { data: reads }, { data: members }] = await Promise.all([
     admin.from("broadcast_recipients").select("recipient_type, recipient_value").eq("broadcast_id", broadcast.id),
     admin.from("broadcast_reads").select("user_id").eq("broadcast_id", broadcast.id).eq("confirmed", true),
-    admin.from("profiles").select("id, role, employment_type, is_active").eq("is_active", true),
+    admin.from("profiles").select(RECIPIENT_PROFILE_COLUMNS).eq("is_active", true),
   ]);
 
   const rows = (recipientRows || []).map((r) => ({ type: r.recipient_type, value: r.recipient_value }));
