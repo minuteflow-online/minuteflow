@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Project } from "@/types/database";
 import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachment } from "@/components/AttachmentComposer";
 import { linkifyText } from "@/lib/linkify";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import PdfPreviewModal from "@/components/PdfPreviewModal";
 import { PROJECT_STATUS_BY_VALUE } from "@/lib/projectStatus";
 
 type Stats = Record<string, { total: number; done: number }>;
@@ -24,8 +26,19 @@ type FileRow = {
   task_name: string | null;
   person_id: string | null;
   person_name: string | null;
+  mime_type?: string | null;
 };
 type SubmittedFileRow = FileRow;
+
+// Stored files (not pasted links) that open in place on the Docs card instead
+// of a new tab. The extension covers rows saved without a mime type.
+function docPreviewKind(f: FileRow): "image" | "pdf" | null {
+  if (!f.href || f.id.startsWith("link-")) return null;
+  const mime = (f.mime_type ?? "").toLowerCase();
+  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(f.filename)) return "image";
+  if (mime === "application/pdf" || /\.pdf$/i.test(f.filename)) return "pdf";
+  return null;
+}
 type DocRow = FileRow & { source: "uploaded" | "submitted" };
 // Items an admin took off the Docs card — kept as one sitewide id list in
 // /api/table-prefs. The file itself is untouched wherever it lives (task,
@@ -278,6 +291,9 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [docPerson, setDocPerson] = useState("");
   const [removedDocIds, setRemovedDocIds] = useState<Set<string>>(new Set());
   const [showRemovedDocs, setShowRemovedDocs] = useState(false);
+  // In-place previews: images page through every image in the current filter.
+  const [docLightbox, setDocLightbox] = useState<{ urls: string[]; captions: string[]; index: number } | null>(null);
+  const [docPdf, setDocPdf] = useState<{ url: string; filename: string } | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   // Per-project message count for the Overview tiles — from a separate,
   // unlimited query server-side, not derived from `messages` above (that
@@ -1278,7 +1294,26 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                 const rowClass = "min-w-0 flex-1 text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors";
                 return (
                   <div key={f.id} className="flex items-center gap-1">
-                    {f.href ? (
+                    {f.href && docPreviewKind(f) ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (docPreviewKind(f) === "pdf") {
+                            setDocPdf({ url: f.href as string, filename: f.filename });
+                            return;
+                          }
+                          const imgs = filteredDocs.filter((d) => docPreviewKind(d) === "image");
+                          setDocLightbox({
+                            urls: imgs.map((d) => d.href as string),
+                            captions: imgs.map((d) => d.filename),
+                            index: Math.max(0, imgs.findIndex((d) => d.id === f.id)),
+                          });
+                        }}
+                        className={rowClass}
+                      >
+                        {inner}
+                      </button>
+                    ) : f.href ? (
                       <a href={f.href} target="_blank" rel="noreferrer" className={rowClass}>
                         {inner}
                       </a>
@@ -1316,6 +1351,17 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             </div>
           )}
         </Paginated>
+        {docLightbox && (
+          <ScreenshotLightbox
+            urls={docLightbox.urls}
+            captions={docLightbox.captions}
+            initialIndex={docLightbox.index}
+            onClose={() => setDocLightbox(null)}
+          />
+        )}
+        {docPdf && (
+          <PdfPreviewModal url={docPdf.url} filename={docPdf.filename} onClose={() => setDocPdf(null)} />
+        )}
       </div>
 
       {/* Subtasks (checkboxes) — replaces the Progress card, always present */}

@@ -30,6 +30,8 @@ type OverviewFile = {
   task_name: string | null;
   person_id: string | null;
   person_name: string | null;
+  /** Lets the card preview images and PDFs in place. */
+  mime_type?: string | null;
 };
 
 /**
@@ -110,7 +112,7 @@ export async function GET(request: Request) {
   if (taskIds.length > 0) {
     const { data: atts } = await supabase
       .from("assigned_task_attachments")
-      .select("id, filename, uploaded_at, storage_path, assigned_task_id, uploaded_by")
+      .select("id, filename, uploaded_at, storage_path, assigned_task_id, uploaded_by, mime_type")
       .in("assigned_task_id", taskIds)
       .is("submission_id", null)
       .order("uploaded_at", { ascending: false })
@@ -138,6 +140,7 @@ export async function GET(request: Request) {
         task_name: task.task_name,
         person_id: (a.uploaded_by as string | null) ?? null,
         person_name: null,
+        mime_type: (a.mime_type as string | null) ?? null,
       });
     }
   }
