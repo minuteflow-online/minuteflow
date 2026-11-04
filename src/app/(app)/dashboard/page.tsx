@@ -756,6 +756,27 @@ export default function DashboardPage() {
           const row = payload.new as Session;
           const current = activeTaskRef.current;
           const next = row.active_task as ActiveTask | null;
+          // Cleared elsewhere (Stop, Submit, or Clock Out on another device
+          // or tab) with nothing replacing it — this tab was still showing
+          // the old task as active, ticking forever against an already-
+          // closed log. Confirmed live, 2026-11-04: stopping a task on
+          // desktop left a still-open web tab displaying it as running
+          // indefinitely, looking exactly like a duplicate/stuck entry even
+          // though the database had already closed it cleanly. The original
+          // "only acts on a new logId" narrowing above was deliberately kept
+          // for the Break-overlap fix this effect exists for; this just
+          // additionally covers the "nothing is active anymore" case it left out.
+          if (current && (!row.clocked_in || !next?.logId)) {
+            captureTimersRef.current.forEach((t) => clearTimeout(t));
+            captureTimersRef.current = [];
+            if (captureWorkerRef.current) {
+              captureWorkerRef.current.postMessage({ type: "stop" });
+            }
+            activeLogIdRef.current = null;
+            setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
+            setActiveTask(null);
+            return;
+          }
           if (!row.clocked_in || !next?.logId || next.logId === current?.logId) return;
           // Nothing showing and the new state is a break: nothing to clear.
           if (!current && next.isBreak) return;
