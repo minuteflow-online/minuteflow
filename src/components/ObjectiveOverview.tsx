@@ -11,8 +11,26 @@ type Stats = Record<string, { total: number; done: number }>;
 // Objective banner (not a real thread). Chosen so no human topic collides.
 const PAGE_OBJECTIVE_TITLE = "__page_objective__";
 
-type FileRow = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string | null };
-type SubmittedFileRow = { id: string; project_id: string; filename: string; uploaded_at: string; href?: string };
+// One shape for both Docs sources (files-overview / submitted-files): who
+// added it and on which task, so the card can be filtered by any of them.
+type FileRow = {
+  id: string;
+  project_id: string;
+  filename: string;
+  uploaded_at: string;
+  href?: string | null;
+  account: string | null;
+  task_id: number | null;
+  task_name: string | null;
+  person_id: string | null;
+  person_name: string | null;
+};
+type SubmittedFileRow = FileRow;
+type DocRow = FileRow & { source: "uploaded" | "submitted" };
+// Items an admin took off the Docs card — kept as one sitewide id list in
+// /api/table-prefs. The file itself is untouched wherever it lives (task,
+// submission, Docs cabinet); it just stops being listed here.
+const DOCS_REMOVED_PREFS_ID = "docs-files-removed";
 type CommentRow = { id: number; body: string; created_at: string; author: string; author_id: string | null; attachments?: Attachment[] };
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[]; attachments?: Attachment[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
@@ -251,8 +269,15 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   // Docs & Files has two tabs: "uploaded" = files added to the objective/task
   // (project_files), "submitted" = files/links that came in through a task
   // submission (from /submitted-files).
-  const [docsView, setDocsView] = useState<"uploaded" | "submitted">("uploaded");
+  // "all" puts both side by side, newest first.
+  const [docsView, setDocsView] = useState<"all" | "uploaded" | "submitted">("all");
   const [submittedFiles, setSubmittedFiles] = useState<SubmittedFileRow[]>([]);
+  const [docAccount, setDocAccount] = useState("");
+  const [docTask, setDocTask] = useState("");
+  const [docProject, setDocProject] = useState("");
+  const [docPerson, setDocPerson] = useState("");
+  const [removedDocIds, setRemovedDocIds] = useState<Set<string>>(new Set());
+  const [showRemovedDocs, setShowRemovedDocs] = useState(false);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   // Per-project message count for the Overview tiles — from a separate,
   // unlimited query server-side, not derived from `messages` above (that
@@ -435,6 +460,91 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     })();
     return () => { cancelled = true; };
   }, [dataScopeIds, reloadKey, refreshSignal]);
+
+  // ── Docs & Files: removed list, combined view, filters ────────────────────
+  const readRemovedDocIds = useCallback(
+    () =>
+      fetch(`/api/table-prefs?tableId=${DOCS_REMOVED_PREFS_ID}&scope=sitewide`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => new Set<string>(Array.isArray(d?.prefs?.ids) ? (d.prefs.ids as string[]) : []))
+        .catch(() => null),
+    []
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void readRemovedDocIds().then((ids) => {
+      if (!cancelled && ids) setRemovedDocIds(ids);
+    });
+    return () => { cancelled = true; };
+  }, [readRemovedDocIds, reloadKey, refreshSignal]);
+
+  // Re-reads the list right before writing so two admins removing at the same
+  // time don't undo each other's removals.
+  const setDocRemoved = async (id: string, removed: boolean) => {
+    setRemovedDocIds((prev) => {
+      const next = new Set(prev);
+      if (removed) next.add(id); else next.delete(id);
+      return next;
+    });
+    const latest = (await readRemovedDocIds()) ?? new Set<string>(removedDocIds);
+    if (removed) latest.add(id); else latest.delete(id);
+    setRemovedDocIds(new Set(latest));
+    await fetch("/api/table-prefs", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tableId: DOCS_REMOVED_PREFS_ID, scope: "sitewide", prefs: { ids: Array.from(latest) } }),
+    }).catch(() => {});
+  };
+
+  // The tab's rows before any filter — the filter dropdowns offer only what's
+  // actually in here.
+  const docsInView = useMemo<DocRow[]>(() => {
+    const uploaded = files.map((f) => ({ ...f, source: "uploaded" as const }));
+    const submitted = submittedFiles.map((f) => ({ ...f, source: "submitted" as const }));
+    const rows = docsView === "uploaded" ? uploaded : docsView === "submitted" ? submitted : [...uploaded, ...submitted];
+    return rows
+      .filter((f) => showRemovedDocs === removedDocIds.has(f.id))
+      .sort((a, b) => (b.uploaded_at ?? "").localeCompare(a.uploaded_at ?? ""));
+  }, [files, submittedFiles, docsView, removedDocIds, showRemovedDocs]);
+
+  const docOptions = useMemo(() => {
+    const accounts = new Set<string>();
+    const tasks = new Set<string>();
+    const projectIds = new Set<string>();
+    const people = new Map<string, string>();
+    for (const f of docsInView) {
+      if (f.account) accounts.add(f.account);
+      if (f.task_name) tasks.add(f.task_name);
+      projectIds.add(f.project_id);
+      if (f.person_id) people.set(f.person_id, f.person_name || "Unknown");
+    }
+    const byText = (a: string, b: string) => a.localeCompare(b);
+    return {
+      accounts: [...accounts].sort(byText),
+      tasks: [...tasks].sort(byText),
+      projects: [...projectIds]
+        .map((id) => [id, projectById.get(id)?.name ?? kindLabel] as const)
+        .sort((a, b) => byText(a[1], b[1])),
+      people: [...people.entries()].sort((a, b) => byText(a[1], b[1])),
+    };
+  }, [docsInView, projectById, kindLabel]);
+
+  const filteredDocs = useMemo(
+    () =>
+      docsInView.filter(
+        (f) =>
+          (!docAccount || f.account === docAccount) &&
+          (!docTask || f.task_name === docTask) &&
+          (!docProject || f.project_id === docProject) &&
+          (!docPerson || f.person_id === docPerson)
+      ),
+    [docsInView, docAccount, docTask, docProject, docPerson]
+  );
+  const removedDocCount = useMemo(
+    () => [...files, ...submittedFiles].filter((f) => removedDocIds.has(f.id)).length,
+    [files, submittedFiles, removedDocIds]
+  );
+  const docFiltersOn = Boolean(docAccount || docTask || docProject || docPerson);
 
   const submitPost = async () => {
     const projectId = scopeId ?? cTarget;
@@ -1067,12 +1177,13 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
         </Paginated>
       </div>
 
-      {/* Docs & Files — Uploaded (project files) vs Submitted (from submissions) */}
+      {/* Docs & Files — All, or Uploaded (task/objective files) vs Submitted
+          (from submissions), filterable by account, task, objective, person. */}
       <div className={cardClass("docs")}>
-        <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center justify-between gap-2">
           <h3 className={`${CARD_TITLE} mb-0`}>Docs &amp; Files</h3>
           <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
-            {([["uploaded", "Uploaded"], ["submitted", "Submitted"]] as const).map(([v, label]) => (
+            {([["all", "All"], ["uploaded", "Uploaded"], ["submitted", "Submitted"]] as const).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setDocsView(v)}
                 className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${docsView === v ? "bg-white text-espresso shadow-sm" : "text-walnut hover:text-espresso"}`}>
                 {label}
@@ -1080,63 +1191,131 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             ))}
           </div>
         </div>
-        {docsView === "uploaded" ? (
-          <Paginated items={files} pageSize={8} empty={<p className="text-[12px] text-walnut">No uploaded files yet.</p>}>
-            {(slice) => (
-              <div className="space-y-1.5">
-                {slice.map((f) => {
-                  const proj = projectById.get(f.project_id);
-                  const inner = (
-                    <>
-                      <span className="min-w-0">
-                        <span className="block text-[12px] text-espresso truncate">{f.href ? "🔗 " : ""}{f.filename}</span>
-                        <span className="block text-[10px] text-bark truncate">{proj?.name ?? "Objective"}</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {([
+            [docAccount, setDocAccount, "All accounts", docOptions.accounts.map((a) => [a, a] as const)],
+            [docTask, setDocTask, "All tasks", docOptions.tasks.map((t) => [t, t] as const)],
+            [docProject, setDocProject, `All ${lc}s`, docOptions.projects],
+            [docPerson, setDocPerson, "Everyone", docOptions.people],
+          ] as const).map(([value, setValue, allLabel, options]) => (
+            <select
+              key={allLabel}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="max-w-[180px] rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+            >
+              <option value="">{allLabel}</option>
+              {/* Keep a chosen value listed even when this tab has none of it,
+                  so the dropdown never shows a value that isn't an option. */}
+              {value && !options.some(([v]) => v === value) && <option value={value}>{value}</option>}
+              {options.map(([v, label]) => (
+                <option key={v} value={v}>{label}</option>
+              ))}
+            </select>
+          ))}
+          {docFiltersOn && (
+            <button
+              type="button"
+              onClick={() => { setDocAccount(""); setDocTask(""); setDocProject(""); setDocPerson(""); }}
+              className="px-2 py-[3px] text-[10px] font-semibold text-bark hover:text-espresso"
+            >
+              Clear
+            </button>
+          )}
+          {isAdmin && (removedDocCount > 0 || showRemovedDocs) && (
+            <button
+              type="button"
+              onClick={() => setShowRemovedDocs((v) => !v)}
+              className={`ml-auto px-2 py-[3px] rounded-full text-[10px] font-semibold border transition-colors ${showRemovedDocs ? "bg-sage text-white border-sage" : "bg-white text-walnut border-sand hover:border-stone"}`}
+            >
+              Removed ({removedDocCount})
+            </button>
+          )}
+        </div>
+        <Paginated
+          items={filteredDocs}
+          pageSize={8}
+          empty={
+            <p className="text-[12px] text-walnut">
+              {showRemovedDocs
+                ? "Nothing removed."
+                : docFiltersOn
+                  ? "Nothing matches these filters."
+                  : docsView === "submitted"
+                    ? "Nothing submitted yet."
+                    : docsView === "uploaded"
+                      ? "No uploaded files yet."
+                      : "No files yet."}
+            </p>
+          }
+        >
+          {(slice) => (
+            <div className="space-y-1.5">
+              {slice.map((f) => {
+                const proj = projectById.get(f.project_id);
+                // Objective · task · account · who — whatever this row has.
+                const meta = [proj?.name ?? kindLabel, f.task_name, f.account, f.person_name].filter(Boolean).join(" · ");
+                const inner = (
+                  <>
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-[12px] text-espresso truncate">{f.href ? "🔗 " : ""}{f.filename}</span>
+                        {docsView === "all" && (
+                          <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+                            f.source === "submitted"
+                              ? "bg-sky-50 text-sky-600 border-sky-200"
+                              : "bg-stone/10 text-stone border-stone/20"
+                          }`}>
+                            {f.source === "submitted" ? "Submitted" : "Uploaded"}
+                          </span>
+                        )}
                       </span>
-                      <span className="text-[10px] text-bark shrink-0">{formatDate(f.uploaded_at)}</span>
-                    </>
-                  );
-                  return f.href ? (
-                    <a key={f.id} href={f.href} target="_blank" rel="noreferrer" className="w-full text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors">
-                      {inner}
-                    </a>
-                  ) : (
-                    <button key={f.id} onClick={() => proj && onSelect(proj)} className="w-full text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors">
-                      {inner}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </Paginated>
-        ) : (
-          <Paginated items={submittedFiles} pageSize={8} empty={<p className="text-[12px] text-walnut">Nothing submitted yet.</p>}>
-            {(slice) => (
-              <div className="space-y-1.5">
-                {slice.map((f) => {
-                  const proj = projectById.get(f.project_id);
-                  const inner = (
-                    <>
-                      <span className="min-w-0">
-                        <span className="block text-[12px] text-espresso truncate">{f.href ? "🔗 " : ""}{f.filename}</span>
-                        <span className="block text-[10px] text-bark truncate">{proj?.name ?? "Objective"}</span>
-                      </span>
-                      <span className="text-[10px] text-bark shrink-0">{formatDate(f.uploaded_at)}</span>
-                    </>
-                  );
-                  return f.href ? (
-                    <a key={f.id} href={f.href} target="_blank" rel="noreferrer" className="w-full text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors">
-                      {inner}
-                    </a>
-                  ) : (
-                    <button key={f.id} onClick={() => proj && onSelect(proj)} className="w-full text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors">
-                      {inner}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </Paginated>
-        )}
+                      <span className="block text-[10px] text-bark truncate">{meta}</span>
+                    </span>
+                    <span className="text-[10px] text-bark shrink-0">{formatDate(f.uploaded_at)}</span>
+                  </>
+                );
+                const rowClass = "min-w-0 flex-1 text-left flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors";
+                return (
+                  <div key={f.id} className="flex items-center gap-1">
+                    {f.href ? (
+                      <a href={f.href} target="_blank" rel="noreferrer" className={rowClass}>
+                        {inner}
+                      </a>
+                    ) : (
+                      <button onClick={() => proj && onSelect(proj)} className={rowClass}>
+                        {inner}
+                      </button>
+                    )}
+                    {/* Takes it off this list only — the file stays on its task,
+                        submission or Docs cabinet. */}
+                    {isAdmin && (
+                      showRemovedDocs ? (
+                        <button
+                          type="button"
+                          onClick={() => void setDocRemoved(f.id, false)}
+                          className="shrink-0 px-2 py-0.5 rounded text-[10px] font-semibold text-sage hover:bg-sage-soft transition-colors"
+                        >
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void setDocRemoved(f.id, true)}
+                          title="Remove from this list (the file itself is kept)"
+                          aria-label="Remove from this list"
+                          className="shrink-0 h-6 w-6 rounded text-[13px] leading-none text-stone hover:text-terracotta hover:bg-terracotta-soft transition-colors"
+                        >
+                          ×
+                        </button>
+                      )
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Paginated>
       </div>
 
       {/* Subtasks (checkboxes) — replaces the Progress card, always present */}
