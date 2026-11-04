@@ -80,8 +80,10 @@ function safeUrl(raw: string, allowMailto: boolean): string | null {
 }
 
 const COLOR_VALUE_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|[a-z]+)$/i;
+const TEXT_ALIGN_RE = /^(left|right|center|justify)$/i;
+const LIST_STYLE_RE = /^(decimal|lower-alpha|upper-alpha|lower-roman|upper-roman)$/i;
 
-/** Keep only color / background-color from an inline style attribute. */
+/** Keep only color / background-color / text-align / list-style-type from an inline style attribute. */
 function safeStyle(style: string): string {
   const kept: string[] = [];
   for (const decl of style.split(";")) {
@@ -90,6 +92,10 @@ function safeStyle(style: string): string {
     const prop = decl.slice(0, idx).trim().toLowerCase();
     const value = decl.slice(idx + 1).trim();
     if ((prop === "background-color" || prop === "color") && COLOR_VALUE_RE.test(value)) {
+      kept.push(`${prop}: ${value}`);
+    } else if (prop === "text-align" && TEXT_ALIGN_RE.test(value)) {
+      kept.push(`${prop}: ${value}`);
+    } else if (prop === "list-style-type" && LIST_STYLE_RE.test(value)) {
       kept.push(`${prop}: ${value}`);
     }
   }
