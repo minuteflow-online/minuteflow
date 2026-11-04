@@ -89,6 +89,10 @@ export async function GET(request: Request) {
     task_name: string | null;
     person_id: string | null;
     person_name: string | null;
+    /** Lets the card preview images and PDFs in place. */
+    mime_type?: string | null;
+    /** Server-side only — signed into href below, then dropped. */
+    storage_path?: string;
   };
   const items: Item[] = [];
 
@@ -122,7 +126,7 @@ export async function GET(request: Request) {
   if (subIds.length > 0) {
     const { data: atts, error: aErr } = await supabase
       .from("assigned_task_attachments")
-      .select("id, submission_id, filename, uploaded_at, uploaded_by")
+      .select("id, submission_id, filename, uploaded_at, uploaded_by, storage_path, mime_type")
       .in("submission_id", subIds);
     if (aErr) return Response.json({ error: aErr.message }, { status: 500 });
     for (const a of atts ?? []) {
@@ -140,12 +144,28 @@ export async function GET(request: Request) {
         // The submitter, falling back to whoever stored the file.
         person_id: sub.user_id ?? ((a.uploaded_by as string | null) ?? null),
         person_name: null,
+        mime_type: (a.mime_type as string | null) ?? null,
+        storage_path: (a.storage_path as string | null) ?? undefined,
       });
     }
   }
 
   items.sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
   const page = items.slice(0, LIMIT);
+
+  // Submitted attachments used to come back with no link, so clicking one
+  // only opened the objective. Sign the ones on this page in one call (same
+  // bucket and expiry as files-overview) so they open and preview like uploads.
+  const paths = page.map((f) => f.storage_path).filter((p): p is string => Boolean(p));
+  if (paths.length > 0) {
+    const { data: signed } = await supabase.storage.from("task-attachments").createSignedUrls(paths, 3600);
+    const hrefByPath = new Map<string, string>();
+    for (const s of signed ?? []) if (s.path && s.signedUrl) hrefByPath.set(s.path, s.signedUrl);
+    for (const f of page) {
+      if (f.storage_path) f.href = hrefByPath.get(f.storage_path);
+    }
+  }
+  for (const f of page) delete f.storage_path;
 
   // Names for the "who" filter, in one lookup.
   const personIds = Array.from(new Set(page.map((f) => f.person_id).filter((p): p is string => Boolean(p))));
