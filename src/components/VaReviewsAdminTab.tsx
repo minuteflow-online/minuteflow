@@ -54,7 +54,7 @@ export default function VaReviewsAdminTab() {
     try {
       const [revRes, { data: profileData }] = await Promise.all([
         fetch("/api/va-reviews").then((r) => r.json()),
-        supabase.from("profiles").select("id, full_name, role").neq("role", "admin"),
+        supabase.from("profiles").select("id, full_name, role").neq("role", "admin").eq("is_active", true),
       ]);
       setReviews(revRes.reviews || []);
       setVas((profileData as Profile[]) || []);
