@@ -53,11 +53,6 @@ export default function App() {
   // back on it with no prompt (Toni's call). See clock.ts's startBreak/
   // endBreak for why this can't just live on the session row instead.
   const [preBreakTask, setPreBreakTask] = useState<clock.ActiveTask | null>(null);
-  // Quick Pick's "silently hold and message" — the task bumped aside by a
-  // Message for Guidance/General Message click, offered back via a Resume
-  // banner. Same local-state-only limitation as preBreakTask above (lost on
-  // an app restart): see clock.ts's startHoldAndMessage for why.
-  const [heldTask, setHeldTask] = useState<clock.ActiveTask | null>(null);
 
   const [captureStatus, setCaptureStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -242,7 +237,6 @@ export default function App() {
     setTeamMembers([]);
     setTeamTimeLogs([]);
     setPreBreakTask(null);
-    setHeldTask(null);
   }, []);
 
   const handleClockIn = useCallback(async () => {
@@ -273,7 +267,6 @@ export default function App() {
         const result = await clock.clockOut(userId, orgTimezone, profile, sessionRow, wizard);
         if (result.session) setSessionRow(result.session);
         setPreBreakTask(null);
-        setHeldTask(null);
         setShowClockOutModal(false);
       } catch (err) {
         alert(`Couldn't clock you out: ${err instanceof Error ? err.message : "unknown error"}. You are still clocked in — try again.`);
@@ -354,21 +347,20 @@ export default function App() {
     }
   }, [userId, profile, preBreakTask, sessionRow, orgTimezone, actionPending]);
 
-  // Quick Pick: silently hold whatever's running and start a message task in
-  // its place — mirrors the dashboard's handleAutoHoldAndStartMessage. No
-  // wizard, no confirmation; the interruption is meant to be instant.
-  const handleQuickMessage = useCallback(
+  // Quick Pick: stop whatever's running and start the picked task in its
+  // place — mirrors the dashboard's handleQuickSwitchTask. No on-hold detour
+  // (Toni's call, 2026-11-05), no wizard: just a clean switch, same as Start.
+  const handleQuickSwitch = useCallback(
     async (mapping: clock.QuickMessageMapping) => {
       if (!userId || !profile || actionPending) return;
       setActionPending(true);
       try {
-        const result = await clock.startHoldAndMessage(userId, profile, sessionRow, orgTimezone, mapping);
+        const result = await clock.startQuickSwitch(userId, profile, sessionRow, orgTimezone, mapping);
         if (!result.ok) {
           alert(result.error);
           return;
         }
         if (result.session) setSessionRow(result.session);
-        if (result.heldTask) setHeldTask(result.heldTask);
       } catch (err) {
         alert(`Couldn't start that: ${err instanceof Error ? err.message : "unknown error"}.`);
       } finally {
@@ -377,26 +369,6 @@ export default function App() {
     },
     [userId, profile, sessionRow, orgTimezone, actionPending]
   );
-
-  // Resume: ends the message task and lands straight back on the held task,
-  // no wizard — mirrors the dashboard's resumeHeldTask.
-  const handleResumeHeld = useCallback(async () => {
-    if (!userId || !profile || !heldTask || actionPending) return;
-    setActionPending(true);
-    try {
-      const result = await clock.resumeHeldTask(userId, profile, heldTask, sessionRow, orgTimezone);
-      if (!result.ok) {
-        alert(result.error);
-        return;
-      }
-      if (result.session) setSessionRow(result.session);
-      setHeldTask(null);
-    } catch (err) {
-      alert(`Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`);
-    } finally {
-      setActionPending(false);
-    }
-  }, [userId, profile, heldTask, sessionRow, orgTimezone, actionPending]);
 
   // Log an Activity: starts a free-form task not tied to an assignment —
   // mirrors the dashboard's TaskEntryForm hourly submit path. `closeOld`
@@ -666,7 +638,7 @@ export default function App() {
             {/* Quick Pick — only once clocked in, same gate as web's dashboard */}
             {clockState !== "idle" && (
               <div className="flex-1 min-w-0">
-                <QuickPickPanel onMessage={handleQuickMessage} disabled={actionPending} />
+                <QuickPickPanel onQuickSwitch={handleQuickSwitch} disabled={actionPending} />
               </div>
             )}
           </div>
@@ -695,21 +667,6 @@ export default function App() {
                   .join(" · ");
                 return details ? <div className="text-[11px] text-bark truncate">{details}</div> : null;
               })()}
-            </div>
-          )}
-          {heldTask && clockState !== "idle" && (
-            <div className="flex items-center gap-3 px-4 py-2.5 bg-amber/10 border border-amber/30 rounded-xl text-[12px] text-espresso">
-              <span className="text-amber text-base">⏸</span>
-              <span className="text-stone">On hold:</span>
-              <span className="font-semibold flex-1 truncate">{heldTask.task_name}</span>
-              <button
-                onClick={handleResumeHeld}
-                disabled={actionPending}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold cursor-pointer hover:bg-sage/80 transition-all shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21" /></svg>
-                Resume
-              </button>
             </div>
           )}
           <TaskWidgetsTabs

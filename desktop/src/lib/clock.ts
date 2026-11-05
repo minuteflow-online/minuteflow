@@ -11,6 +11,7 @@
 import { query, PostgrestError } from "./db";
 import { cappedCloseTime } from "./cappedCloseTime";
 import { isBillableCategory } from "./billable";
+import { setAssignedTaskStatus } from "./tasks";
 
 export interface Profile {
   id: string;
@@ -176,9 +177,13 @@ export interface ClockInResult {
   session?: SessionRow;
 }
 
-/** Mirrors the dashboard's clockIn(): closes stray open logs, inserts the
- *  "Clock In" planning time_log, then marks the session clocked in with that
- *  log as the active task. */
+/** Mirrors the dashboard's clockIn() (Toni's call, 2026-11-04/05): no default
+ *  task log on clock-in anymore. It used to auto-insert and activate a
+ *  "Clock In"/Planning task, which became the mindless default instead of a
+ *  conscious choice. Now it just marks the session clocked in with no active
+ *  task — the VA starts a real task or deliberately picks Planning/Sorting
+ *  from Quick Pick — and writes a zero-duration "Clocked In" marker so the
+ *  Activity Log stays symmetric with the existing "Clocked Out" marker. */
 export async function clockIn(userId: string, profile: Profile, orgTimezone: string): Promise<ClockInResult> {
   const blocked = clockInBlockedReason(profile);
   if (blocked) return { ok: false, error: blocked };
@@ -188,9 +193,35 @@ export async function clockIn(userId: string, profile: Profile, orgTimezone: str
 
   const sessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
 
-  let sortingLog: { id: number };
+  let rows: SessionRow[];
   try {
-    const rows = await query<{ id: number }[]>("time_logs", {
+    rows = await query<SessionRow[]>("sessions", {
+      method: "POST",
+      filters: "on_conflict=user_id",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: {
+        user_id: userId,
+        clocked_in: true,
+        clock_in_time: now,
+        active_task: null,
+        session_date: sessionDate,
+        updated_at: now,
+      },
+    });
+  } catch (err) {
+    // No time_logs insert happens before this anymore, so the duplicate-
+    // active-log constraint (time_logs_one_active_per_user) can't fire here
+    // — this upsert can only fail on a real connection/server error.
+    return {
+      ok: false,
+      error: `Couldn't clock you in: ${err instanceof Error ? err.message : "unknown error"}. Nothing is being tracked right now.`,
+    };
+  }
+
+  // Not fatal, same as the "Clocked Out" marker below in clockOut(): a
+  // zero-duration boundary row, losing it costs no tracked time.
+  try {
+    await query("time_logs", {
       method: "POST",
       body: {
         user_id: userId,
@@ -198,55 +229,18 @@ export async function clockIn(userId: string, profile: Profile, orgTimezone: str
         full_name: profile.full_name,
         department: profile.department,
         position: profile.position,
-        task_name: "Clock In",
-        category: "Planning",
-        project: "Set-up",
-        account: "Virtual Concierge",
-        client_name: "Toni Colina",
+        task_name: "Clocked In",
+        category: "Clock In",
         start_time: now,
-        billable: true,
-        billing_type: "hourly",
+        end_time: now,
+        duration_ms: 0,
+        billable: false,
         session_date: sessionDate,
       },
     });
-    sortingLog = rows[0];
-  } catch (err) {
-    return {
-      ok: false,
-      error: isDuplicateActiveLogError(err)
-        ? "You're already clocked in somewhere else (another device or the extension?). Refresh to see your current status."
-        : `Couldn't clock you in: ${err instanceof Error ? err.message : "unknown error"}. Nothing is being tracked right now.`,
-    };
+  } catch {
+    // see above
   }
-
-  const activeTask: ActiveTask = {
-    task_name: "Clock In",
-    category: "Planning",
-    project: "Set-up",
-    account: "Virtual Concierge",
-    client_name: "Toni Colina",
-    client_memo: "",
-    internal_memo: "",
-    start_time: now,
-    end_time: null,
-    duration_ms: 0,
-    logId: String(sortingLog.id),
-    _startMs: Date.now(),
-  };
-
-  const rows = await query<SessionRow[]>("sessions", {
-    method: "POST",
-    filters: "on_conflict=user_id",
-    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-    body: {
-      user_id: userId,
-      clocked_in: true,
-      clock_in_time: now,
-      active_task: activeTask,
-      session_date: sessionDate,
-      updated_at: now,
-    },
-  });
 
   return { ok: true, session: rows[0] };
 }
@@ -548,43 +542,20 @@ export interface QuickMessageMapping {
   client_name: string;
 }
 
-export interface HoldResult {
-  ok: boolean;
-  error?: string;
-  session?: SessionRow;
-  /** The task that was running before the hold, for App.tsx to hold onto and
-   *  offer a "Resume" banner for — null if nothing billable was running
-   *  (idle, or already on a Break/Pause, which this never holds). */
-  heldTask?: ActiveTask | null;
-}
-
-/** Quick Pick's "Message for Guidance/Instructions" and "General Message"
- *  buttons — mirrors the dashboard's handleAutoHoldAndStartMessage: silently
- *  holds whatever's running (closes its log, flagged progress "on_hold" so
- *  it reads as interrupted rather than finished) and starts the message task
- *  in its place. No wizard — the whole point is an instant interruption. */
-export async function startHoldAndMessage(
+/** Quick Pick's switch actions (Planning/Sorting, Message for Guidance/
+ *  Instructions, General Message) — mirrors the dashboard's
+ *  handleQuickSwitchTask: no on-hold detour (Toni's call, 2026-11-05) —
+ *  whatever's running just stops via the same closeOpenLogs sweep every
+ *  other "start a task" path uses, no demotion, no wizard, never two
+ *  running at once. */
+export async function startQuickSwitch(
   userId: string,
   profile: Profile,
   currentSession: SessionRow | null,
   orgTimezone: string,
   mapping: QuickMessageMapping
-): Promise<HoldResult> {
+): Promise<ClockInResult> {
   const now = new Date().toISOString();
-  const active = currentSession?.active_task;
-  const holdable = active && !active.isBreak ? active : null;
-
-  // Flag the running task's own log on_hold before the generic close below
-  // (which only ever sets end_time/duration) touches it.
-  if (holdable?.logId) {
-    const logId = Number(holdable.logId);
-    const startMs = holdable.start_time ? new Date(holdable.start_time).getTime() : Date.now();
-    await query("time_logs", {
-      method: "PATCH",
-      filters: `id=eq.${logId}`,
-      body: { end_time: now, duration_ms: Math.max(0, Date.now() - startMs), progress: "on_hold" },
-    });
-  }
 
   await closeOpenLogs(userId, now, orgTimezone);
 
@@ -645,81 +616,6 @@ export async function startHoldAndMessage(
       clocked_in: true,
       clock_in_time: currentSession?.clock_in_time || now,
       active_task: newActive,
-      session_date: sessionDate,
-      updated_at: now,
-    },
-  });
-
-  return { ok: true, session: rows[0], heldTask: holdable };
-}
-
-/** Resumes a task startHoldAndMessage held — a fresh log built from the
- *  snapshot, same shape endPause's resume branch uses, no wizard. The
- *  on_hold log from the hold itself is left alone as the historical record
- *  of the interruption rather than reopened. */
-export async function resumeHeldTask(
-  userId: string,
-  profile: Profile,
-  heldTask: ActiveTask,
-  currentSession: SessionRow | null,
-  orgTimezone: string
-): Promise<ClockInResult> {
-  const now = new Date().toISOString();
-  await closeOpenLogs(userId, now, orgTimezone);
-
-  const sessionDate = getCorrectSessionDate(currentSession, orgTimezone);
-
-  let log: { id: number };
-  try {
-    const rows = await query<{ id: number }[]>("time_logs", {
-      method: "POST",
-      body: {
-        user_id: userId,
-        username: profile.username,
-        full_name: profile.full_name,
-        department: profile.department,
-        position: profile.position,
-        task_name: heldTask.task_name,
-        category: heldTask.category,
-        project: heldTask.project || null,
-        account: heldTask.account || null,
-        client_name: heldTask.client_name || null,
-        client_memo: heldTask.client_memo || null,
-        internal_memo: heldTask.internal_memo || null,
-        start_time: now,
-        billable: isBillableCategory(heldTask.category),
-        billing_type: "hourly",
-        session_date: sessionDate,
-      },
-    });
-    log = rows[0];
-  } catch (err) {
-    return {
-      ok: false,
-      error: isDuplicateActiveLogError(err)
-        ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
-        : `Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`,
-    };
-  }
-
-  const resumed: ActiveTask = {
-    ...heldTask,
-    start_time: now,
-    end_time: null,
-    duration_ms: 0,
-    logId: String(log.id),
-    _startMs: Date.now(),
-  };
-
-  const rows = await query<SessionRow[]>("sessions", {
-    method: "POST",
-    filters: "on_conflict=user_id",
-    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-    body: {
-      user_id: userId,
-      clocked_in: true,
-      clock_in_time: currentSession?.clock_in_time || now,
-      active_task: resumed,
       session_date: sessionDate,
       updated_at: now,
     },
@@ -883,6 +779,22 @@ export async function endBreak(
         ? "You're already tracking something else somewhere (another device or the extension?). Refresh to see your current status."
         : `Couldn't resume: ${err instanceof Error ? err.message : "unknown error"}.`,
     };
+  }
+
+  // If the pre-break task was started from an Assigned Task, re-link this
+  // new log to it the same way startAssignedTask() does — otherwise the
+  // resumed log's assigned_task_id stays null, which hides it from the
+  // Clock Out gate (handleClockOut's assigned_task_id check in App.tsx) and
+  // from the assignment's own log_id pointer. Best-effort, same reasoning as
+  // startAssignedTask's own call: a failure here doesn't undo real tracked
+  // time, it just leaves the assignment link stale until retried.
+  if (resumeTask.assignedTaskId) {
+    void setAssignedTaskStatus({
+      assignedTaskId: resumeTask.assignedTaskId,
+      status: "in_progress",
+      vaId: userId,
+      logId: log.id,
+    });
   }
 
   const resumed: ActiveTask = {
