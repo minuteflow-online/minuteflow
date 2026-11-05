@@ -1933,6 +1933,19 @@ export default function DashboardPage() {
       return;
     }
 
+    // If the pre-break task was started from an Assigned Task, re-link this
+    // new log to it the same way startTask() does — otherwise the resumed
+    // log's assigned_task_id stays null, which hides it from the Clock Out
+    // gate and from the assignment's own log_id pointer.
+    if (preBreakTask.assignedTaskId && logData) {
+      void setAssignedTaskStatus({
+        assignedTaskId: preBreakTask.assignedTaskId,
+        status: "in_progress",
+        vaId: userId,
+        logId: logData.id,
+      });
+    }
+
     const resumedTask: ActiveTask = {
       ...preBreakTask,
       start_time: now,
