@@ -21,13 +21,15 @@ export interface QuickActionMapping {
 
 interface ProjectSidebarProps {
   onQuickAction: (mapping: QuickActionMapping) => void;
-  onAutoHoldAction: (mapping: QuickActionMapping) => void;
+  // Stops whatever's running (no on-hold, no wizard) and starts this instead —
+  // same as the Start button everywhere else (Toni's call, 2026-11-05).
+  onQuickSwitchAction: (mapping: QuickActionMapping) => void;
   isAdmin: boolean;
 }
 
 export default function ProjectSidebar({
   onQuickAction,
-  onAutoHoldAction,
+  onQuickSwitchAction,
   isAdmin,
 }: ProjectSidebarProps) {
   return (
@@ -48,7 +50,21 @@ export default function ProjectSidebar({
           <div className="flex flex-col gap-2">
             <button
               onClick={() =>
-                onAutoHoldAction({
+                onQuickSwitchAction({
+                  category: "Planning",
+                  task_name: "Planning/Sorting",
+                  account: "Virtual Concierge",
+                  project: "Set-up",
+                  client_name: "Toni Colina",
+                })
+              }
+              className="w-full py-3 px-4 rounded-xl bg-amber text-white text-[12px] font-semibold cursor-pointer transition-all hover:bg-amber/90 text-left leading-tight"
+            >
+              🗂️ Planning/Sorting
+            </button>
+            <button
+              onClick={() =>
+                onQuickSwitchAction({
                   category: "Communication",
                   task_name: "Message for Guidance/Instructions",
                   account: "Virtual Concierge",
@@ -62,7 +78,7 @@ export default function ProjectSidebar({
             </button>
             <button
               onClick={() =>
-                onAutoHoldAction({
+                onQuickSwitchAction({
                   category: "Communication",
                   task_name: "General Message",
                   account: "Virtual Concierge",

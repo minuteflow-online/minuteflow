@@ -246,7 +246,7 @@ export default function LoginAsClient({
           <ProjectSidebar
             
             onQuickAction={() => {}}
-            onAutoHoldAction={() => {}}
+            onQuickSwitchAction={() => {}}
             isAdmin={false}
           />
         </div>

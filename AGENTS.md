@@ -322,7 +322,11 @@ Other: messages, capture_requests, time_correction_requests, sorting_review
 
 ### Clock In
 - Button lives in **SessionBanner** (top bar), NOT Quick Pick
-- Creates a time_log: task_name="Clock In", category="Sorting Tasks", account="Virtual Concierge"
+- No longer auto-starts a task log (Toni's call, 2026-11-04). VAs land
+  clocked-in with no active task — they consciously start a real task or pick
+  **Planning/Sorting** from Quick Pick. (Used to auto-insert a
+  task_name="Clock In"/category="Sorting Tasks" placeholder; that became the
+  mindless default instead of a deliberate choice.)
 
 ### Break Flow
 1. Break → current task end_time set, break time_log created, pre-break task saved in state
@@ -337,7 +341,9 @@ Other: messages, capture_requests, time_correction_requests, sorting_review
 - `form_fill_ms` = time spent in wizard (shown as "Wizard Time" in admin/activity/time log summary)
 
 ### Quick Pick Sidebar
-- Actions: Sorting Tasks, Message, Personal, Coaching, Training, Feedback, Collaboration, Team Dev, Personal Dev
+- Actions (`src/components/ProjectSidebar.tsx`): Planning/Sorting, Message for
+  Guidance/Instructions, General Message — each silently holds the current
+  task (no wizard) and starts the new one
 - Clock In/Out/Break are in SessionBanner, not here
 
 ### Categories
