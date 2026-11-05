@@ -291,7 +291,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [docPerson, setDocPerson] = useState("");
   const [removedDocIds, setRemovedDocIds] = useState<Set<string>>(new Set());
   const [showRemovedDocs, setShowRemovedDocs] = useState(false);
-  // In-place previews: images page through every image in the current filter.
+  // In-place previews of the one image or PDF clicked.
   const [docLightbox, setDocLightbox] = useState<{ urls: string[]; captions: string[]; index: number } | null>(null);
   const [docPdf, setDocPdf] = useState<{ url: string; filename: string } | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -1302,12 +1302,9 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                             setDocPdf({ url: f.href as string, filename: f.filename });
                             return;
                           }
-                          const imgs = filteredDocs.filter((d) => docPreviewKind(d) === "image");
-                          setDocLightbox({
-                            urls: imgs.map((d) => d.href as string),
-                            captions: imgs.map((d) => d.filename),
-                            index: Math.max(0, imgs.findIndex((d) => d.id === f.id)),
-                          });
+                          // Just the image clicked — paging through every image
+                          // on the card ("24 / 110") read as the wrong file.
+                          setDocLightbox({ urls: [f.href as string], captions: [f.filename], index: 0 });
                         }}
                         className={rowClass}
                       >
