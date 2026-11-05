@@ -1,17 +1,17 @@
-// Ported from the web dashboard's ProjectSidebar ("Quick Pick") — same two
-// buttons, same styling (className strings lifted directly), same card
-// shell ClockPanel/TeamPanel already use. Web's version also takes an
+// Ported from the web dashboard's ProjectSidebar ("Quick Pick") — same
+// three buttons, same styling (className strings lifted directly), same
+// card shell ClockPanel/TeamPanel already use. Web's version also takes an
 // onQuickAction prop for pre-filling the freeform task entry form, but
 // desktop has no such form (tasks come from assignments), so only the
-// auto-hold-and-message action applies here.
+// quick-switch action applies here.
 import type { QuickMessageMapping } from "../lib/clock";
 
 interface QuickPickPanelProps {
-  onMessage: (mapping: QuickMessageMapping) => void;
+  onQuickSwitch: (mapping: QuickMessageMapping) => void;
   disabled: boolean;
 }
 
-export default function QuickPickPanel({ onMessage, disabled }: QuickPickPanelProps) {
+export default function QuickPickPanel({ onQuickSwitch, disabled }: QuickPickPanelProps) {
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
       <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Quick Pick</h3>
@@ -21,7 +21,22 @@ export default function QuickPickPanel({ onMessage, disabled }: QuickPickPanelPr
         </div>
         <button
           onClick={() =>
-            onMessage({
+            onQuickSwitch({
+              category: "Planning",
+              task_name: "Planning/Sorting",
+              account: "Virtual Concierge",
+              project: "Set-up",
+              client_name: "Toni Colina",
+            })
+          }
+          disabled={disabled}
+          className="w-full py-3 px-4 rounded-xl bg-amber text-white text-[12px] font-semibold cursor-pointer transition-all hover:bg-amber/90 text-left leading-tight disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          🗂️ Planning/Sorting
+        </button>
+        <button
+          onClick={() =>
+            onQuickSwitch({
               category: "Communication",
               task_name: "Message for Guidance/Instructions",
               account: "Virtual Concierge",
@@ -36,7 +51,7 @@ export default function QuickPickPanel({ onMessage, disabled }: QuickPickPanelPr
         </button>
         <button
           onClick={() =>
-            onMessage({
+            onQuickSwitch({
               category: "Communication",
               task_name: "General Message",
               account: "Virtual Concierge",
