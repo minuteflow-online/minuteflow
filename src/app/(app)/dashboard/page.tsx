@@ -264,9 +264,6 @@ export default function DashboardPage() {
   const [showClockOutMemoGuide, setShowClockOutMemoGuide] = useState(false);
   const [showClockOutRatingGuide, setShowClockOutRatingGuide] = useState(false);
 
-  // Held task (auto-held when a quick-message action is used)
-  const [heldTask, setHeldTask] = useState<ActiveTask | null>(null);
-
   // Clock Out gate (Phase 3, Toni's call, 2026-11-02): narrow version — only
   // blocks on a task actively in_progress right now, not on older
   // started-then-stopped-but-never-submitted work. Null means "not checked
@@ -1293,67 +1290,19 @@ export default function DashboardPage() {
 
       await closeOpenLogs(now, undefined, SWITCH_MIN_AGE_MS);
 
-      // Create a "Planning" time_log entry so clock-in registers in activity log
+      // No default task log on clock-in (Toni's call, 2026-11-04) — it used to
+      // silently drop everyone onto a "Planning" placeholder, which became the
+      // mindless default instead of a conscious choice. VAs now land clocked-in
+      // with no active task and either start a real task or deliberately pick
+      // Planning/Sorting from Quick Pick.
       const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
-      const { data: sortingLog, error: logError } = await supabase
-        .from("time_logs")
-        .insert({
-          user_id: userId,
-          username: profile.username,
-          full_name: profile.full_name,
-          department: profile.department,
-          position: profile.position,
-          task_name: "Clock In",
-          category: "Planning",
-          project: "Set-up",
-          account: "Virtual Concierge",
-          client_name: "Toni Colina",
-          start_time: now,
-          billable: true,
-          billing_type: "hourly",
-          session_date: clockInSessionDate,
-        })
-        .select()
-        .single();
-
-      // This row is where the shift's time lands, so losing it has to stop the
-      // clock-in. Marking the session clocked_in anyway leaves the banner
-      // saying "Clocked In Since 7:05" while nothing is being recorded, and the
-      // VA only finds out hours later when the day totals zero. Same guard as
-      // task start below.
-      if (logError || !sortingLog) {
-        alert(
-          isDuplicateActiveLogError(logError)
-            ? "You're already clocked in somewhere else (another tab, device, or the extension?). Refresh this page to see your current status."
-            : "Couldn't clock you in: " +
-                (logError?.message || "unknown error") +
-                ". Please try again — nothing is being tracked right now."
-        );
-        return;
-      }
-
-      const sortingTask: ActiveTask = {
-        task_name: "Clock In",
-        category: "Planning",
-        project: "Set-up",
-        account: "Virtual Concierge",
-        client_name: "Toni Colina",
-        client_memo: "",
-        internal_memo: "",
-        start_time: now,
-        end_time: null,
-        duration_ms: 0,
-        logId: sortingLog.id.toString(),
-        _startMs: Date.now(),
-        billing_type: "hourly",
-      };
 
       const { error } = await supabase.from("sessions").upsert(
         {
           user_id: userId,
           clocked_in: true,
           clock_in_time: now,
-          active_task: sortingTask,
+          active_task: null,
           session_date: clockInSessionDate,
           updated_at: now,
         },
@@ -1370,12 +1319,46 @@ export default function DashboardPage() {
           }),
           clocked_in: true,
           clock_in_time: now,
-          active_task: sortingTask,
+          active_task: null,
           session_date: clockInSessionDate,
         } as Session));
-        setActiveTask(sortingTask);
-        setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
+        setActiveTask(null);
         await refreshSession();
+
+        // Create a "Clocked In" time_log entry to mark the boundary — mirrors
+        // the "Clocked Out" marker in performClockOut. Inserted already closed
+        // (start_time === end_time, zero duration) so it's never an open log:
+        // it can't trip the one-open-log constraint or need the SWITCH_MIN_AGE_MS
+        // exemption the old running "Clock In" placeholder needed.
+        if (profile) {
+          const { data: clockInLog, error: clockInLogError } = await supabase
+            .from("time_logs")
+            .insert({
+              user_id: userId,
+              username: profile.username,
+              full_name: profile.full_name,
+              department: profile.department,
+              position: profile.position,
+              task_name: "Clocked In",
+              category: "Clock In",
+              start_time: now,
+              end_time: now,
+              duration_ms: 0,
+              billable: false,
+              session_date: clockInSessionDate,
+            })
+            .select()
+            .single();
+
+          // Deliberately not fatal — same reasoning as the Clocked Out marker:
+          // zero-duration boundary row, losing it costs no tracked time.
+          if (clockInLogError) {
+            console.error("clockIn: Clocked In marker insert failed", clockInLogError);
+          }
+          if (clockInLog) {
+            setTimeLogs((prev) => [clockInLog as TimeLog, ...prev]);
+          }
+        }
 
         // Request notification permission at clock-in so off-tab alerts work
         if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -1672,7 +1655,6 @@ export default function DashboardPage() {
       setClockOutRatingNote("");
       setShowClockOutMemoGuide(false);
       setShowClockOutRatingGuide(false);
-      setHeldTask(null);
 
       // Clear active task locally before clocking out
       setActiveTask(null);
@@ -1701,17 +1683,6 @@ export default function DashboardPage() {
 
   // Track if we're triggering the wizard for a break (vs switching tasks)
   const [breakPending, setBreakPending] = useState(false);
-
-  // Show pre-break wizard if there's an active task, otherwise start break directly
-  const startBreak = useCallback(async () => {
-    if (!userId || !profile) return;
-
-    // Silent, same as every other switch now — doStartBreak() already calls
-    // stopCurrentTask() itself when there's a real (non-break) active task,
-    // which carries its own demotion fix (Phase 1/2, Toni's call,
-    // 2026-11-02). No forced wizard here anymore.
-    await doStartBreak();
-  }, [userId, profile]);
 
   // Actually start the break (called after wizard or directly).
   // closedTaskStatus is the status just chosen for the task being closed to
@@ -1849,6 +1820,16 @@ export default function DashboardPage() {
       setSessionActionPending(false);
     }
   }, [userId, profile, supabase, session, activeTask, stopCurrentTask, refreshSession, sessionActionPendingRef, setSessionActionPending]);
+
+  const startBreak = useCallback(async () => {
+    if (!userId || !profile) return;
+
+    // Silent, same as every other switch now — doStartBreak() already calls
+    // stopCurrentTask() itself when there's a real (non-break) active task,
+    // which carries its own demotion fix (Phase 1/2, Toni's call,
+    // 2026-11-02). No forced wizard here anymore.
+    await doStartBreak();
+  }, [userId, profile, doStartBreak]);
 
   // Resume the pre-break task
   const resumePreBreakTask = useCallback(async () => {
@@ -3414,31 +3395,12 @@ export default function DashboardPage() {
     []
   );
 
-  const handleAutoHoldAndStartMessage = useCallback(
+  const handleQuickSwitchTask = useCallback(
     async (mapping: QuickActionMapping) => {
-      // If there's an active task, silently put it on hold (no wizard)
-      if (activeTask?.logId) {
-        const now = new Date().toISOString();
-        const logId = parseInt(activeTask.logId, 10);
-        const startMs = activeTask.start_time
-          ? new Date(activeTask.start_time).getTime()
-          : Date.now();
-        const durationMs = Math.max(0, Date.now() - startMs);
-        await supabase
-          .from("time_logs")
-          .update({ end_time: now, duration_ms: durationMs, progress: "on_hold" })
-          .eq("id", logId);
-        setTimeLogs((prev) =>
-          prev.map((log) =>
-            log.id === logId
-              ? { ...log, end_time: now, duration_ms: durationMs, progress: "on_hold" }
-              : log
-          )
-        );
-        setHeldTask(activeTask);
-        setActiveTask(null);
-      }
-      // Start the message task
+      // No on-hold detour here (Toni's call, 2026-11-05) — just startTask,
+      // same as the Start button everywhere else. Its own close-all-open-logs
+      // sweep already stops whatever's running (no demotion, no wizard),
+      // so there's never a held task and never two running at once.
       await startTask({
         task_name: mapping.task_name,
         category: mapping.category,
@@ -3449,38 +3411,8 @@ export default function DashboardPage() {
         internal_memo: "",
       });
     },
-    [activeTask, supabase, startTask]
+    [startTask]
   );
-
-  const resumeHeldTask = useCallback(async () => {
-    if (!heldTask) return;
-    // End the current message task immediately (no wizard)
-    if (activeTask?.logId) {
-      const now = new Date().toISOString();
-      const logId = parseInt(activeTask.logId, 10);
-      const startMs = activeTask.start_time ? new Date(activeTask.start_time).getTime() : Date.now();
-      const durationMs = Math.max(0, Date.now() - startMs);
-      await supabase.from("time_logs").update({ end_time: now, duration_ms: durationMs }).eq("id", logId);
-      setTimeLogs((prev) =>
-        prev.map((log) =>
-          log.id === logId ? { ...log, end_time: now, duration_ms: durationMs } : log
-        )
-      );
-    }
-    setActiveTask(null);
-    const taskToResume = heldTask;
-    setHeldTask(null);
-    // Start a fresh log for the resumed task
-    await startTask({
-      task_name: taskToResume.task_name,
-      category: taskToResume.category,
-      account: taskToResume.account || "",
-      project: taskToResume.project || "",
-      client_name: taskToResume.client_name || "",
-      client_memo: "",
-      internal_memo: "",
-    });
-  }, [heldTask, activeTask, supabase, startTask]);
 
   const handleSidebarMemoSave = useCallback(async () => {
     if (!activeTask?.logId) return;
@@ -3742,22 +3674,6 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* Held Task Resume Banner */}
-      {heldTask && sessionState === "clocked-in" && (
-        <div className="flex items-center gap-3 px-4 py-2.5 mb-4 bg-amber/10 border border-amber/30 rounded-xl text-[12px] text-espresso">
-          <span className="text-amber text-base">⏸</span>
-          <span className="text-stone">On hold:</span>
-          <span className="font-semibold flex-1 truncate">{heldTask.task_name}</span>
-          <button
-            onClick={resumeHeldTask}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold cursor-pointer hover:bg-sage/80 transition-all shrink-0"
-          >
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21" /></svg>
-            Resume
-          </button>
-        </div>
-      )}
-
       {/* Layout: Team (left) + Task Form (center) + Daily Planner + Projects/Assignments (right) */}
       {(() => {
         // ─── VA Visibility Rules ───────────────────────────────────
@@ -3841,7 +3757,7 @@ export default function DashboardPage() {
               {showQuickPick && (
                 <ProjectSidebar
                   onQuickAction={handleQuickAction}
-                  onAutoHoldAction={handleAutoHoldAndStartMessage}
+                  onQuickSwitchAction={handleQuickSwitchTask}
                   isAdmin={hasBroadAdminAccess({ role })}
                 />
               )}
