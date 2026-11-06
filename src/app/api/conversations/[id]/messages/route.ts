@@ -4,6 +4,7 @@ import { notifyOne } from "@/lib/notifyOne";
 import { esc } from "@/lib/telegram";
 import { fetchAttachmentsByTargets } from "@/lib/messageAttachments";
 import { notifyMentions } from "@/lib/notifyMentions";
+import { isMemoChat, memoChatNotice, MEMO_CHAT_TITLE } from "@/lib/memoChat";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +106,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     admin.from("conversation_members").select("user_id").eq("conversation_id", id),
   ]);
   const senderName = me?.full_name || me?.username || "Someone";
+  const memo = isMemoChat(conv);
   const where = conv?.is_group && conv?.title ? ` in ${conv.title}` : "";
   const snippet = body.length > 160 ? `${body.slice(0, 160)}…` : body;
   const otherIds = (members ?? []).map((m) => m.user_id as string).filter((uid) => uid !== user.id);
@@ -126,8 +128,11 @@ export async function POST(request: Request, { params }: RouteContext) {
     await notifyOne(admin, {
       targetUserId: uid,
       senderId: user.id,
-      content: `${senderName} sent you a message${where}`,
-      telegram: `💬 <b>${esc(senderName)}</b>${where ? ` <i>${esc(where.trim())}</i>` : ""}\n\n${esc(snippet)}`,
+      // A memo chat gets its own wording so the bell opens the memo chat, not the regular DM.
+      content: memo ? memoChatNotice(senderName) : `${senderName} sent you a message${where}`,
+      telegram: memo
+        ? `📌 <b>${esc(senderName)}</b> <i>${esc(MEMO_CHAT_TITLE)}</i>\n\n${esc(snippet)}`
+        : `💬 <b>${esc(senderName)}</b>${where ? ` <i>${esc(where.trim())}</i>` : ""}\n\n${esc(snippet)}`,
       topic: "message",
     });
   }

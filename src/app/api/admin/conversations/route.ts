@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
+import { isMemoChat, MEMO_CHAT_TITLE } from "@/lib/memoChat";
 import { hasModerationAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
@@ -70,7 +71,7 @@ export async function GET() {
   const conversations = (convs ?? [])
     .map((c) => {
       const members = membersByConv.get(c.id as string) ?? [];
-      const title = c.is_group ? (c.title as string) || members.map((m) => m.name).join(", ") || "Group" : members.map((m) => m.name).join(" & ") || "Conversation";
+      const title = c.is_group ? (c.title as string) || members.map((m) => m.name).join(", ") || "Group" : `${isMemoChat(c as { is_group: boolean; title: string | null }) ? `${MEMO_CHAT_TITLE} · ` : ""}${members.map((m) => m.name).join(" & ") || "Conversation"}`;
       const lm = lastMsg.get(c.id as string) ?? null;
       return {
         id: c.id as string,

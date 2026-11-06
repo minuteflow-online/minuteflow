@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { memoChatPath } from "@/lib/memoChat";
 
 type Notif = {
   id: number;
@@ -29,6 +30,7 @@ const ACTION_PATTERNS: Array<{ bucket: string; re: RegExp; noun: (n: number) => 
   { bucket: "submission", re: /^(.+?) submitted: /, noun: (n) => `${n} task${n === 1 ? "" : "s"}` },
   { bucket: "comment", re: /^(.+?) commented on /, noun: (n) => `${n} comment${n === 1 ? "" : "s"}` },
   { bucket: "mention", re: /^(.+?) mentioned you in /, noun: (n) => `${n} place${n === 1 ? "" : "s"}` },
+  { bucket: "memo", re: /^(.+?) sent you a memo message/, noun: (n) => `${n} memo message${n === 1 ? "" : "s"}` },
   { bucket: "dm", re: /^(.+?) sent you a message/, noun: (n) => `${n} message${n === 1 ? "" : "s"}` },
   {
     bucket: "joborder",
@@ -126,7 +128,9 @@ export default function NotificationBell() {
    *  (or starts) that conversation and opens it. */
   const destinationFor = (item: Notif): string | null => {
     if (item.assigned_task_id != null) return `/productivity/submissions?taskId=${item.assigned_task_id}`;
-    if (item.sender_id && classify(item.content)?.bucket === "dm") return `/dashboard?dmUserId=${item.sender_id}`;
+    const bucket = item.sender_id ? classify(item.content)?.bucket : undefined;
+    if (item.sender_id && bucket === "memo") return memoChatPath(item.sender_id);
+    if (item.sender_id && bucket === "dm") return `/dashboard?dmUserId=${item.sender_id}`;
     return null;
   };
 

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
+import { isMemoChat, MEMO_CHAT_TITLE } from "@/lib/memoChat";
 
 export const dynamic = "force-dynamic";
 
@@ -80,10 +81,13 @@ export async function GET(request: Request) {
     .map((c) => {
       const members = (membersByConv.get(c.id as string) ?? []).filter((m) => m.id !== user.id);
       const lm = lastMsg.get(c.id as string) ?? null;
-      const title = c.is_group ? (c.title as string) || members.map((m) => m.name).join(", ") || "Group" : (members[0]?.name ?? "Conversation");
+      const memo = isMemoChat(c as { is_group: boolean; title: string | null });
+      const name = members[0]?.name ?? "Conversation";
+      const title = c.is_group ? (c.title as string) || members.map((m) => m.name).join(", ") || "Group" : memo ? `${MEMO_CHAT_TITLE} · ${name}` : name;
       return {
         id: c.id as string,
         is_group: c.is_group as boolean,
+        is_memo: memo,
         title,
         members,
         last_message: lm ? { body: lm.body, created_at: lm.created_at, mine: lm.sender_id === user.id } : null,
@@ -111,10 +115,14 @@ export async function POST(request: Request) {
   if ("error" in auth) return auth.error;
   const { user } = auth;
 
-  const b = (await request.json()) as { member_ids?: unknown; title?: unknown; is_group?: unknown };
+  const b = (await request.json()) as { member_ids?: unknown; title?: unknown; is_group?: unknown; kind?: unknown };
   const others = Array.isArray(b.member_ids) ? Array.from(new Set((b.member_ids as unknown[]).filter((x): x is string => typeof x === "string" && x.length > 0 && x !== user.id))) : [];
   if (others.length === 0) return Response.json({ error: "Pick at least one person" }, { status: 400 });
-  const isGroup = Boolean(b.is_group) || others.length > 1;
+  // kind "memo" finds or starts the separate Memo questions chat with one
+  // person instead of the ordinary 1:1 (see src/lib/memoChat.ts).
+  const memo = b.kind === "memo";
+  if (memo && others.length !== 1) return Response.json({ error: "A memo chat is with one person" }, { status: 400 });
+  const isGroup = !memo && (Boolean(b.is_group) || others.length > 1);
   const memberIds = [user.id, ...others];
 
   const supabase = serviceClient();
@@ -131,19 +139,22 @@ export async function POST(request: Request) {
       // without this, starting a new chat with someone you'd deleted a
       // conversation with would silently resurrect the dead conversation_id,
       // which every other route filters out, making it unopenable.
-      const { data: groupFlags } = await supabase.from("conversations").select("id, is_group").in("id", ids).is("deleted_at", null);
-      const isG = new Map((groupFlags ?? []).map((g) => [g.id as string, g.is_group as boolean]));
+      const { data: groupFlags } = await supabase.from("conversations").select("id, is_group, title").in("id", ids).is("deleted_at", null);
+      const convById = new Map((groupFlags ?? []).map((g) => [g.id as string, g as { is_group: boolean; title: string | null }]));
       for (const [cid, set] of byConv) {
-        if (isG.has(cid) && !isG.get(cid) && set.size === 2 && set.has(user.id) && set.has(others[0])) {
+        const c = convById.get(cid);
+        // A memo request only reuses the memo chat, and a plain DM never does.
+        if (c && !c.is_group && isMemoChat(c) === memo && set.size === 2 && set.has(user.id) && set.has(others[0])) {
           return Response.json({ conversation_id: cid, existing: true });
         }
       }
     }
   }
 
+  const title = memo ? MEMO_CHAT_TITLE : !isGroup ? null : typeof b.title === "string" && b.title.trim() ? b.title.trim() : null;
   const { data: conv, error } = await supabase
     .from("conversations")
-    .insert({ is_group: isGroup, title: typeof b.title === "string" && b.title.trim() ? b.title.trim() : null, created_by: user.id })
+    .insert({ is_group: isGroup, title, created_by: user.id })
     .select("id")
     .single();
   if (error) return Response.json({ error: error.message }, { status: 400 });

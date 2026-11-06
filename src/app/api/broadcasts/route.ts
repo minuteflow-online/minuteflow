@@ -374,6 +374,8 @@ export async function GET(request: Request) {
         confirmed_by_me: myRead?.confirmed ?? false,
         word_entered_by_me: myRead?.word_entered ?? null,
         recipients: recipientsByBroadcast[b.id] || [],
+        // No "ask the author" button on your own broadcast
+        author_name: b.created_by && b.created_by !== user.id ? memberName.get(b.created_by) ?? null : null,
       };
     });
 
@@ -443,6 +445,23 @@ export async function GET(request: Request) {
     myReadMap.set(r.broadcast_id, { word_entered: r.word_entered, confirmed: r.confirmed });
   });
 
+  // Authors' names, for the "Ask <author> a question" button on each broadcast
+  const authorIds = Array.from(new Set(visibleBroadcasts.map((b) => b.created_by).filter(Boolean))) as string[];
+  const authorName = new Map<string, string>();
+  if (authorIds.length) {
+    const adminClient = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: authors } = await adminClient
+      .from("profiles")
+      .select("id, full_name, username, is_active")
+      .in("id", authorIds);
+    // An author who has left can't answer, so they get no button.
+    (authors || [])
+      .filter((a) => a.is_active !== false)
+      .forEach((a) => authorName.set(a.id, a.full_name || a.username || "the author"));
+  }
+
   const result = visibleBroadcasts.map((b) => {
     const myRead = myReadMap.get(b.id);
     return {
@@ -450,6 +469,7 @@ export async function GET(request: Request) {
       confirmed_by_me: myRead?.confirmed ?? false,
       word_entered_by_me: myRead?.word_entered ?? null,
       recipients: recipientsByBroadcast[b.id] || [],
+      author_name: b.created_by ? authorName.get(b.created_by) ?? null : null,
     };
   });
 
