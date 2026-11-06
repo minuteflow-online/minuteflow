@@ -50,6 +50,27 @@ export function isRecipient(rows: RecipientRow[], member: BroadcastMember): bool
   });
 }
 
+/**
+ * Whether a broadcast is actually waiting on this member: targeted by its
+ * recipient rows and not its author. Whoever wrote it never needs to
+ * acknowledge it or be reminded about it (Toni's call, 2026-11-05).
+ */
+export function isAudience(
+  rows: RecipientRow[],
+  member: BroadcastMember,
+  authorId: string | null | undefined
+): boolean {
+  return member.id !== authorId && isRecipient(rows, member);
+}
+
+/**
+ * Title for a follow-up posted on an earlier broadcast. Notifications and the
+ * admin list use it, so it always names the broadcast it follows.
+ */
+export function followUpTitle(parentTitle: string): string {
+  return `Follow-up: ${parentTitle}`;
+}
+
 // Portal tab that lists each broadcast category. Announcements have no portal tab, so no link.
 export const PORTAL_TAB_BY_CATEGORY: Record<string, string> = {
   memo: "memos",

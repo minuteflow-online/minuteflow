@@ -30,6 +30,8 @@ interface Broadcast {
   image_url: string | null;
   sort_order: number;
   tags: string[];
+  /** Set on a follow-up: the broadcast it updates. */
+  parent_id?: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -98,18 +100,95 @@ function CategoryBadge({ category }: { category: Broadcast["category"] }) {
   );
 }
 
+// ─── Follow-up ────────────────────────────────────────────────
+
+/** A short update on a broadcast, shown at the top of it and acknowledged on its own. */
+function FollowUpItem({
+  followUp,
+  onAcknowledged,
+  linked,
+}: {
+  followUp: Broadcast;
+  onAcknowledged: (id: string) => void;
+  linked: boolean;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAcknowledge = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/broadcasts/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ broadcast_id: followUp.id }),
+      });
+      if (res.ok) {
+        onAcknowledged(followUp.id);
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Something went wrong. Please try again.");
+      }
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className={`rounded-lg border bg-cream p-3 space-y-2 ${linked ? "border-terracotta" : "border-sand"}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
+          Follow-up · {fmtDate(followUp.created_at)}
+        </p>
+        {followUp.confirmed_by_me && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-semibold text-sage">
+            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            Acknowledged
+          </span>
+        )}
+      </div>
+      <div
+        className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES}`}
+        dangerouslySetInnerHTML={{ __html: renderBroadcastHtml(followUp.body) }}
+      />
+      {!followUp.confirmed_by_me && (
+        <div className="space-y-2">
+          {error && <p className="text-xs text-red-500">{error}</p>}
+          <button
+            onClick={handleAcknowledge}
+            disabled={submitting}
+            className="rounded-lg bg-terracotta px-4 py-2 text-[12px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {submitting ? "Submitting…" : "Acknowledge update"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Broadcast Card ───────────────────────────────────────────
 
 function BroadcastCard({
   broadcast,
+  followUps,
   onAcknowledged,
-  linked,
+  linkedId,
 }: {
   broadcast: Broadcast;
+  /** Updates posted on this broadcast, newest first. */
+  followUps: Broadcast[];
   onAcknowledged: (id: string) => void;
-  /** Opened from a shared link — expand, scroll into view and highlight. */
-  linked: boolean;
+  /** The id opened from a shared link — this card's or one of its follow-ups'. */
+  linkedId: string | null;
 }) {
+  const linked = linkedId === broadcast.id || followUps.some((f) => f.id === linkedId);
+  const newUpdates = followUps.filter((f) => !f.confirmed_by_me).length;
   const [expanded, setExpanded] = useState(linked);
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -201,12 +280,26 @@ function BroadcastCard({
                 Acknowledged
               </span>
             )}
+            {newUpdates > 0 && (
+              <span className="inline-flex items-center rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-semibold text-amber">
+                {newUpdates === 1 ? "New update" : `${newUpdates} new updates`}
+              </span>
+            )}
           </div>
           <h3 className="text-sm font-semibold text-espresso">{broadcast.title}</h3>
           <p className="text-[11px] text-stone mt-0.5">{fmtDate(broadcast.created_at)}</p>
         </div>
         <BroadcastCopyLinkButton category={broadcast.category} id={broadcast.id} />
       </div>
+
+      {/* Follow-ups — on top, so an update can be read without going through the whole message again */}
+      {followUps.length > 0 && (
+        <div className="mb-3 space-y-2">
+          {followUps.map((f) => (
+            <FollowUpItem key={f.id} followUp={f} onAcknowledged={onAcknowledged} linked={f.id === linkedId} />
+          ))}
+        </div>
+      )}
 
       {/* Image */}
       {broadcast.image_url && (
@@ -336,11 +429,24 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
     );
   }, []);
 
-  const availableTags = Array.from(new Set(broadcasts.flatMap((b) => b.tags))).sort((a, b) =>
+  // Follow-ups show inside the broadcast they update, newest first, never as cards of their own.
+  const followUpsByParent = new Map<string, Broadcast[]>();
+  broadcasts
+    .filter((b) => b.parent_id)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .forEach((f) => {
+      followUpsByParent.set(f.parent_id!, [...(followUpsByParent.get(f.parent_id!) ?? []), f]);
+    });
+  const originals = broadcasts.filter((b) => !b.parent_id);
+
+  const availableTags = Array.from(new Set(originals.flatMap((b) => b.tags))).sort((a, b) =>
     a.localeCompare(b)
   );
   const visibleBroadcasts =
-    tagFilter === "all" ? broadcasts : broadcasts.filter((b) => b.tags.includes(tagFilter));
+    tagFilter === "all" ? originals : originals.filter((b) => b.tags.includes(tagFilter));
+  const linkFound =
+    !!linkedId &&
+    originals.some((b) => b.id === linkedId || (followUpsByParent.get(b.id) ?? []).some((f) => f.id === linkedId));
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -375,13 +481,13 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
         </div>
       )}
 
-      {!loading && linkedId && !broadcasts.some((b) => b.id === linkedId) && (
+      {!loading && linkedId && !linkFound && (
         <div className="rounded-lg border border-sand bg-parchment px-4 py-3 text-xs text-walnut">
           The linked broadcast isn&apos;t available to you — it may have been archived, or sent to someone else.
         </div>
       )}
 
-      {!loading && broadcasts.length === 0 && (
+      {!loading && originals.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-3 h-12 w-12 rounded-full bg-parchment flex items-center justify-center">
             <svg className="h-5 w-5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -395,7 +501,7 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
         </div>
       )}
 
-      {!loading && broadcasts.length > 0 && visibleBroadcasts.length === 0 && (
+      {!loading && originals.length > 0 && visibleBroadcasts.length === 0 && (
         <p className="text-sm text-stone py-8 text-center">Nothing tagged &quot;{tagFilter}&quot; yet.</p>
       )}
 
@@ -405,8 +511,9 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
             <BroadcastCard
               key={b.id}
               broadcast={b}
+              followUps={followUpsByParent.get(b.id) ?? []}
               onAcknowledged={handleAcknowledged}
-              linked={b.id === linkedId}
+              linkedId={linkedId}
             />
           ))}
         </div>

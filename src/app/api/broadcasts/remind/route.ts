@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
   const { data: broadcast } = await admin
     .from("broadcasts")
-    .select("id, title, category, status, require_word")
+    .select("id, title, category, status, require_word, created_by")
     .eq("id", broadcast_id)
     .single();
   if (!broadcast) return Response.json({ error: "Broadcast not found" }, { status: 404 });

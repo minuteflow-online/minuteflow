@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isRecipient, broadcastPortalPath, RECIPIENT_PROFILE_COLUMNS } from "@/lib/broadcasts";
+import { isAudience, broadcastPortalPath, RECIPIENT_PROFILE_COLUMNS } from "@/lib/broadcasts";
 import { notifyOne } from "@/lib/notifyOne";
 import { esc } from "@/lib/telegram";
 import { sendResendEmail } from "@/lib/sendEmail";
@@ -38,7 +38,13 @@ async function emailReminder(to: string, title: string, ask: string, link: strin
  */
 export async function remindPendingBroadcast(
   admin: SupabaseClient,
-  broadcast: { id: string; title: string; category: string; require_word?: boolean | null },
+  broadcast: {
+    id: string;
+    title: string;
+    category: string;
+    require_word?: boolean | null;
+    created_by?: string | null;
+  },
   senderId: string
 ): Promise<number> {
   const [{ data: recipientRows }, { data: reads }, { data: members }] = await Promise.all([
@@ -49,7 +55,7 @@ export async function remindPendingBroadcast(
 
   const rows = (recipientRows || []).map((r) => ({ type: r.recipient_type, value: r.recipient_value }));
   const done = new Set((reads || []).map((r) => r.user_id));
-  const pending = (members || []).filter((m) => isRecipient(rows, m) && !done.has(m.id));
+  const pending = (members || []).filter((m) => isAudience(rows, m, broadcast.created_by) && !done.has(m.id));
 
   const link = `https://minuteflow.click${broadcastPortalPath(broadcast.category, broadcast.id) ?? "/portal"}`;
   const ask = broadcast.require_word
