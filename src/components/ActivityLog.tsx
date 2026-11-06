@@ -194,6 +194,8 @@ export default function ActivityLog({
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [page, setPage] = useState(0);
+  const [pastCollapsed, setPastCollapsed] = useState(false);
+  const [pastPage, setPastPage] = useState(0);
 
   // Edit/create modal
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
@@ -401,10 +403,10 @@ export default function ActivityLog({
   }, [timezone]);
 
   // Separate today's logs, past in-progress logs, and past on-hold logs
-  const { todayLogs: allTodayLogs, pastInProgressLogs, pastOnHoldLogs } = useMemo(() => {
+  const { todayLogs: allTodayLogs, pastCompletedLogs, pastOnHoldLogs } = useMemo(() => {
     const tz = timezone || "UTC";
     const today: TimeLog[] = [];
-    const pastIP: TimeLog[] = [];
+    const pastCompleted: TimeLog[] = [];
     const pastOH: TimeLog[] = [];
     // Between midnight and the overnight cutoff, someone still on a shift that
     // started yesterday keeps those entries in Today (see activityLogDay).
@@ -413,14 +415,14 @@ export default function ActivityLog({
     logs.forEach((log) => {
       if (belongsToToday(log, tz, { ...dayContext, todayStr })) {
         today.push(log);
-      } else if (log.progress === "in_progress") {
-        pastIP.push(log);
+      } else if (log.progress === "completed") {
+        pastCompleted.push(log);
       } else if (log.progress === "on_hold") {
         pastOH.push(log);
       }
     });
 
-    return { todayLogs: today, pastInProgressLogs: pastIP, pastOnHoldLogs: pastOH };
+    return { todayLogs: today, pastCompletedLogs: pastCompleted, pastOnHoldLogs: pastOH };
   }, [logs, todayStr, timezone]);
 
   // Apply filters + sort (live entries first, then by most recent)
@@ -473,9 +475,9 @@ export default function ActivityLog({
     [filteredLogs, safePage]
   );
 
-  // Filter past in-progress logs with same filters
-  const filteredPastIP = useMemo(() => {
-    return pastInProgressLogs.filter((log) => {
+  // Filter past completed logs with same filters
+  const filteredPastCompleted = useMemo(() => {
+    return pastCompletedLogs.filter((log) => {
       if (selectedUsers.size > 0 && !selectedUsers.has(log.username)) return false;
       if (search) {
         const q = search.toLowerCase();
@@ -498,7 +500,20 @@ export default function ActivityLog({
       if (accountFilter && log.account !== accountFilter) return false;
       return true;
     }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  }, [pastInProgressLogs, selectedUsers, search, categoryFilter, accountFilter]);
+  }, [pastCompletedLogs, selectedUsers, search, categoryFilter, accountFilter]);
+
+  // Same reset-on-filter-change + pagination pattern as the main table,
+  // scoped separately since this section pages independently.
+  useEffect(() => {
+    setPastPage(0);
+  }, [selectedUsers, search, categoryFilter, accountFilter]);
+
+  const pastPageCount = Math.max(1, Math.ceil(filteredPastCompleted.length / ACTIVITY_LOG_PAGE_SIZE));
+  const pastSafePage = Math.min(pastPage, pastPageCount - 1);
+  const pastPageLogs = useMemo(
+    () => filteredPastCompleted.slice(pastSafePage * ACTIVITY_LOG_PAGE_SIZE, (pastSafePage + 1) * ACTIVITY_LOG_PAGE_SIZE),
+    [filteredPastCompleted, pastSafePage]
+  );
 
   // Filter past on-hold logs with same filters
   const filteredPastOnHold = useMemo(() => {
@@ -1375,16 +1390,34 @@ export default function ActivityLog({
         )}
       </div>
 
-      {/* Past In-Progress Tasks (from previous days) */}
-      {filteredPastIP.length > 0 && (
-        <div className="bg-white border border-amber/30 rounded-xl mb-6">
-          <div className="py-3 px-5 border-b border-amber/20 bg-amber/5 rounded-t-xl flex items-center justify-between">
+      {/* Completed Tasks (from previous days) — shows only finished past-day
+          work (Toni's call, 2026-11-06); a past-day task still in_progress
+          just isn't surfaced here anymore. Purely informational, so no
+          status-change action on these rows, unlike the On Hold section
+          below where Resume still makes sense. */}
+      {filteredPastCompleted.length > 0 && (
+        <div className="bg-white border border-sage/30 rounded-xl mb-6">
+          <div className="py-3 px-5 border-b border-sage/20 bg-sage/5 rounded-t-xl flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="inline-block w-2 h-2 rounded-full bg-amber animate-pulse"></span>
-              <h3 className="text-[12px] font-bold text-espresso">In Progress from Previous Days</h3>
+              <span className="inline-block w-2 h-2 rounded-full bg-sage"></span>
+              <h3 className="text-[12px] font-bold text-espresso">Completed from Previous Days</h3>
             </div>
-            <span className="text-[10px] text-bark">{filteredPastIP.length} {filteredPastIP.length === 1 ? "task" : "tasks"}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-bark">{filteredPastCompleted.length} {filteredPastCompleted.length === 1 ? "task" : "tasks"}</span>
+              <button
+                type="button"
+                onClick={() => setPastCollapsed((prev) => !prev)}
+                aria-label={pastCollapsed ? "Expand Completed from Previous Days" : "Collapse Completed from Previous Days"}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-sand bg-white text-bark transition-colors hover:bg-parchment cursor-pointer"
+              >
+                <svg className={`h-3.5 w-3.5 transition-transform ${pastCollapsed ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+            </div>
           </div>
+          {!pastCollapsed && (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse min-w-[600px]">
               <thead>
@@ -1400,7 +1433,7 @@ export default function ActivityLog({
                 </tr>
               </thead>
               <tbody>
-                {filteredPastIP.map((log) => (
+                {pastPageLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-parchment/30 transition-colors">
                     {isAdminOrManager && (
                       <td className="py-2 px-3 text-[12px] border-b border-parchment">
@@ -1431,26 +1464,40 @@ export default function ActivityLog({
                       {formatDuration(log.duration_ms, log.billing_type)}
                     </td>
                     <td className="py-2 px-3 border-b border-parchment">
-                      <div className="flex items-center gap-1.5">
-                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-terracotta/15 text-terracotta">
-                          In Progress
-                        </span>
-                        {onUpdateProgress && (
-                          <button
-                            onClick={() => onUpdateProgress(log.id, "completed")}
-                            className="text-[9px] font-semibold text-sage hover:text-sage/80 transition-colors"
-                            title="Mark as completed"
-                          >
-                            ✓ Complete
-                          </button>
-                        )}
-                      </div>
+                      <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sage-soft text-sage">
+                        Completed
+                      </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {filteredPastCompleted.length > ACTIVITY_LOG_PAGE_SIZE && (
+            <div className="flex items-center justify-between px-5 py-2.5 border-t border-parchment">
+              <span className="text-[11px] text-bark">
+                Page {pastSafePage + 1} of {pastPageCount}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPastPage((n) => Math.max(0, n - 1))}
+                  disabled={pastSafePage === 0}
+                  className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  ← Previous
+                </button>
+                <button
+                  onClick={() => setPastPage((n) => Math.min(pastPageCount - 1, n + 1))}
+                  disabled={pastSafePage >= pastPageCount - 1}
+                  className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
+          </>
+          )}
         </div>
       )}
 
