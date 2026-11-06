@@ -223,7 +223,7 @@ const REVIEW_STATE_PILL: Record<string, { label: string; className: string }> = 
   // not a finished handoff. Shown instead of awaiting/approved/auto_approved
   // regardless of which of those the review side landed on, same way
   // auto_approved already overrides a plain "approved".
-  in_progress: { label: "In progress", className: "bg-amber-50 text-amber-600 border-amber-200" },
+  in_progress: { label: "In progress", className: "bg-slate-blue-soft text-slate-blue border-slate-blue/20" },
 };
 
 /** "1h 23m" / "45m" / "30s" — compact enough to sit inline on a badge row. */
@@ -1505,14 +1505,6 @@ This cannot be undone.`
             narrowed, and the actions. Ten chips in an undivided row read as one
             undifferentiated mass. */}
         <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
-        {seesAll && (
-          <MultiSelectFilter
-            allLabel="All VAs"
-            selected={vaFilter}
-            onChange={setVaFilter}
-            options={teamMembers.map((m) => ({ value: m.id, label: m.full_name || m.username }))}
-          />
-        )}
 
         <MultiSelectFilter
           allLabel="All work"
@@ -1545,13 +1537,6 @@ This cannot be undone.`
             options={assignerOptions}
           />
         )}
-
-        <MultiSelectFilter
-          allLabel="All statuses"
-          selected={statusFilter}
-          onChange={setStatusFilter}
-          options={STATUS_OPTIONS}
-        />
 
         <MultiSelectFilter
           allLabel="All categories"
@@ -1605,12 +1590,31 @@ This cannot be undone.`
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search submissions..."
-          className="ml-auto w-48 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none placeholder:text-stone/60"
+          className="ml-auto w-80 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none placeholder:text-stone/60"
         />
 
         <span className="text-[11px] text-stone">
           {loading ? "Loading..." : `${submissionCount} submission${submissionCount === 1 ? "" : "s"}`}
         </span>
+
+        {/* Below the search bar, same as everything above — the two most-used
+            filters (Toni's call, 2026-11-06), moved to their own line so they
+            read apart from the narrower, less-often-touched ones. */}
+        {seesAll && (
+          <MultiSelectFilter
+            allLabel="All VAs"
+            selected={vaFilter}
+            onChange={setVaFilter}
+            options={teamMembers.map((m) => ({ value: m.id, label: m.full_name || m.username }))}
+          />
+        )}
+
+        <MultiSelectFilter
+          allLabel="All statuses"
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          options={STATUS_OPTIONS}
+        />
       </div>
 
       {(canReview && view === "timeline" && pageThreadIds.length > 0) ||
