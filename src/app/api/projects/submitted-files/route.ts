@@ -23,7 +23,9 @@ const LIMIT = 300;
  * files-overview's "Uploaded" (project_files). A submitted item is either an
  * attachment (assigned_task_attachments rows tied to a submission) or a link
  * the VA pasted (task_submissions.submission_link). Both are scoped through the
- * objective's own subtasks (assigned_tasks.project_id).
+ * objective's own subtasks (assigned_tasks.project_id), and limited to
+ * submissions a reviewer ticked "File to Docs & Files" on when approving
+ * (task_submissions.filed_to_project).
  * Returns { files: [{ id, project_id, filename, uploaded_at, href?, account,
  * task_id, task_name, person_id, person_name }] } — person is whoever submitted.
  */
@@ -68,10 +70,13 @@ export async function GET(request: Request) {
   if (taskIds.length === 0) return Response.json({ files: [] });
 
   // 2. Submissions on those subtasks → submission id → task id, plus any link.
+  // Only the ones a reviewer chose to file here on approval — submissions are
+  // no longer collected into Docs & Files automatically.
   const { data: subs, error: sErr } = await supabase
     .from("task_submissions")
     .select("id, assigned_task_id, user_id, submission_link, created_at")
-    .in("assigned_task_id", taskIds);
+    .in("assigned_task_id", taskIds)
+    .eq("filed_to_project", true);
   if (sErr) return Response.json({ error: sErr.message }, { status: 500 });
   const subById = new Map<number, { task_id: number; user_id: string | null }>();
   for (const s of subs ?? []) {

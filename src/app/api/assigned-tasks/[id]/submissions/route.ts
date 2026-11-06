@@ -275,6 +275,13 @@ export async function POST(request: Request, { params }: RouteContext) {
   /** Only meaningful on an in_progress submission — the VA's own escape
    *  hatch asking for Toni's eyes on this one instead of auto-approving. */
   let reviewRequested = false;
+  /**
+   * On an approval, the reviewer can opt to file the reviewed submission's
+   * links and attachments into its objective/operation's Docs & Files. Off
+   * unless explicitly ticked — submissions are no longer collected there
+   * automatically.
+   */
+  let fileSubmissionId: number | null = null;
 
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
@@ -299,6 +306,9 @@ export async function POST(request: Request, { params }: RouteContext) {
     messageType = (body.message_type ?? "submission") as SubmissionMessageType;
     if (body.progress_status === "in_progress") progressStatus = "in_progress";
     reviewRequested = body.review_requested === true;
+    if (body.file_to_project === true && Number.isInteger(body.file_submission_id)) {
+      fileSubmissionId = body.file_submission_id as number;
+    }
 
     // Only paths under this task's own folder — the upload-url route is what
     // hands those out, and a caller must not be able to claim someone else's
@@ -601,6 +611,19 @@ export async function POST(request: Request, { params }: RouteContext) {
   // well done" is congratulating a rule rather than a person — and it arrived
   // in the same breath as the submission notice, which read as the bot talking
   // to itself.
+  let fileError: string | null = null;
+  if (messageType === "approval" && fileSubmissionId != null) {
+    // Scoped to this task so a caller can't flag another task's submission.
+    const { data: filed, error } = await admin
+      .from("task_submissions")
+      .update({ filed_to_project: true })
+      .eq("id", fileSubmissionId)
+      .eq("assigned_task_id", Number(id))
+      .select("id");
+    if (error) fileError = error.message;
+    else if (!filed || filed.length === 0) fileError = "Submission not found on this task";
+  }
+
   if (messageType === "approval") {
     await cheerApproval(Number(id));
 
@@ -857,7 +880,7 @@ ${esc(snippet)}` : ""}`,
   }
 
   const [withFiles] = await withAttachments(admin, [submission as never]);
-  return Response.json({ submission: withFiles, autoStatus }, { status: 201 });
+  return Response.json({ submission: withFiles, autoStatus, fileError }, { status: 201 });
 }
 
 /**
