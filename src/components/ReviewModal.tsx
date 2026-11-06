@@ -65,10 +65,16 @@ export default function ReviewModal({
     outcome: Outcome,
     note?: string,
     dueAt?: string,
-    attachments?: PendingAttachment[]
+    attachments?: PendingAttachment[],
+    fileToProject?: boolean
   ) => void;
   onClose: () => void;
 }) {
+  // Opt-in, unticked by default: only work the reviewer deems worth keeping
+  // goes into the objective/operation's Docs & Files.
+  const [fileToProject, setFileToProject] = useState(false);
+  const hasFilable =
+    Boolean(submission.submission_link?.trim()) || submission.attachments.length > 0;
   const [todos, setTodos] = useState<Todo[] | null>(null);
   const [todosError, setTodosError] = useState("");
 
@@ -548,12 +554,26 @@ export default function ReviewModal({
               ) : (
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => onReview("approval")}
+                    onClick={() =>
+                      onReview("approval", undefined, undefined, undefined, hasFilable && fileToProject)
+                    }
                     disabled={busy}
                     className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
                   >
                     Approve
                   </button>
+                  {hasFilable && (
+                    <label className="flex items-center gap-1.5 text-[10px] text-walnut cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={fileToProject}
+                        onChange={(e) => setFileToProject(e.target.checked)}
+                        disabled={busy}
+                        className="accent-sage"
+                      />
+                      File to Docs &amp; Files
+                    </label>
+                  )}
                   <button
                     onClick={() => setQualityMode("revision")}
                     disabled={busy}

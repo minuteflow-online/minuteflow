@@ -698,7 +698,8 @@ function SubmissionsPageInner() {
       outcome: ReviewOutcome,
       note?: string,
       dueAt?: string,
-      attachments?: PendingAttachment[]
+      attachments?: PendingAttachment[],
+      fileToProject?: boolean
     ) => {
       if (!item.task) return;
       setBusyId(item.id);
@@ -711,12 +712,23 @@ function SubmissionsPageInner() {
             message: note?.trim() || REVIEW_DEFAULT_NOTE[outcome],
             due_at: dueAt || null,
             attachments,
+            // Approval only: file the reviewed submission's links/attachments
+            // into its objective/operation's Docs & Files.
+            ...(outcome === "approval" && fileToProject
+              ? { file_to_project: true, file_submission_id: item.id }
+              : {}),
           }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           alert(data.error ?? "Unable to record the review.");
           return;
+        }
+        if (fileToProject) {
+          const data = await res.json().catch(() => ({}));
+          if (data.fileError) {
+            alert(`Approved, but the files could not be filed to Docs & Files: ${data.fileError}`);
+          }
         }
         // The thread entry is already written and can't be taken back, so a
         // failed status write must be surfaced rather than swallowed — otherwise
@@ -2370,7 +2382,8 @@ function ThreadCard({
     outcome: ReviewOutcome,
     note?: string,
     dueAt?: string,
-    attachments?: PendingAttachment[]
+    attachments?: PendingAttachment[],
+    fileToProject?: boolean
   ) => void;
   onAddNote: (
     item: FeedItem,
@@ -3036,8 +3049,8 @@ function ThreadCard({
         <ReviewModal
           submission={latest}
           busy={busy}
-          onReview={(outcome, note, dueAt, attachments) => {
-            onReview(latest, outcome, note, dueAt, attachments);
+          onReview={(outcome, note, dueAt, attachments, fileToProject) => {
+            onReview(latest, outcome, note, dueAt, attachments, fileToProject);
             setReviewOpen(false);
           }}
           onClose={() => setReviewOpen(false)}
@@ -3080,7 +3093,8 @@ function TimelineView({
     outcome: ReviewOutcome,
     note?: string,
     dueAt?: string,
-    attachments?: PendingAttachment[]
+    attachments?: PendingAttachment[],
+    fileToProject?: boolean
   ) => void;
   onAddNote: (
     item: FeedItem,
