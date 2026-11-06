@@ -27,14 +27,18 @@ export async function GET(request: NextRequest) {
 
   const { data: broadcasts, error } = await admin
     .from("broadcasts")
-    .select("id, title, category, require_word, created_by, created_at, updated_at")
+    // "*" rather than a column list so this keeps working whether or not parent_id exists yet.
+    .select("*")
     .eq("status", "published");
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   const now = Date.now();
   const results: { id: string; reminded: number }[] = [];
+  const publishedIds = new Set((broadcasts || []).map((b) => b.id));
 
   for (const b of broadcasts || []) {
+    // A follow-up stops reminding once its original is archived or unpublished.
+    if (b.parent_id && !publishedIds.has(b.parent_id)) continue;
     const publishedAt = new Date(b.updated_at || b.created_at).getTime();
     const hours = (now - publishedAt) / 3_600_000;
     if (!reminderDue(hours)) continue;

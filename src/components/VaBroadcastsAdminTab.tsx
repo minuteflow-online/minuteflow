@@ -43,6 +43,8 @@ interface Broadcast {
   image_url: string | null;
   sort_order: number;
   tags: string[];
+  /** Set on a follow-up: the broadcast it updates. */
+  parent_id?: string | null;
 }
 
 interface TeamMember {
@@ -217,6 +219,11 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
   const [showAcks, setShowAcks] = useState<Record<string, boolean>>({});
   const [reminding, setReminding] = useState<Record<string, boolean>>({});
   const [remindMsg, setRemindMsg] = useState<Record<string, string>>({});
+  // Follow-up composer, per original broadcast
+  const [followUpOpen, setFollowUpOpen] = useState<Record<string, boolean>>({});
+  const [followUpBody, setFollowUpBody] = useState<Record<string, string>>({});
+  const [postingFollowUp, setPostingFollowUp] = useState<Record<string, boolean>>({});
+  const [followUpMsg, setFollowUpMsg] = useState<Record<string, string>>({});
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
@@ -469,6 +476,109 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
       setReminding((r) => ({ ...r, [id]: false }));
     }
   }, []);
+
+  // Posts a short update on a published broadcast. It goes to the same people on every
+  // channel and they acknowledge it on its own, without re-reading the original.
+  const handlePostFollowUp = useCallback(
+    async (parentId: string) => {
+      const html = followUpBody[parentId] ?? "";
+      if (isRichEmpty(html)) {
+        setFollowUpMsg((m) => ({ ...m, [parentId]: "Write the update first" }));
+        return;
+      }
+      setPostingFollowUp((p) => ({ ...p, [parentId]: true }));
+      setFollowUpMsg((m) => ({ ...m, [parentId]: "" }));
+      try {
+        const res = await fetch("/api/broadcasts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parent_id: parentId, body: ensureRichHtml(html) }),
+        });
+        if (res.ok) {
+          setFollowUpOpen((o) => ({ ...o, [parentId]: false }));
+          setFollowUpBody((b) => ({ ...b, [parentId]: "" }));
+          await fetchBroadcasts();
+        } else {
+          const d = await res.json().catch(() => ({}));
+          setFollowUpMsg((m) => ({ ...m, [parentId]: d.error || "Couldn't post the follow-up" }));
+        }
+      } catch {
+        setFollowUpMsg((m) => ({ ...m, [parentId]: "Couldn't post the follow-up" }));
+      } finally {
+        setPostingFollowUp((p) => ({ ...p, [parentId]: false }));
+      }
+    },
+    [followUpBody, fetchBroadcasts]
+  );
+
+  // Who has and hasn't acknowledged a broadcast or follow-up, with the reminder button
+  const renderAcks = (b: Broadcast) => (
+    <div className="mb-3 grid gap-3 sm:grid-cols-2 rounded-lg border border-sand bg-cream p-3">
+      <div className="space-y-1.5">
+        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
+          Acknowledged ({b.acknowledged?.length ?? 0})
+        </p>
+        {(b.acknowledged ?? []).length === 0 ? (
+          <p className="text-[11px] text-stone">No one yet</p>
+        ) : (
+          (b.acknowledged ?? []).map((a) => (
+            <div key={a.user_id} className="flex items-center justify-between gap-2 text-[12px]">
+              <span className="text-espresso">{a.name}</span>
+              {a.read_at && <span className="text-[11px] text-stone">{fmtDateTime(a.read_at)}</span>}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="space-y-1.5">
+        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
+          Not yet ({b.pending?.length ?? 0})
+        </p>
+        {(b.pending ?? []).length === 0 ? (
+          <p className="text-[11px] text-stone">Everyone has acknowledged</p>
+        ) : (
+          (b.pending ?? []).map((p) => (
+            <div key={p.user_id} className="text-[12px] text-terracotta">{p.name}</div>
+          ))
+        )}
+        {b.status === "published" && (b.pending ?? []).length > 0 && (
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={() => handleRemind(b.id, b.pending?.length ?? 0)}
+              disabled={!!reminding[b.id]}
+              className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {reminding[b.id] ? "Sending…" : "Send reminder"}
+            </button>
+            {remindMsg[b.id] && <span className="text-[11px] text-stone">{remindMsg[b.id]}</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // The badge that opens the acknowledged / not-yet panel
+  const ackBadge = (b: Broadcast) => (
+    <button
+      onClick={() => setShowAcks((s) => ({ ...s, [b.id]: !s[b.id] }))}
+      className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-medium text-sage cursor-pointer hover:bg-sage/20 transition-colors"
+    >
+      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+      {b.read_count ?? 0} acknowledged
+      {b.pending && b.pending.length > 0 && ` · ${b.pending.length} pending`}
+    </button>
+  );
+
+  // Follow-ups are listed under the broadcast they update, oldest first, not as cards of their own
+  const followUpsByParent = new Map<string, Broadcast[]>();
+  broadcasts
+    .filter((b) => b.parent_id)
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .forEach((f) => {
+      followUpsByParent.set(f.parent_id!, [...(followUpsByParent.get(f.parent_id!) ?? []), f]);
+    });
+  const originals = visibleBroadcasts.filter((b) => !b.parent_id);
 
   // ── Toggle helpers ───────────────────────────────────────────────────────────
 
@@ -968,7 +1078,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
       )}
 
       {/* ── Empty state ───────────────────────────────────────────────────────── */}
-      {!loading && visibleBroadcasts.length === 0 && (
+      {!loading && originals.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-sm font-medium text-espresso">No broadcasts yet</p>
           <p className="mt-1 text-xs text-stone">
@@ -978,9 +1088,9 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
       )}
 
       {/* ── Broadcast list ────────────────────────────────────────────────────── */}
-      {!loading && visibleBroadcasts.length > 0 && (
+      {!loading && originals.length > 0 && (
         <div className="space-y-4">
-          {visibleBroadcasts.map((b) => (
+          {originals.map((b) => (
             <div
               key={b.id}
               className="rounded-xl border border-sand bg-white p-5 shadow-sm"
@@ -1000,22 +1110,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                         {tag}
                       </span>
                     ))}
-                    <button
-                      onClick={() => setShowAcks((s) => ({ ...s, [b.id]: !s[b.id] }))}
-                      className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-medium text-sage cursor-pointer hover:bg-sage/20 transition-colors"
-                    >
-                      <svg
-                        className="h-3 w-3"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      {b.read_count ?? 0} acknowledged
-                      {b.pending && b.pending.length > 0 && ` · ${b.pending.length} pending`}
-                    </button>
+                    {ackBadge(b)}
                     {b.magic_word && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-terracotta-soft px-2 py-0.5 text-[11px] font-medium text-terracotta">
                         <svg
@@ -1052,49 +1147,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                 </div>
               </div>
 
-              {showAcks[b.id] && (
-                <div className="mb-3 grid gap-3 sm:grid-cols-2 rounded-lg border border-sand bg-cream p-3">
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
-                      Acknowledged ({b.acknowledged?.length ?? 0})
-                    </p>
-                    {(b.acknowledged ?? []).length === 0 ? (
-                      <p className="text-[11px] text-stone">No one yet</p>
-                    ) : (
-                      (b.acknowledged ?? []).map((a) => (
-                        <div key={a.user_id} className="flex items-center justify-between gap-2 text-[12px]">
-                          <span className="text-espresso">{a.name}</span>
-                          {a.read_at && <span className="text-[11px] text-stone">{fmtDateTime(a.read_at)}</span>}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
-                      Not yet ({b.pending?.length ?? 0})
-                    </p>
-                    {(b.pending ?? []).length === 0 ? (
-                      <p className="text-[11px] text-stone">Everyone has acknowledged</p>
-                    ) : (
-                      (b.pending ?? []).map((p) => (
-                        <div key={p.user_id} className="text-[12px] text-terracotta">{p.name}</div>
-                      ))
-                    )}
-                    {b.status === "published" && (b.pending ?? []).length > 0 && (
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          onClick={() => handleRemind(b.id, b.pending?.length ?? 0)}
-                          disabled={!!reminding[b.id]}
-                          className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 cursor-pointer"
-                        >
-                          {reminding[b.id] ? "Sending…" : "Send reminder"}
-                        </button>
-                        {remindMsg[b.id] && <span className="text-[11px] text-stone">{remindMsg[b.id]}</span>}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              {showAcks[b.id] && renderAcks(b)}
 
               <div
                 className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES} ${
@@ -1111,6 +1164,79 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                 >
                   {expanded[b.id] ? "Show less" : "Read more"}
                 </button>
+              )}
+
+              {/* ── Follow-ups ── */}
+              {(followUpsByParent.get(b.id) ?? []).length > 0 && (
+                <div className="mt-4 pt-4 border-t border-sand space-y-2">
+                  {(followUpsByParent.get(b.id) ?? []).map((f) => (
+                    <div key={f.id} className="rounded-lg border border-sand bg-cream p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">
+                            Follow-up · {fmtDateTime(f.created_at)}
+                          </p>
+                          {ackBadge(f)}
+                        </div>
+                        <button
+                          onClick={() => handleDelete(f.id)}
+                          disabled={!!deleting[f.id]}
+                          className="text-[11px] text-terracotta hover:text-red-600 cursor-pointer px-2 py-1 rounded border border-sand hover:border-terracotta transition-all disabled:opacity-50 shrink-0"
+                        >
+                          {deleting[f.id] ? "..." : "Delete"}
+                        </button>
+                      </div>
+                      {showAcks[f.id] && renderAcks(f)}
+                      <div
+                        className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES}`}
+                        dangerouslySetInnerHTML={{ __html: renderBroadcastHtml(f.body) }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {b.status === "published" && (
+                <div className="mt-3">
+                  {followUpOpen[b.id] ? (
+                    <div className="space-y-2 rounded-lg border border-sand bg-cream p-3">
+                      <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">New follow-up</p>
+                      <p className="text-[11px] text-stone">
+                        Goes to the same people on bell, Telegram and email. They acknowledge just this update —
+                        their acknowledgement of the memo stays.
+                      </p>
+                      <RichTextEditor
+                        value={followUpBody[b.id] ?? ""}
+                        onChange={(v) => setFollowUpBody((s) => ({ ...s, [b.id]: v }))}
+                        placeholder="Write the update..."
+                        onUploadImage={uploadBroadcastImage}
+                      />
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => handlePostFollowUp(b.id)}
+                          disabled={!!postingFollowUp[b.id]}
+                          className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {postingFollowUp[b.id] ? "Posting…" : "Post follow-up"}
+                        </button>
+                        <button
+                          onClick={() => setFollowUpOpen((o) => ({ ...o, [b.id]: false }))}
+                          className="text-xs text-stone hover:text-espresso cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        {followUpMsg[b.id] && <span className="text-[11px] text-terracotta">{followUpMsg[b.id]}</span>}
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setFollowUpOpen((o) => ({ ...o, [b.id]: true }))}
+                      className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
+                    >
+                      + Add follow-up
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           ))}

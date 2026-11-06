@@ -4,7 +4,7 @@ import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { injectMagicWordHtml, isRichHtml, plainToHtml, renderBroadcastHtml, sanitizeRichHtml } from "@/lib/richText";
-import { isRecipient, broadcastPortalPath, type RecipientRow } from "@/lib/broadcasts";
+import { isAudience, isRecipient, broadcastPortalPath, followUpTitle, type RecipientRow } from "@/lib/broadcasts";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { esc } from "@/lib/telegram";
 
@@ -85,6 +85,7 @@ function buildEmailHtml(broadcast: {
   category: string;
   magic_word?: string | null;
   require_word?: boolean;
+  parent_id?: string | null;
 }): string {
   // Inject magic word into the displayed body if present.
   // Plain-text bodies use the line-based injection; rich (HTML) bodies inject at a block boundary.
@@ -103,6 +104,7 @@ function buildEmailHtml(broadcast: {
           <span style="background: #f0ebe4; color: #8a6f5a; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 10px; border-radius: 100px;">${label}</span>
         </div>
         <h1 style="font-size: 22px; font-weight: 700; color: #2d1f14; margin: 0 0 16px;">${broadcast.title}</h1>
+        ${broadcast.parent_id ? `<p style="font-size: 12px; color: #8a6f5a; margin: 0 0 16px;">This is an update to an earlier ${label.toLowerCase()} — only what's new is below.</p>` : ""}
         <div style="font-size: 14px; color: #4a3728; line-height: 1.7; margin: 0 0 20px;">${displayBody}</div>
         ${broadcast.require_word ? `
         <div style="background: #fef9ec; border: 1px solid #f5e6b8; border-radius: 8px; padding: 14px 16px; margin-top: 20px;">
@@ -125,11 +127,12 @@ function buildEmailHtml(broadcast: {
 function resolveTargetEmails(
   recipients: RecipientRow[],
   profiles: Profile[],
-  authUserMap: Map<string, string>
+  authUserMap: Map<string, string>,
+  authorId: string | null | undefined
 ): string[] {
   const emails: string[] = [];
   profiles
-    .filter((p) => isRecipient(recipients, p))
+    .filter((p) => isAudience(recipients, p, authorId))
     .forEach((p) => {
       const email = authUserMap.get(p.id);
       if (email) emails.push(email);
@@ -148,6 +151,8 @@ async function sendBroadcastEmail(
     category: string;
     magic_word?: string | null;
     require_word?: boolean;
+    created_by?: string | null;
+    parent_id?: string | null;
   },
   recipientRows: RecipientRow[]
 ): Promise<void> {
@@ -172,7 +177,7 @@ async function sendBroadcastEmail(
     if (u.email) authUserMap.set(u.id, u.email);
   });
 
-  const emails = resolveTargetEmails(recipientRows, profiles, authUserMap);
+  const emails = resolveTargetEmails(recipientRows, profiles, authUserMap, broadcast.created_by);
   if (emails.length === 0) return;
 
   const label = categoryLabel(broadcast.category);
@@ -214,7 +219,14 @@ async function sendBroadcastEmail(
  * Sent even to someone on a break or personal time — broadcasts always go out.
  */
 async function sendBroadcastTelegram(
-  broadcast: { id: string; title: string; category: string; require_word?: boolean },
+  broadcast: {
+    id: string;
+    title: string;
+    category: string;
+    require_word?: boolean;
+    created_by?: string | null;
+    parent_id?: string | null;
+  },
   recipientRows: RecipientRow[]
 ): Promise<void> {
   const adminClient = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -228,8 +240,11 @@ async function sendBroadcastTelegram(
 
   const path = broadcastPortalPath(broadcast.category, broadcast.id);
   const link = `https://minuteflow.click${path ?? "/portal"}`;
+  const kind = esc(categoryLabel(broadcast.category).toLowerCase());
   const message = [
-    `📣 <b>New ${esc(categoryLabel(broadcast.category).toLowerCase())}: ${esc(broadcast.title)}</b>`,
+    broadcast.parent_id
+      ? `🔁 <b>${esc(broadcast.title)}</b>\n\nThere's an update to an earlier ${kind} — only the new part to read.`
+      : `📣 <b>New ${kind}: ${esc(broadcast.title)}</b>`,
     "",
     broadcast.require_word
       ? "Please read it and enter the magic word to acknowledge it."
@@ -237,7 +252,7 @@ async function sendBroadcastTelegram(
     link,
   ].join("\n");
 
-  for (const p of (profiles || []).filter((p) => isRecipient(recipientRows, p))) {
+  for (const p of (profiles || []).filter((p) => isAudience(recipientRows, p, broadcast.created_by))) {
     await notifyVaPrivately({
       chatId: p.telegram_chat_id,
       vaName: p.full_name || p.username || "there",
@@ -348,7 +363,7 @@ export async function GET(request: Request) {
         .map((r) => ({ user_id: r.user_id, name: memberName.get(r.user_id) || "Unknown", read_at: r.read_at }))
         .sort((x, y) => x.name.localeCompare(y.name));
       const pending = memberList
-        .filter((m) => m.is_active && isRecipient(rows, m) && !readIds.has(m.id))
+        .filter((m) => m.is_active && isAudience(rows, m, b.created_by) && !readIds.has(m.id))
         .map((m) => ({ user_id: m.id, name: m.full_name || "Unknown" }))
         .sort((x, y) => x.name.localeCompare(y.name));
       return {
@@ -457,6 +472,66 @@ export async function POST(request: Request) {
   if (!hasBroadAdminAccess(profile)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await request.json();
+
+  // A follow-up: a short update posted on an earlier published broadcast. It goes to
+  // the same people, is acknowledged on its own, and leaves their acknowledgement of
+  // the original alone, so they only read what's new.
+  if (body.parent_id) {
+    const followUpBody = typeof body.body === "string" ? body.body.trim() : "";
+    if (!followUpBody) return Response.json({ error: "body is required" }, { status: 400 });
+
+    const { data: parent } = await supabase
+      .from("broadcasts")
+      .select("id, title, category, status, tags, parent_id")
+      .eq("id", body.parent_id)
+      .single();
+    if (!parent) return Response.json({ error: "Original broadcast not found" }, { status: 404 });
+    if (parent.parent_id) {
+      return Response.json({ error: "Post the follow-up on the original, not on another follow-up" }, { status: 400 });
+    }
+    if (parent.status !== "published") {
+      return Response.json({ error: "Only a published broadcast can get a follow-up" }, { status: 400 });
+    }
+
+    const { data: parentRecipients } = await supabase
+      .from("broadcast_recipients")
+      .select("recipient_type, recipient_value")
+      .eq("broadcast_id", parent.id);
+    const rows: RecipientRow[] = (parentRecipients || []).map((r) => ({
+      type: r.recipient_type,
+      value: r.recipient_value,
+    }));
+    if (rows.length === 0) return Response.json({ error: "The original has no recipients" }, { status: 400 });
+
+    const { data: followUp, error: followUpError } = await supabase
+      .from("broadcasts")
+      .insert({
+        title: followUpTitle(parent.title),
+        body: followUpBody,
+        category: parent.category,
+        magic_word: null,
+        require_word: false,
+        status: "published",
+        created_by: user.id,
+        tags: parent.tags ?? [],
+        parent_id: parent.id,
+      })
+      .select()
+      .single();
+    if (followUpError) return Response.json({ error: followUpError.message }, { status: 500 });
+
+    const { error: rowsError } = await supabase.from("broadcast_recipients").insert(
+      rows.map((r) => ({ broadcast_id: followUp.id, recipient_type: r.type, recipient_value: r.value }))
+    );
+    if (rowsError) {
+      await supabase.from("broadcasts").delete().eq("id", followUp.id);
+      return Response.json({ error: rowsError.message }, { status: 500 });
+    }
+
+    after(() => sendBroadcastNotices(followUp, rows));
+    return Response.json({ broadcast: followUp }, { status: 201 });
+  }
+
   const {
     title,
     body: broadcastBody,
@@ -635,10 +710,13 @@ export async function DELETE(request: Request) {
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id required" }, { status: 400 });
 
-  // Cascade delete: recipients and reads first, then broadcast
-  await supabase.from("broadcast_reads").delete().eq("broadcast_id", id);
-  await supabase.from("broadcast_recipients").delete().eq("broadcast_id", id);
+  // Cascade delete: the broadcast's follow-ups go with it. Recipients and reads first, then broadcasts.
+  const { data: followUps } = await supabase.from("broadcasts").select("id").eq("parent_id", id);
+  const ids = [id, ...(followUps || []).map((f) => f.id)];
+  await supabase.from("broadcast_reads").delete().in("broadcast_id", ids);
+  await supabase.from("broadcast_recipients").delete().in("broadcast_id", ids);
 
+  if (ids.length > 1) await supabase.from("broadcasts").delete().in("id", ids.slice(1));
   const { error } = await supabase.from("broadcasts").delete().eq("id", id);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
