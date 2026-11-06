@@ -10,6 +10,7 @@ import ActiveTaskBar from "@/components/ActiveTaskBar";
 import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
 import TeamSidebar from "@/components/TeamSidebar";
 import ActivityLog from "@/components/ActivityLog";
+import DashboardBoardView from "@/components/DashboardBoardView";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
 import DashboardMessagePanel from "@/components/DashboardMessagePanel";
@@ -3823,6 +3824,14 @@ export default function DashboardPage() {
           if (data) setTimeLogs(data as TimeLog[]);
         }}
       />
+
+      {userId && (
+        <DashboardBoardView
+          userId={userId}
+          isAdmin={hasBroadAdminAccess({ role })}
+          teamMembers={teamMembers.map((m) => m.profile)}
+        />
+      )}
 
       {/* ─── Live Session Prompt ─── */}
       {showLivePrompt && liveSessionData && (
