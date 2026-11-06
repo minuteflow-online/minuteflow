@@ -196,7 +196,7 @@ type ScreenshotPersonDay = {
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_onboarding" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -396,7 +396,7 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "va_reviews",
-    label: "Reviews",
+    label: "Performance Reviews",
     icon: (
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
@@ -419,6 +419,18 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     icon: (
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+      </svg>
+    ),
+  },
+  {
+    id: "va_onboarding",
+    label: "Onboarding",
+    // Same icon as the Portal's "Start Here" tab, which this feeds.
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 2L2 7l10 5 10-5-10-5z" />
+        <path d="M2 17l10 5 10-5" />
+        <path d="M2 12l10 5 10-5" />
       </svg>
     ),
   },
@@ -491,7 +503,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "reset_va_password"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_onboarding", "va_feedback", "va_requests", "bug_reports", "paystubs", "reset_va_password"] as AdminTab[]).includes(t.id)),
   },
 ];
 
@@ -499,7 +511,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
 const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR_GROUPS];
 
 // Tab IDs that belong to the TEAM section
-const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "reset_va_password"];
+const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_onboarding", "va_feedback", "va_requests", "bug_reports", "paystubs", "reset_va_password"];
 
 // Tabs reserved for financial access (Founder/Accounting, see
 // financialAccess.ts) — invoices, paystubs, and the send-history log stay
@@ -1693,6 +1705,7 @@ export default function AdminPage() {
                 {activeTab === "va_reviews" && "Create and publish performance reviews"}
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
                 {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
+                {activeTab === "va_onboarding" && "Manage what new VAs see on their Start Here page"}
                 {activeTab === "email_log" && "Track opens and clicks for all outgoing emails"}
                 {activeTab === "reset_va_password" && "Reset the password for any team member"}
                 {activeTab === "task_assignments" && "Assign tasks to VAs and track their progress"}
@@ -1857,6 +1870,9 @@ export default function AdminPage() {
           )}
           {activeTab === "va_broadcasts" && (
             <VaBroadcastsAdminTab />
+          )}
+          {activeTab === "va_onboarding" && (
+            <VaBroadcastsAdminTab fixedCategory="onboarding" />
           )}
           {activeTab === "email_log" && isFullAdmin && (
             <EmailStatusTab />

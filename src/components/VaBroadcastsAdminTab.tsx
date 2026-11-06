@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import RichTextEditor from "@/components/RichTextEditor";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import {
@@ -56,13 +56,15 @@ interface TeamMember {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Onboarding is deliberately excluded — it now has its own dedicated admin
+// tab (VaBroadcastsAdminTab with fixedCategory="onboarding") instead of
+// being one more option in the generic Broadcasts category picker.
 const CATEGORY_OPTIONS: { label: string; value: Broadcast["category"] }[] = [
   { label: "Memo", value: "memo" },
   { label: "Training", value: "training" },
   { label: "Announcement", value: "announcement" },
   { label: "Coaching Notes", value: "coaching_notes" },
   { label: "Job Posting", value: "job_posting" },
-  { label: "Onboarding", value: "onboarding" },
 ];
 
 // Offered alongside whatever's already in use (knownTags, computed from
@@ -195,7 +197,16 @@ function StatusBadge({ status, scheduledAt }: { status: Broadcast["status"]; sch
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function VaBroadcastsAdminTab() {
+interface VaBroadcastsAdminTabProps {
+  /** Locks this instance to one category — its own list only shows that
+   *  category, the Category field is hidden from the form, and new
+   *  broadcasts are created with it automatically. Used for the dedicated
+   *  Onboarding admin tab; omit for the generic Broadcasts tab, which
+   *  excludes that category from its own list instead (see CATEGORY_OPTIONS). */
+  fixedCategory?: Broadcast["category"];
+}
+
+export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdminTabProps = {}) {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -217,7 +228,7 @@ export default function VaBroadcastsAdminTab() {
   // ── Form state ──────────────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [category, setCategory] = useState<Broadcast["category"]>("memo");
+  const [category, setCategory] = useState<Broadcast["category"]>(fixedCategory ?? "memo");
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
 
@@ -270,12 +281,20 @@ export default function VaBroadcastsAdminTab() {
     fetchTeamMembers();
   }, [fetchBroadcasts, fetchTeamMembers]);
 
+  // Scoped to fixedCategory when this tab is locked to one (Onboarding);
+  // otherwise the generic Broadcasts tab excludes onboarding broadcasts,
+  // since those now live only in their own dedicated tab.
+  const visibleBroadcasts = useMemo(
+    () => broadcasts.filter((b) => (fixedCategory ? b.category === fixedCategory : b.category !== "onboarding")),
+    [broadcasts, fixedCategory]
+  );
+
   // ── Form helpers ─────────────────────────────────────────────────────────────
 
   const resetForm = () => {
     setTitle("");
     setBody("");
-    setCategory("memo");
+    setCategory(fixedCategory ?? "memo");
     setTags([]);
     setTagDraft("");
     setRecipientMode("all");
@@ -559,7 +578,7 @@ export default function VaBroadcastsAdminTab() {
     .forEach((f) => {
       followUpsByParent.set(f.parent_id!, [...(followUpsByParent.get(f.parent_id!) ?? []), f]);
     });
-  const originals = broadcasts.filter((b) => !b.parent_id);
+  const originals = visibleBroadcasts.filter((b) => !b.parent_id);
 
   // ── Toggle helpers ───────────────────────────────────────────────────────────
 
@@ -670,23 +689,25 @@ export default function VaBroadcastsAdminTab() {
               />
             </div>
 
-            {/* Category */}
-            <div>
-              <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                Category
-              </label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as Broadcast["category"])}
-                className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-              >
-                {CATEGORY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Category — hidden when this tab is locked to one category */}
+            {!fixedCategory && (
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
+                  Category
+                </label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value as Broadcast["category"])}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
+                >
+                  {CATEGORY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Tags — lets the portal filter memos by topic (Toni's call, 2026-11-04) */}
             <div>
@@ -1057,7 +1078,7 @@ export default function VaBroadcastsAdminTab() {
       )}
 
       {/* ── Empty state ───────────────────────────────────────────────────────── */}
-      {!loading && broadcasts.length === 0 && (
+      {!loading && originals.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-sm font-medium text-espresso">No broadcasts yet</p>
           <p className="mt-1 text-xs text-stone">

@@ -10,6 +10,7 @@ import ActiveTaskBar from "@/components/ActiveTaskBar";
 import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
 import TeamSidebar from "@/components/TeamSidebar";
 import ActivityLog from "@/components/ActivityLog";
+import DashboardBoardView from "@/components/DashboardBoardView";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
 import DashboardMessagePanel from "@/components/DashboardMessagePanel";
@@ -138,6 +139,11 @@ const CAPTURE_INTERVAL_MS = 5 * 60 * 1000;
 // (see the comment above the mount effect below); every other sweep in this
 // file gets the same floor here, for the same reason.
 const SWITCH_MIN_AGE_MS = 30 * 1000;
+
+// Performance card is hidden on the VA dashboard until Ownership and Points
+// have real data instead of "coming soon"/"--" placeholders (Toni's call,
+// 2026-11-06) — flip to true once both are wired up.
+const SHOW_PERFORMANCE_METRICS = false;
 
 const ACTIVITY_LOOKBACK_DAYS = 14;
 function activityLogFloorIso(): string {
@@ -3665,8 +3671,13 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* VA Performance Metrics */}
-      {userId && (
+      {/* VA Performance Metrics — hidden on the dashboard until Ownership and
+          Points have real data behind them instead of "coming soon"/"--"
+          placeholders (Toni's call, 2026-11-06). Flip SHOW_PERFORMANCE_METRICS
+          back to true once both are wired up; the admin Overview tab's own
+          "Team Performance" card (same component, variant="compact") is
+          untouched. */}
+      {userId && SHOW_PERFORMANCE_METRICS && (
         <VAPerformanceMetrics
           vaIds={[userId]}
           orgTimezone={orgTimezone}
@@ -3813,6 +3824,14 @@ export default function DashboardPage() {
           if (data) setTimeLogs(data as TimeLog[]);
         }}
       />
+
+      {userId && (
+        <DashboardBoardView
+          userId={userId}
+          isAdmin={hasBroadAdminAccess({ role })}
+          teamMembers={teamMembers.map((m) => m.profile)}
+        />
+      )}
 
       {/* ─── Live Session Prompt ─── */}
       {showLivePrompt && liveSessionData && (

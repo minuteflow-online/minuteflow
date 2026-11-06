@@ -67,7 +67,7 @@ export default function VaTokensAdminTab() {
       const [tokRes, ratRes, { data: profileData }] = await Promise.all([
         fetch("/api/va-tokens").then((r) => r.json()),
         fetch("/api/va-ratings").then((r) => r.json()),
-        supabase.from("profiles").select("id, full_name, role").neq("role", "admin"),
+        supabase.from("profiles").select("id, full_name, role").neq("role", "admin").eq("is_active", true),
       ]);
       setTokens(tokRes.tokens || []);
       setRatings(ratRes.ratings || []);
@@ -161,6 +161,15 @@ export default function VaTokensAdminTab() {
           </svg>
           {activeView === "tokens" ? "Award Token" : "Add Rating"}
         </button>
+      </div>
+
+      {/* How It Works */}
+      <div className="rounded-xl border border-sand bg-parchment/40 p-4 space-y-2">
+        <h3 className="text-[10px] font-semibold text-walnut tracking-wide uppercase">How It Works</h3>
+        <ul className="text-xs text-stone space-y-1 list-disc pl-4">
+          <li><span className="font-semibold text-espresso">Tokens</span> recognize great work — award any amount with a reason; each VA&apos;s running total shows next to their name below.</li>
+          <li><span className="font-semibold text-espresso">Daily Ratings</span> score a VA&apos;s performance for a specific day on a 1–5 scale, with optional notes.</li>
+        </ul>
       </div>
 
       {/* VA Filter */}
