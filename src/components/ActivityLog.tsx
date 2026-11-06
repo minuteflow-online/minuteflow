@@ -17,6 +17,7 @@ import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
+const ACTIVITY_LOG_PAGE_SIZE = 20;
 
 function limitToWords(text: string, limit: number): string {
   const words = text.trim().split(/\s+/).filter(Boolean);
@@ -191,6 +192,8 @@ export default function ActivityLog({
   const [statusFilter, setStatusFilter] = useState<string>(""); // "in_progress" | "completed" | "on_hold" | ""
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [page, setPage] = useState(0);
 
   // Edit/create modal
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
@@ -456,6 +459,20 @@ export default function ActivityLog({
     });
   }, [allTodayLogs, selectedUsers, search, categoryFilter, accountFilter, statusFilter]);
 
+  // A filter change can leave `page` pointing past the new, shorter result
+  // set — reset to the first page whenever the filters themselves change,
+  // not on every re-filter of the same inputs.
+  useEffect(() => {
+    setPage(0);
+  }, [selectedUsers, search, categoryFilter, accountFilter, statusFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredLogs.length / ACTIVITY_LOG_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageLogs = useMemo(
+    () => filteredLogs.slice(safePage * ACTIVITY_LOG_PAGE_SIZE, (safePage + 1) * ACTIVITY_LOG_PAGE_SIZE),
+    [filteredLogs, safePage]
+  );
+
   // Filter past in-progress logs with same filters
   const filteredPastIP = useMemo(() => {
     return pastInProgressLogs.filter((log) => {
@@ -627,9 +644,21 @@ export default function ActivityLog({
             <span className="text-[11px] text-bark">
               {filteredLogs.length} entries today
             </span>
+            <button
+              type="button"
+              onClick={() => setCollapsed((prev) => !prev)}
+              aria-label={collapsed ? "Expand Activity Log" : "Collapse Activity Log"}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-sand bg-white text-bark transition-colors hover:bg-parchment cursor-pointer"
+            >
+              <svg className={`h-3.5 w-3.5 transition-transform ${collapsed ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
           </div>
         </div>
 
+        {!collapsed && (
+        <>
         {/* User pills */}
         <div className="flex gap-1.5 py-3 px-5 border-b border-parchment overflow-x-auto">
           <button
@@ -775,7 +804,6 @@ export default function ActivityLog({
             {[
               { value: "in_progress", label: "In Progress", color: "terracotta" },
               { value: "completed", label: "Completed", color: "sage" },
-              { value: "on_hold", label: "On Hold", color: "amber" },
             ].map((opt) => (
               <button
                 key={opt.value}
@@ -783,8 +811,7 @@ export default function ActivityLog({
                 className={`py-1.5 px-2.5 border rounded-full text-[10px] font-semibold cursor-pointer transition-all ${
                   statusFilter === opt.value
                     ? opt.color === "terracotta" ? "border-terracotta bg-terracotta/10 text-terracotta"
-                    : opt.color === "sage" ? "border-sage bg-sage/10 text-sage"
-                    : "border-amber bg-amber/10 text-amber-700"
+                    : "border-sage bg-sage/10 text-sage"
                     : "border-sand bg-white text-bark hover:border-terracotta hover:text-terracotta"
                 }`}
               >
@@ -840,7 +867,7 @@ export default function ActivityLog({
               </tr>
             </thead>
             <tbody>
-              {filteredLogs.map((log) => {
+              {pageLogs.map((log) => {
                 const displayCategory = normalizeCategory(log.category);
                 const catTag = getCategoryTag(displayCategory);
                 // Oldest first: the row reads as the sequence the work happened in.
@@ -1226,6 +1253,31 @@ export default function ActivityLog({
           </table>
         </div>
 
+        {/* Pagination */}
+        {filteredLogs.length > ACTIVITY_LOG_PAGE_SIZE && (
+          <div className="flex items-center justify-between px-5 py-2.5 border-t border-parchment">
+            <span className="text-[11px] text-bark">
+              Page {safePage + 1} of {pageCount}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((n) => Math.max(0, n - 1))}
+                disabled={safePage === 0}
+                className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              >
+                ← Previous
+              </button>
+              <button
+                onClick={() => setPage((n) => Math.min(pageCount - 1, n + 1))}
+                disabled={safePage >= pageCount - 1}
+                className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Summary */}
         <div className="py-4 px-5 border-t border-sand bg-parchment rounded-b-xl">
           {/* Row 1: Time totals */}
@@ -1319,6 +1371,8 @@ export default function ActivityLog({
             )}
           </div>
         </div>
+        </>
+        )}
       </div>
 
       {/* Past In-Progress Tasks (from previous days) */}
