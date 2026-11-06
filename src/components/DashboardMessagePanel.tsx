@@ -675,11 +675,12 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
   // here it's driven by a userId (from a notification) instead of a picked
   // contact, so there's no group/title path to worry about.
   const openConversationWithUser = useCallback(
-    async (userId: string) => {
+    async (userId: string, memo = false) => {
       const r = await fetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ member_ids: [userId] }),
+        // memo=1 links open the separate Memo questions chat, not the regular DM.
+        body: JSON.stringify(memo ? { member_ids: [userId], kind: "memo" } : { member_ids: [userId] }),
       });
       if (!r.ok) return;
       const d = await r.json();
@@ -700,7 +701,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
     const dmUserId = searchParams.get("dmUserId");
     if (!dmUserId) return;
     setTab("personal");
-    void openConversationWithUser(dmUserId);
+    void openConversationWithUser(dmUserId, searchParams.get("memo") === "1");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
