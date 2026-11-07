@@ -236,6 +236,11 @@ function formatDuration(ms: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
+/** Total time logged on a task across every round — what a card shows. */
+function sumRounds(rounds: Record<string, number> | undefined): number {
+  return Object.values(rounds ?? {}).reduce((sum, ms) => sum + ms, 0);
+}
+
 /**
  * Applies a filter that describes submitted work — "from this VA", "in this
  * date range" — by deciding which THREADS qualify (does the task have a
@@ -1797,15 +1802,25 @@ function DayGroup({
   orgTimezone,
   threads,
   reviewState,
+  roundDurations,
   children,
 }: {
   day: string;
   orgTimezone: string;
   threads: Thread[];
   reviewState: Record<string, string>;
+  roundDurations: Record<string, Record<string, number>>;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
+
+  // Sum of the per-task totals on this day's cards, so the header always
+  // agrees with what's shown below it. Tasks with no logged time add nothing.
+  const dayTotalMs = threads.reduce(
+    (sum, t) => sum + sumRounds(roundDurations[String(t.taskId)]),
+    0
+  );
+  const timedCount = threads.filter((t) => sumRounds(roundDurations[String(t.taskId)]) > 0).length;
 
   const submissionCount = threads.reduce(
     (n, t) => n + t.items.filter((i) => i.message_type === "submission").length,
@@ -1846,6 +1861,14 @@ function DayGroup({
         <span className="text-[10px] text-stone">
           {submissionCount} submission{submissionCount === 1 ? "" : "s"}
         </span>
+        {dayTotalMs > 0 && (
+          <span
+            className="text-[11px] font-semibold tabular-nums text-walnut"
+            title={`Total time logged across the ${timedCount} task${timedCount === 1 ? "" : "s"} with hours on this day`}
+          >
+            {formatDuration(dayTotalMs)} total
+          </span>
+        )}
         {needsReview > 0 && (
           <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10px] font-semibold text-amber-600">
             {needsReview} need{needsReview === 1 ? "s" : ""} review
@@ -2485,7 +2508,7 @@ function ThreadCard({
 
   // One place decides what every field says, so the title and the detail
   // lines can never disagree about the same field.
-  const totalMs = Object.values(rounds).reduce((sum, ms) => sum + ms, 0);
+  const totalMs = sumRounds(rounds);
 
   const fieldValue = (key: string): string | null => {
     switch (key) {
@@ -3188,6 +3211,7 @@ function TimelineView({
           orgTimezone={orgTimezone}
           threads={byDay.get(day) ?? []}
           reviewState={reviewState}
+          roundDurations={roundDurations}
         >
             {(byDay.get(day) ?? []).map((thread) => (
               <ThreadCard
