@@ -26,7 +26,6 @@ const CATEGORIES = [
   { label: "Communication", value: "Communication" },
   { label: "Planning", value: "Planning" },
   { label: "Collaboration", value: "Collaboration" },
-  { label: "Personal", value: "Personal" },
   { label: "Break", value: "Break" },
 ];
 

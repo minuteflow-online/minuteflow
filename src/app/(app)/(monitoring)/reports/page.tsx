@@ -31,7 +31,6 @@ type DailyData = {
   label: string;
   date: string;
   billableMs: number;
-  personalMs: number;
   totalMs: number;
 };
 
@@ -140,10 +139,6 @@ type VAProgress = {
   prevWizardMs: number;
   billableMs: number;
   prevBillableMs: number;
-  personalMs: number;
-  prevPersonalMs: number;
-  personalThresholdMs: number;
-  prevPersonalThresholdMs: number;
   breakMs: number;
   prevBreakMs: number;
   breakThresholdMs: number;
@@ -526,7 +521,6 @@ export default function ReportsPage() {
   const reportSummary = useMemo(() => {
     let totalMs = 0;
     let billableMs = 0;
-    let personalMs = 0;
     let wizardMs = 0;
     let fixedCount = 0;
     let hourlyCount = 0;
@@ -543,10 +537,6 @@ export default function ReportsPage() {
       const cat = normalizeCategoryLabel(l.category);
       categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 
-      if (cat.toLowerCase() === "personal") {
-        personalMs += l.duration_ms || 0;
-      }
-
       // Fixed vs hourly
       if (l.billing_type === "fixed") fixedCount++;
       else hourlyCount++;
@@ -557,24 +547,18 @@ export default function ReportsPage() {
       else if (l.progress === "on_hold") onHoldCount++;
     });
 
-    // Build sorted category entries (alphabetical, Personal last, Wizard Time second-to-last)
+    // Build sorted category entries (alphabetical; Personal Time is excluded
+    // entirely — it's no longer a loggable category, see TaskEntryForm. Pause
+    // is excluded too — it's a leftover category from the desktop app's old
+    // Pause feature (removed, see memory), already treated as break-like
+    // everywhere else (isBreakLike), just never folded into this breakdown.)
     const categories = Object.entries(categoryMs)
-      .filter(([, ms]) => ms > 0)
-      .sort(([a], [b]) => {
-        if (a.toLowerCase() === "personal") return 1;
-        if (b.toLowerCase() === "personal") return -1;
-        return a.localeCompare(b);
-      })
+      .filter(([name, ms]) => ms > 0 && !["personal", "pause"].includes(name.toLowerCase()))
+      .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, ms]) => ({ name, ms }));
 
-    // Insert Wizard Time before Personal (which sorts last)
     if (wizardMs > 0) {
-      const personalIdx = categories.findIndex((c) => c.name.toLowerCase() === "personal");
-      if (personalIdx >= 0) {
-        categories.splice(personalIdx, 0, { name: "Wizard Time", ms: wizardMs });
-      } else {
-        categories.push({ name: "Wizard Time", ms: wizardMs });
-      }
+      categories.push({ name: "Wizard Time", ms: wizardMs });
     }
 
     return {
@@ -618,14 +602,14 @@ export default function ReportsPage() {
       const communicationMs = catMap["Communication"] || 0;
       const collaborationMs = catMap["Collaboration"] || 0;
 
-      // Personal and break: computed from ALL user logs (base), not account-filtered logs.
-      // Personal logs have account = null, so they vanish when an account filter is active.
+      // Break: computed from ALL user logs (base), not account-filtered logs —
+      // break logs have account = null, so they vanish when an account filter
+      // is active.
       const baseCatMap: Record<string, number> = {};
       base.forEach((l) => {
         const cat = normCat(l.category || "Task");
         baseCatMap[cat] = (baseCatMap[cat] || 0) + (l.duration_ms || 0);
       });
-      const personalMs = baseCatMap["Personal"] || 0;
       const breakMs = baseCatMap["Break"] || 0;
 
       // Per-session-date threshold — also from ALL user logs (base)
@@ -635,19 +619,17 @@ export default function ReportsPage() {
         byDate[d] = (byDate[d] || 0) + (l.duration_ms || 0);
       });
       let breakThresholdMs = 0;
-      let personalThresholdMs = 0;
       Object.values(byDate).forEach((sessionMs) => {
         if (sessionMs >= 8 * 3600000) breakThresholdMs += 45 * 60000;
         else if (sessionMs >= 6 * 3600000) breakThresholdMs += 30 * 60000;
         else if (sessionMs >= 4 * 3600000) breakThresholdMs += 15 * 60000;
-        personalThresholdMs += sessionMs / 8;
       });
 
       const productivityScore = billableMs > 0 ? (taskMs / billableMs) * 100 : 0;
 
       return {
         totalMs, billableMs, wizardMs, taskMs, planningMs, communicationMs, collaborationMs,
-        personalMs, personalThresholdMs, breakMs, breakThresholdMs, productivityScore, catMap,
+        breakMs, breakThresholdMs, productivityScore, catMap,
       };
     };
 
@@ -694,10 +676,6 @@ export default function ReportsPage() {
         prevWizardMs: prev.wizardMs,
         billableMs: curr.billableMs,
         prevBillableMs: prev.billableMs,
-        personalMs: curr.personalMs,
-        prevPersonalMs: prev.personalMs,
-        personalThresholdMs: curr.personalThresholdMs,
-        prevPersonalThresholdMs: prev.personalThresholdMs,
         breakMs: curr.breakMs,
         prevBreakMs: prev.breakMs,
         breakThresholdMs: curr.breakThresholdMs,
@@ -733,9 +711,6 @@ export default function ReportsPage() {
         billableMs: dayLogs
           .filter((l) => l.billable)
           .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-        personalMs: dayLogs
-          .filter((l) => l.category === "Personal")
-          .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
         totalMs: dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0),
       };
     };
@@ -769,7 +744,6 @@ export default function ReportsPage() {
           label: monthNames[m],
           date: `${prefix}-01`,
           billableMs: monthLogs.filter((l) => l.billable).reduce((s, l) => s + (l.duration_ms || 0), 0),
-          personalMs: monthLogs.filter((l) => l.category === "Personal").reduce((s, l) => s + (l.duration_ms || 0), 0),
           totalMs: monthLogs.reduce((s, l) => s + (l.duration_ms || 0), 0),
         });
       }
@@ -1567,7 +1541,7 @@ export default function ReportsPage() {
                 );
               }
               const actionableCats = va.categories.filter(
-                (c) => !isBreakLike(c.name) && c.name !== "Wizard Time"
+                (c) => !isBreakLike(c.name) && c.name !== "Wizard Time" && c.name.toLowerCase() !== "personal"
               );
               const topUp = actionableCats
                 .filter((c) => c.deltaPct > 3)
@@ -1690,15 +1664,6 @@ export default function ReportsPage() {
                         denominatorMs={va.billableMs}
                         prevMs={va.prevWizardMs}
                         prevDenominatorMs={va.prevBillableMs}
-                        improvementDirection="lower_better"
-                      />
-                      <ProductivityMeterWidget
-                        label="Personal Time"
-                        currentMs={va.personalMs}
-                        denominatorMs={va.personalThresholdMs}
-                        prevMs={va.prevPersonalMs}
-                        prevDenominatorMs={va.prevPersonalThresholdMs}
-                        redWhenExceeded
                         improvementDirection="lower_better"
                       />
                       <ProductivityMeterWidget
@@ -1890,8 +1855,6 @@ export default function ReportsPage() {
               {dailyData.map((day) => {
                 const billablePercent =
                   maxDayMs > 0 ? (day.billableMs / maxDayMs) * 100 : 0;
-                const personalPercent =
-                  maxDayMs > 0 ? (day.personalMs / maxDayMs) * 100 : 0;
                 const hasData = day.totalMs > 0;
 
                 return (
@@ -1903,21 +1866,11 @@ export default function ReportsPage() {
                       {hasData ? formatDuration(day.totalMs) : "\u2014"}
                     </span>
                     <div className="flex w-full flex-col items-stretch gap-0">
-                      {day.personalMs > 0 && (
-                        <div
-                          className="w-full rounded-t-md bg-clay-rose opacity-50"
-                          style={{
-                            height: `${Math.max(personalPercent * 1.4, 4)}px`,
-                          }}
-                        />
-                      )}
                       <div
-                        className="w-full bg-sage"
+                        className="w-full rounded-t-md bg-sage"
                         style={{
                           height: `${Math.max(hasData ? billablePercent * 1.4 : 2, hasData ? 4 : 2)}px`,
                           opacity: hasData ? 1 : 0.2,
-                          borderRadius:
-                            day.personalMs > 0 ? "0" : "6px 6px 0 0",
                         }}
                       />
                     </div>
