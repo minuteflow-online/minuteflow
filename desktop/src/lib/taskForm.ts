@@ -51,7 +51,6 @@ export const CATEGORIES = [
   { label: "Communication", value: "Communication", disabled: false },
   { label: "Planning", value: "Planning", disabled: false },
   { label: "Collaboration", value: "Collaboration", disabled: false },
-  { label: "Personal", value: "Personal", disabled: false },
   { label: "Break", value: "Break", disabled: false },
 ];
 
