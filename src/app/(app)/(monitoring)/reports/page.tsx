@@ -548,9 +548,12 @@ export default function ReportsPage() {
     });
 
     // Build sorted category entries (alphabetical; Personal Time is excluded
-    // entirely — it's no longer a loggable category, see TaskEntryForm).
+    // entirely — it's no longer a loggable category, see TaskEntryForm. Pause
+    // is excluded too — it's a leftover category from the desktop app's old
+    // Pause feature (removed, see memory), already treated as break-like
+    // everywhere else (isBreakLike), just never folded into this breakdown.)
     const categories = Object.entries(categoryMs)
-      .filter(([name, ms]) => ms > 0 && name.toLowerCase() !== "personal")
+      .filter(([name, ms]) => ms > 0 && !["personal", "pause"].includes(name.toLowerCase()))
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, ms]) => ({ name, ms }));
 
