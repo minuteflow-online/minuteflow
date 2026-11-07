@@ -2822,6 +2822,7 @@ export default function ProductivityCalendarPage() {
                       { label: "All", isActive: projectFilter.size === 0, onClick: () => setProjectFilter(new Set()) },
                       { label: "Operations only", isActive: operationIds.length > 0 && projectFilter.size === operationIds.length && operationIds.every((id) => projectFilter.has(id)), onClick: () => setProjectFilter(new Set(operationIds)) },
                       { label: "Objectives only", isActive: objectiveIds.length > 0 && projectFilter.size === objectiveIds.length && objectiveIds.every((id) => projectFilter.has(id)), onClick: () => setProjectFilter(new Set(objectiveIds)) },
+                      { label: "Ad Hoc only", isActive: projectFilter.size === 1 && projectFilter.has("__none__"), onClick: () => setProjectFilter(new Set(["__none__"])) },
                     ] as const).map((opt) => (
                       <button
                         key={opt.label}
@@ -2842,7 +2843,7 @@ export default function ProductivityCalendarPage() {
                         checked={projectFilter.has("__none__")}
                         onChange={() => toggleInSet(projectFilter, setProjectFilter, "__none__")}
                       />
-                      No Project
+                      Ad Hoc (no project)
                     </label>
                     {allProjects.map((p) => (
                       <label key={p.id} className="flex items-center gap-1 text-[11px] text-espresso">
