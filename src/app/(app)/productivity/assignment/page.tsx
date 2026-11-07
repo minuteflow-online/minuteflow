@@ -2047,6 +2047,37 @@ export default function TaskListPage() {
     }
   }, [pendingDelete, handleBulkPermanentDelete, handleBulkTrash, handlePermanentDeleteTask, showToast]);
 
+  // Shared between the two spots it can show up — the toolbar next to the
+  // Project filter on Time-based Task (Toni's call, 2026-11-06), or the view
+  // switcher itself on Objective/List, which has no toolbar of its own.
+  const viewAsVaControl = (
+    <div className="flex items-center gap-2">
+      <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View as VA:</span>
+      <select
+        value={selectedVaId ?? ""}
+        onChange={(e) => {
+          const id = e.target.value;
+          const profile = assignedByProfiles.find((p) => p.id === id);
+          setSelectedVaId(id || null);
+          setSelectedVaName(profile?.full_name ?? null);
+        }}
+        className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+      >
+        <option value="">My View</option>
+        {assignedByProfiles
+          .filter((p) => p.id !== currentUserId)
+          .slice()
+          .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""))
+          .map((p) => (
+            <option key={p.id} value={p.id}>{p.full_name}</option>
+          ))}
+      </select>
+      {selectedVaName && (
+        <span className="text-[11px] font-semibold text-walnut">Viewing: {selectedVaName}</span>
+      )}
+    </div>
+  );
+
   return (
     <>
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -2125,33 +2156,11 @@ export default function TaskListPage() {
                 </div>
               )}
 
-              {isAdmin && assignedByProfilesLoaded && (activeView === "my_tasks" || (activeView === "objective" && objectiveSubView === "list")) && (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View as VA:</span>
-                  <select
-                    value={selectedVaId ?? ""}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      const profile = assignedByProfiles.find((p) => p.id === id);
-                      setSelectedVaId(id || null);
-                      setSelectedVaName(profile?.full_name ?? null);
-                    }}
-                    className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-                  >
-                    <option value="">My View</option>
-                    {assignedByProfiles
-                      .filter((p) => p.id !== currentUserId)
-                      .slice()
-                      .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""))
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>{p.full_name}</option>
-                      ))}
-                  </select>
-                  {selectedVaName && (
-                    <span className="text-[11px] font-semibold text-walnut">Viewing: {selectedVaName}</span>
-                  )}
-                </div>
-              )}
+              {/* Time-based Task has its own toolbar with the Project filter —
+                  this control sits next to it there instead (Toni's call,
+                  2026-11-06). Objective/List has no such toolbar, so it stays
+                  here for that one case. */}
+              {isAdmin && assignedByProfilesLoaded && activeView === "objective" && objectiveSubView === "list" && viewAsVaControl}
             </div>
           </div>
         </div>
@@ -2376,6 +2385,7 @@ export default function TaskListPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
                 <div className="flex items-center gap-2">
+                  {isAdmin && assignedByProfilesLoaded && activeView === "my_tasks" && viewAsVaControl}
                   <ToolbarFilterDropdown label="Project" options={projectFilterOptions} selected={filterProjects} onChange={setFilterProjects} />
                   {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterDueStart || filterDueEnd || filterDueDateMode !== "any" || filterStartStart || filterStartEnd || filterStartDateMode !== "any" || filterCreatedStart || filterCreatedEnd || filterOverdue || taskNameSearch) && (
                     <button

@@ -273,9 +273,48 @@ export default function JobOrdersSection({
     );
   };
 
-  // Admins always see the section (to create/oversee). A non-admin only sees it
-  // when they actually have an order — otherwise it stays out of the way.
+  // A non-admin only sees the section when they actually have an order —
+  // otherwise it stays out of the way entirely.
   if (!admin && (loading || orders.length === 0)) return null;
+
+  // Admins with nothing in the list get a slim bar instead of the full
+  // collapsible section — there's nothing to fold, just the one entry point
+  // they'd otherwise lose: creating the first order (Toni's call, 2026-11-06).
+  if (admin && !loading && orders.length === 0) {
+    return (
+      <div className="rounded-xl border-2 border-amber/40 bg-amber-soft/25 p-3.5 mb-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <svg className="h-4 w-4 shrink-0 text-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /><rect x="9" y="3" width="6" height="4" rx="1" /><path d="M9 12l2 2 4-4" />
+            </svg>
+            <h3 className="text-sm font-extrabold text-espresso uppercase tracking-wide">Job Orders</h3>
+            <span className="text-[11px] text-walnut">No job orders yet.</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreating((v) => !v)}
+            className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors shadow-sm"
+          >
+            {creating ? "Cancel" : "+ Job Order"}
+          </button>
+        </div>
+        {creating && (
+          <div className="mt-3">
+            <CreateForm
+              teamMembers={teamMembers}
+              projects={projects}
+              accounts={accounts}
+              founder={founder}
+              initial={null}
+              onDone={() => { setCreating(false); setOpen(true); setReload((k) => k + 1); }}
+              onCancel={() => setCreating(false)}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <>
