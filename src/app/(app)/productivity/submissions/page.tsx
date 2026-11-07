@@ -501,6 +501,10 @@ function SubmissionsPageInner() {
   const [ownerMode, setOwnerMode] = useState<OwnerMode>("all");
   const [currentUserId, setCurrentUserId] = useState("");
   const [showTrash, setShowTrash] = useState(false);
+  // The filters people reach for constantly (VA, status, unread, flagged,
+  // search) stay on screen; the other eight tuck behind this toggle so the
+  // bar reads short day-to-day (Toni's call, 2026-11-07).
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const { hidden: hiddenFields, toggleColumnVisible } = useColumnPrefs(
     "submissions-card",
     currentUserId || null,
@@ -1219,6 +1223,20 @@ This cannot be undone.`
     [visibleItems]
   );
 
+  // How many of the filters tucked behind "More filters" are actually set —
+  // shown on the toggle so a collapsed, forgotten filter never silently
+  // narrows the list with no visible sign why.
+  const moreFiltersActiveCount =
+    (scopeFilter.size > 0 ? 1 : 0) +
+    (workTypeFilter.size > 0 ? 1 : 0) +
+    (projectFilter.size > 0 ? 1 : 0) +
+    (canReview && assignedByFilter.size > 0 ? 1 : 0) +
+    (categoryFilter.size > 0 ? 1 : 0) +
+    (accountFilter.size > 0 ? 1 : 0) +
+    (clientFilter.size > 0 ? 1 : 0) +
+    (taskDateFrom || taskDateTo ? 1 : 0) +
+    (submissionDateFrom || submissionDateTo ? 1 : 0);
+
   // Only submissions are numbered — a note or an approval sits between rounds
   // without being one, so counting every entry would inflate the R.
   const roundByItemId = useMemo(() => {
@@ -1499,82 +1517,25 @@ This cannot be undone.`
           </button>
         )}
 
-        <CardFieldsPicker
-          titleField={titleField}
-          onTitleChange={(next) => {
-            setTitleField(next);
-            try {
-              if (currentUserId) localStorage.setItem(`mf-submissions-title:${currentUserId}`, next);
-            } catch {
-              // Unavailable storage — the choice still applies this session.
-            }
-          }}
-          hidden={hiddenFields}
-          onToggle={toggleColumnVisible}
-        />
-
-        {/* Three groups, lightly ruled apart: what you're looking at, how it's
-            narrowed, and the actions. Ten chips in an undivided row read as one
-            undifferentiated mass. */}
-        <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
-
-        <MultiSelectFilter
-          allLabel="All work"
-          selected={scopeFilter}
-          onChange={setScopeFilter}
-          options={SCOPE_OPTIONS}
-        />
-
-        <MultiSelectFilter
-          allLabel="All task types"
-          selected={workTypeFilter}
-          onChange={setWorkTypeFilter}
-          options={WORK_TYPE_OPTIONS}
-        />
-
-        <MultiSelectFilter
-          allLabel="All projects"
-          selected={projectFilter}
-          onChange={setProjectFilter}
-          options={projectOptions.map((p) => ({ value: p.id, label: p.name }))}
-        />
-
-        {/* Admin and above only. Everyone else has the My submissions /
-            Submitted to me switch, which covers the same ground for one person. */}
-        {canReview && (
+        {/* What you'd reach for constantly stays on screen. The eight
+            narrower, less-often-touched filters (Fields, work type, project,
+            assigner, category, account, client, both date ranges) tuck
+            behind "More filters" below (Toni's call, 2026-11-07). */}
+        {seesAll && (
           <MultiSelectFilter
-            allLabel="All assigners"
-            selected={assignedByFilter}
-            onChange={setAssignedByFilter}
-            options={assignerOptions}
+            allLabel="All VAs"
+            selected={vaFilter}
+            onChange={setVaFilter}
+            options={teamMembers.map((m) => ({ value: m.id, label: m.full_name || m.username }))}
           />
         )}
 
         <MultiSelectFilter
-          allLabel="All categories"
-          selected={categoryFilter}
-          onChange={setCategoryFilter}
-          options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: c }))}
+          allLabel="All statuses"
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          options={STATUS_OPTIONS}
         />
-
-        <MultiSelectFilter
-          allLabel="All accounts"
-          selected={accountFilter}
-          onChange={setAccountFilter}
-          options={accounts.map((a) => ({ value: a.name, label: a.name }))}
-        />
-
-        <MultiSelectFilter
-          allLabel="All clients"
-          selected={clientFilter}
-          onChange={setClientFilter}
-          options={clients.map((c) => ({ value: c.id, label: c.name }))}
-        />
-
-        <DateRangeChip label="Task date" from={taskDateFrom} to={taskDateTo} onChange={(f, t) => { setTaskDateFrom(f); setTaskDateTo(t); }} />
-        <DateRangeChip label="Submission date" from={submissionDateFrom} to={submissionDateTo} onChange={(f, t) => { setSubmissionDateFrom(f); setSubmissionDateTo(t); }} />
-
-        <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
 
         {canReview && (
           <button
@@ -1609,25 +1570,106 @@ This cannot be undone.`
           {loading ? "Loading..." : `${submissionCount} submission${submissionCount === 1 ? "" : "s"}`}
         </span>
 
-        {/* Below the search bar, same as everything above — the two most-used
-            filters (Toni's call, 2026-11-06), moved to their own line so they
-            read apart from the narrower, less-often-touched ones. */}
-        {seesAll && (
-          <MultiSelectFilter
-            allLabel="All VAs"
-            selected={vaFilter}
-            onChange={setVaFilter}
-            options={teamMembers.map((m) => ({ value: m.id, label: m.full_name || m.username }))}
-          />
-        )}
-
-        <MultiSelectFilter
-          allLabel="All statuses"
-          selected={statusFilter}
-          onChange={setStatusFilter}
-          options={STATUS_OPTIONS}
-        />
+        <button
+          type="button"
+          onClick={() => setShowMoreFilters((v) => !v)}
+          className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+            showMoreFilters
+              ? "border-terracotta/30 bg-terracotta-soft text-terracotta"
+              : "border-sand bg-white text-stone hover:border-walnut"
+          }`}
+        >
+          More filters
+          {moreFiltersActiveCount > 0 && (
+            <span className="rounded-full bg-terracotta px-1.5 py-[1px] text-[10px] font-bold text-white">
+              {moreFiltersActiveCount}
+            </span>
+          )}
+          <svg
+            className={`h-3 w-3 transition-transform ${showMoreFilters ? "rotate-180" : ""}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
       </div>
+
+      {showMoreFilters && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-sand bg-parchment/40 px-3 py-2">
+          <CardFieldsPicker
+            titleField={titleField}
+            onTitleChange={(next) => {
+              setTitleField(next);
+              try {
+                if (currentUserId) localStorage.setItem(`mf-submissions-title:${currentUserId}`, next);
+              } catch {
+                // Unavailable storage — the choice still applies this session.
+              }
+            }}
+            hidden={hiddenFields}
+            onToggle={toggleColumnVisible}
+          />
+
+          <MultiSelectFilter
+            allLabel="All work"
+            selected={scopeFilter}
+            onChange={setScopeFilter}
+            options={SCOPE_OPTIONS}
+          />
+
+          <MultiSelectFilter
+            allLabel="All task types"
+            selected={workTypeFilter}
+            onChange={setWorkTypeFilter}
+            options={WORK_TYPE_OPTIONS}
+          />
+
+          <MultiSelectFilter
+            allLabel="All projects"
+            selected={projectFilter}
+            onChange={setProjectFilter}
+            options={projectOptions.map((p) => ({ value: p.id, label: p.name }))}
+          />
+
+          {/* Admin and above only. Everyone else has the My submissions /
+              Submitted to me switch, which covers the same ground for one person. */}
+          {canReview && (
+            <MultiSelectFilter
+              allLabel="All assigners"
+              selected={assignedByFilter}
+              onChange={setAssignedByFilter}
+              options={assignerOptions}
+            />
+          )}
+
+          <MultiSelectFilter
+            allLabel="All categories"
+            selected={categoryFilter}
+            onChange={setCategoryFilter}
+            options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: c }))}
+          />
+
+          <MultiSelectFilter
+            allLabel="All accounts"
+            selected={accountFilter}
+            onChange={setAccountFilter}
+            options={accounts.map((a) => ({ value: a.name, label: a.name }))}
+          />
+
+          <MultiSelectFilter
+            allLabel="All clients"
+            selected={clientFilter}
+            onChange={setClientFilter}
+            options={clients.map((c) => ({ value: c.id, label: c.name }))}
+          />
+
+          <DateRangeChip label="Task date" from={taskDateFrom} to={taskDateTo} onChange={(f, t) => { setTaskDateFrom(f); setTaskDateTo(t); }} />
+          <DateRangeChip label="Submission date" from={submissionDateFrom} to={submissionDateTo} onChange={(f, t) => { setSubmissionDateFrom(f); setSubmissionDateTo(t); }} />
+        </div>
+      )}
 
       {(canReview && view === "timeline" && pageThreadIds.length > 0) ||
       selectedTaskIds.size > 0 ? (
