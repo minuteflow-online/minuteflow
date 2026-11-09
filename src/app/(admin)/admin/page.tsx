@@ -1,7 +1,18 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { findCaptureBatches, findCaptureGaps, formatGapMinutes, type CaptureBatch } from "@/lib/screenshotGaps";
+import {
+  formatCaptureTime,
+  isMarkerShot,
+  orderTaskShots,
+  screenshotTypeBadge,
+  screenshotTypeLabel,
+  summarizeTaskShots,
+  withCaptureTimes,
+  type CapturedShot,
+} from "@/lib/screenshotReport";
+import { CaptureGapPills, CaptureStatePills } from "@/components/ScreenshotReportPills";
+import ScreenshotViewerFrame from "@/components/ScreenshotViewerFrame";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -52,7 +63,6 @@ import {
   getDayBoundsInTimezone,
   getTimezoneAbbr,
   displayRole,
-  screenshotCaptureTime,
   screenshotSource,
   formatTenure,
 } from "@/lib/utils";
@@ -102,76 +112,15 @@ function getTimeAgo(date: Date, tz?: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", ...(tz ? { timeZone: tz } : {}) });
 }
 
-function formatDateShort(iso: string, timezone?: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    ...(timezone ? { timeZone: timezone } : {}),
-  });
-}
-
-function formatTimeShort(iso: string, timezone?: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    ...(timezone ? { timeZone: timezone } : {}),
-  });
-}
-
-function screenshotTypeLabel(type: string | null): string {
-  if (!type) return "Manual";
-  const labels: Record<string, string> = {
-    start: "Start",
-    progress: "Progress",
-    end: "End",
-    remote: "Remote",
-    manual: "Manual",
-    failed: "No capture",
-  };
-  return labels[type] || type;
-}
-
-/** Time-of-day with seconds — screenshots land seconds apart, so minutes alone blur them together. */
-function formatCaptureTime(iso: string, timezone?: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-    ...(timezone ? { timeZone: timezone } : {}),
-  });
-}
-
-function screenshotTypeBadge(type: string | null): { bg: string; text: string } {
-  if (!type) return { bg: "bg-parchment", text: "text-bark" };
-  const styles: Record<string, { bg: string; text: string }> = {
-    start: { bg: "bg-sage-soft", text: "text-sage" },
-    progress: { bg: "bg-slate-blue-soft", text: "text-slate-blue" },
-    end: { bg: "bg-terracotta-soft", text: "text-terracotta" },
-    remote: { bg: "bg-amber-soft", text: "text-amber" },
-    manual: { bg: "bg-parchment", text: "text-bark" },
-    failed: { bg: "bg-stone/10", text: "text-stone" },
-  };
-  return styles[type] || { bg: "bg-parchment", text: "text-bark" };
-}
-
 /* ── Screenshot Grouping ─────────────────────────────────── */
 
 /**
  * A screenshot carrying the moment it was taken, and whether the screen had moved
- * since the previous shot of the same task.
- *
- * `captureTime` prefers `captured_at` (stamped by the client at the moment of
- * capture), falls back to the Drive filename, and only then to `created_at` — the
- * row's insert time, which for a queued upload can be hours late.
+ * since the previous shot of the same task. The labels, timing and judgement
+ * rules live in @/lib/screenshotReport, shared with every other page that shows
+ * screenshots, so a change made for this report applies everywhere.
  */
-type CapturedScreenshot = TaskScreenshot & {
-  captureTime: string;
-  captureIsExact: boolean;
-  /** Screen is pixel-for-pixel the layout of the previous capture in this task. */
-  unchanged: boolean;
-};
+type CapturedScreenshot = CapturedShot<TaskScreenshot>;
 
 /** One task and the screenshots taken during it. */
 type ScreenshotTaskGroup = {
@@ -1078,18 +1027,8 @@ export default function AdminPage() {
    * so the lightbox arrows walk the grid the way it looks on screen.
    */
   const { screenshotDays, orderedScreenshots, loadedWindow } = useMemo(() => {
-    const withCapture: CapturedScreenshot[] = filteredScreenshots.map((ss) => {
-      const fromFilename = screenshotCaptureTime(ss.filename);
-      return {
-        ...ss,
-        captureTime: ss.captured_at ?? fromFilename ?? ss.created_at,
-        // Boolean(), not a null check: before the captured_at column exists the
-        // field is absent from the row entirely, and `undefined !== null` would
-        // label every old screenshot as exactly timed.
-        captureIsExact: Boolean(ss.captured_at),
-        unchanged: false, // resolved below, once shots are ordered within a task
-      };
-    });
+    // `unchanged` is resolved below, once shots are ordered within a task.
+    const withCapture: CapturedScreenshot[] = withCaptureTimes(filteredScreenshots);
 
     const byTask = new Map<string, ScreenshotTaskGroup>();
     withCapture.forEach((ss) => {
@@ -1119,16 +1058,9 @@ export default function AdminPage() {
     });
 
     const tasks = Array.from(byTask.values());
-    tasks.forEach((t) => {
-      t.shots.sort((a, b) => new Date(a.captureTime).getTime() - new Date(b.captureTime).getTime());
-      // Flag a shot whose screen is identical to the one before it. Compared only
-      // against the immediately preceding shot of the same task, so a run of
-      // untouched screens reads as a run of flags rather than one isolated mark.
-      t.shots.forEach((shot, i) => {
-        const prev = i > 0 ? t.shots[i - 1] : null;
-        shot.unchanged = !!(shot.image_hash && prev?.image_hash && shot.image_hash === prev.image_hash);
-      });
-    });
+    // Oldest first within a task, each shot flagged when its screen is identical
+    // to the one before it — the shared rule (see orderTaskShots).
+    tasks.forEach((t) => orderTaskShots(t.shots));
 
     const startedAt = (t: ScreenshotTaskGroup) => new Date(t.shots[0].captureTime).getTime();
 
@@ -2399,86 +2331,6 @@ function ScreenshotsTab({
   );
 }
 
-/* ── Capture-state pill with its runs ──────────────────────── */
-
-/**
- * "13 unchanged · 1h 5m" — the total count and total time for one capture state on
- * a task. Clicking it lists each unbroken run (count, time span, duration); clicking
- * a run scrolls to its first capture.
- */
-function CaptureBatchPill({
-  batches,
-  noun,
-  colorClass,
-  title,
-  orgTimezone,
-  onJump,
-}: {
-  batches: CaptureBatch[];
-  noun: string;
-  colorClass: string;
-  title: string;
-  orgTimezone: string;
-  onJump: (id: number) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
-
-  if (batches.length === 0) return null;
-  const totalCount = batches.reduce((n, b) => n + b.count, 0);
-  const totalMinutes = batches.reduce((n, b) => n + b.minutes, 0);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        title={title}
-        className={`flex items-center gap-1 rounded-full border px-2 py-[1px] text-[9px] font-semibold ${colorClass}`}
-      >
-        {totalCount} {noun} · {formatGapMinutes(totalMinutes)}
-        <svg className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute left-0 z-50 mt-1 w-64 rounded-lg border border-sand bg-white p-1.5 shadow-xl">
-          <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
-            {batches.length} batch{batches.length !== 1 ? "es" : ""}
-          </p>
-          {batches.map((b, i) => (
-            <button
-              key={b.ids[0]}
-              type="button"
-              onClick={() => {
-                onJump(b.ids[0]);
-                setOpen(false);
-              }}
-              className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-[11px] text-espresso transition-colors hover:bg-cream"
-            >
-              <span className="text-bark">
-                #{i + 1} · {formatCaptureTime(b.start, orgTimezone)} – {formatCaptureTime(b.end, orgTimezone)}
-              </span>
-              <span className="shrink-0 font-semibold">
-                {b.count} · {formatGapMinutes(b.minutes)}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ── One task's screenshots ────────────────────────────────── */
 
 // Every capture on the task is rendered — no windowing. At a 5-minute cadence a
@@ -2510,21 +2362,9 @@ function TaskScreenshotCard({
     titleField === "client_memo" ? group.log?.client_memo?.trim() :
     group.taskName;
   const titleLabel = SCREENSHOT_TITLE_FIELDS.find((f) => f.value === titleField)?.label ?? "Task title";
-  // Stretches with neither a screenshot nor a marker: capture wasn't running or
-  // couldn't report, which is different from a slot that recorded a reason.
-  const gaps = findCaptureGaps(group.shots.map((s) => s.captureTime), group.log, undefined, loadedWindow);
-  // "Idle" is a claim about the person; everything else is a claim about the
-  // browser. Counting them together reads as an accusation the data does not
-  // support — a VA in a Zoom meeting produces "could not capture" all hour.
-  const AWAY_REASONS = ["Computer idle", "Screen locked"];
-  const isAway = (s: CapturedScreenshot) =>
-    s.screenshot_type === "failed" && AWAY_REASONS.includes(s.failure_reason ?? "");
-  const isNotCaptured = (s: CapturedScreenshot) =>
-    s.screenshot_type === "failed" && !AWAY_REASONS.includes(s.failure_reason ?? "");
-  // Unbroken runs of each state. Any capture in another state ends a run.
-  const unchangedBatches = findCaptureBatches(group.shots, (s) => s.unchanged, "previous");
-  const awayBatches = findCaptureBatches(group.shots, isAway, "first");
-  const notCapturedBatches = findCaptureBatches(group.shots, isNotCaptured, "first");
+  // Unchanged / away / no-browser-view runs and capture gaps — the shared report
+  // rules, also behind the SC Data pill on submissions.
+  const summary = summarizeTaskShots(group.shots, group.log, loadedWindow);
 
   const jumpToShot = (id: number) => {
     document.getElementById(`ss-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2556,30 +2396,7 @@ function TaskScreenshotCard({
             {group.log.category}
           </span>
         )}
-        <CaptureBatchPill
-          batches={unchangedBatches}
-          noun="unchanged"
-          colorClass="border-amber/20 bg-amber-soft text-amber"
-          title="Screen identical to the capture before it. Each run is timed from that earlier capture to the last identical one."
-          orgTimezone={orgTimezone}
-          onJump={jumpToShot}
-        />
-        <CaptureBatchPill
-          batches={awayBatches}
-          noun="away"
-          colorClass="border-stone/20 bg-stone/10 text-stone"
-          title="Computer idle or screen locked. Each run is timed from its first capture to the capture that ended it."
-          orgTimezone={orgTimezone}
-          onJump={jumpToShot}
-        />
-        <CaptureBatchPill
-          batches={notCapturedBatches}
-          noun="no browser view"
-          colorClass="border-sand bg-parchment text-bark"
-          title="Nothing to capture in the browser — working in another app, or on a page the extension cannot read. Not a claim about the person. Each run is timed from its first capture to the capture that ended it."
-          orgTimezone={orgTimezone}
-          onJump={jumpToShot}
-        />
+        <CaptureStatePills summary={summary} orgTimezone={orgTimezone} onJump={jumpToShot} />
         <span className="ml-auto text-[10px] text-stone">
           {formatCaptureTime(first.captureTime, orgTimezone)}
           {group.shots.length > 1 && ` – ${formatCaptureTime(last.captureTime, orgTimezone)}`}
@@ -2588,17 +2405,9 @@ function TaskScreenshotCard({
         </span>
       </div>
 
-      {gaps.length > 0 && (
+      {summary.gaps.length > 0 && (
         <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-          {gaps.map((gap) => (
-            <span
-              key={gap.start}
-              className="rounded-full border border-amber/20 bg-amber-soft px-2 py-[1px] text-[9px] font-semibold text-amber"
-              title="Neither a screenshot nor a reason was recorded for this stretch, so capture was not running or could not report (for example the capture extension was signed out or off, the browser or desktop app was closed, the computer was asleep, or screen sharing was not started). Not a claim about the person."
-            >
-              No capture record · {formatCaptureTime(gap.start, orgTimezone)} – {formatCaptureTime(gap.end, orgTimezone)} ({formatGapMinutes(gap.minutes)})
-            </span>
-          ))}
+          <CaptureGapPills summary={summary} orgTimezone={orgTimezone} />
         </div>
       )}
 
@@ -2607,7 +2416,7 @@ function TaskScreenshotCard({
           const url = screenshotUrls[ss.id];
           const badge = screenshotTypeBadge(ss.screenshot_type);
           // A marker slot: no image was captured, and the row says why.
-          const isMarker = ss.screenshot_type === "failed" || !ss.drive_file_id;
+          const isMarker = isMarkerShot(ss);
           // Null for anything captured before 2026-10-06 (no tag to read) —
           // shown only when we actually know, never a guessed label.
           const source = screenshotSource(ss.filename);
@@ -7732,6 +7541,8 @@ function TeamMemberCard({
 
 /* ── Screenshot Lightbox ─────────────────────────────────── */
 
+/** Admin's viewer is the shared ScreenshotViewerFrame — the same component every
+ *  other page opens screenshots in, so the two can never drift apart. */
 function ScreenshotLightbox({
   screenshot,
   url,
@@ -7751,154 +7562,21 @@ function ScreenshotLightbox({
   onPrev: () => void;
   onNext: () => void;
 }) {
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft") onPrev();
-      if (e.key === "ArrowRight") onNext();
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose, onPrev, onNext]);
-
-  const badge = screenshotTypeBadge(screenshot.screenshot_type);
-  const isMarker = screenshot.screenshot_type === "failed" || !screenshot.drive_file_id;
-  // captured_at is the client's own stamp from the moment of capture; the filename
-  // is the next best thing; created_at is when the row landed, which for a queued
-  // upload can be hours later. Kept on hover either way for support questions.
-  const exactCapture = screenshot.captured_at ?? screenshotCaptureTime(screenshot.filename);
-  const capturedAt = exactCapture ?? screenshot.created_at;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-      onClick={onClose}
-    >
-      <div
-        className="relative flex max-h-[90vh] max-w-[90vw] flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-parchment px-5 py-3">
-          <div className="flex items-center gap-3">
-            {profile && (
-              <>
-                <div
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                  style={{ backgroundColor: getAvatarColor(profile.id) }}
-                >
-                  {getInitials(profile.full_name)}
-                </div>
-                <div>
-                  <div className="text-[13px] font-bold text-espresso">{profile.full_name}</div>
-                  {log && (
-                    <div className="text-[11px] text-bark">{log.task_name}</div>
-                  )}
-                </div>
-              </>
-            )}
-            <span className={`rounded px-2 py-0.5 text-[10px] font-semibold ${badge.bg} ${badge.text}`}>
-              {screenshotTypeLabel(screenshot.screenshot_type)}
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span
-              className="text-[11px] text-stone"
-              title={`Uploaded ${formatDateShort(screenshot.created_at, timezone)} at ${formatTimeShort(
-                screenshot.created_at,
-                timezone
-              )} · ${screenshot.filename}`}
-            >
-              {exactCapture ? "Taken" : "Uploaded"} {formatDateShort(capturedAt, timezone)} at{" "}
-              {formatCaptureTime(capturedAt, timezone)}
-            </span>
-            <button
-              onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-bark transition-colors hover:bg-parchment hover:text-espresso"
-            >
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* Image, or the reason there isn't one */}
-        <div className="flex-1 overflow-auto bg-espresso p-2">
-          {isMarker ? (
-            // A marker has no image and never will, so waiting on one says
-            // "Loading image…" forever. Arrow keys still walk onto these, so the
-            // lightbox has to state the reason rather than sit blank.
-            <div className="flex h-96 flex-col items-center justify-center gap-2 text-center">
-              <span className="text-3xl text-stone">&#8709;</span>
-              <span className="text-sm font-medium text-parchment">
-                {screenshot.failure_reason || "No screenshot was taken"}
-              </span>
-              <span className="text-xs text-stone">
-                Nothing was captured for this slot.
-              </span>
-            </div>
-          ) : url ? (
-            <img
-              src={url}
-              alt="Screenshot full view"
-              className="mx-auto max-h-[75vh] rounded object-contain"
-            />
-          ) : (
-            <div className="flex h-96 items-center justify-center text-sm text-stone">
-              Loading image...
-            </div>
-          )}
-        </div>
-
-        {/* Navigation arrows */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onPrev();
-          }}
-          className="absolute left-2 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-espresso shadow-lg transition-all hover:bg-white"
-        >
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onNext();
-          }}
-          className="absolute right-2 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-espresso shadow-lg transition-all hover:bg-white"
-        >
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
-
-        {/* Footer with details */}
-        {log && (
-          <div className="flex items-center gap-4 border-t border-parchment px-5 py-3 text-[11px] text-bark">
-            <span>
-              <strong className="text-espresso">Task:</strong> {log.task_name}
-            </span>
-            {log.account && (
-              <span>
-                <strong className="text-espresso">Account:</strong> {log.account}
-              </span>
-            )}
-            {log.client_name && (
-              <span>
-                <strong className="text-espresso">Client:</strong> {log.client_name}
-              </span>
-            )}
-            <span>
-              <strong className="text-espresso">Category:</strong> {log.category}
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
+    <ScreenshotViewerFrame
+      screenshot={screenshot}
+      url={url}
+      person={profile ? { id: profile.id, full_name: profile.full_name } : null}
+      log={
+        log
+          ? { task_name: log.task_name, account: log.account, client_name: log.client_name, category: log.category }
+          : null
+      }
+      timezone={timezone}
+      onClose={onClose}
+      onPrev={onPrev}
+      onNext={onNext}
+    />
   );
 }
 
