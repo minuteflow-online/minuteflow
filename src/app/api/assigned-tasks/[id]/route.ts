@@ -716,8 +716,32 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       taskRowStatus,
       (current?.assigned_task_assignees ?? []) as Array<{ status: string | null }>
     );
+    // An in-progress status report that nobody flagged for review auto-approves
+    // via a companion task_submissions "approval" entry (see submissions/route.ts),
+    // without ever writing status="approved" — it's left at on_queue on purpose, so
+    // the task stays startable (Toni's call, 2026-11-02). The Submissions page reads
+    // that same entry to show the task as approved (src/app/api/submissions/route.ts's
+    // reviewState); this has to agree, or Complete 409s on a task the page already
+    // treats as settled, leaving the VA's note stranded with no status to show for it.
+    const { data: latestEntry } = await adminSupabase
+      .from("task_submissions")
+      .select("message_type")
+      .eq("assigned_task_id", id)
+      .in("message_type", [
+        "submission",
+        "revision",
+        "approval",
+        "approval_reversed",
+        "revision_reversed",
+        "rejection",
+        "rejection_reversed",
+      ])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const autoApprovedViaSubmission = latestEntry?.message_type === "approval";
     // Either reading counts, so nothing that passed before is refused now.
-    approvedForCompletion = taskRowStatus === "approved" || shown === "approved";
+    approvedForCompletion = taskRowStatus === "approved" || shown === "approved" || autoApprovedViaSubmission;
     const done = (s: string) => s === "completed" || s === "paid";
     if (!approvedForCompletion && !done(taskRowStatus) && !done(shown)) {
       return Response.json(
