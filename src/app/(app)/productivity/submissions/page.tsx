@@ -30,6 +30,9 @@ import {
   timelinessOf as sharedTimelinessOf,
   type Timeliness,
 } from "@/lib/onTime";
+import { allocateTaskTime, roundDays, type RoundTime, type TaskTime } from "@/lib/submissionTime";
+import { buildShotSessions, formatCaptureTime, type ReportLog, type ReportShot } from "@/lib/screenshotReport";
+import { CaptureGapPills, CaptureStatePills } from "@/components/ScreenshotReportPills";
 
 type FeedItem = {
   id: number;
@@ -48,6 +51,8 @@ type FeedItem = {
   progress_status: "in_progress" | "completed" | null;
   review_requested: boolean | null;
   attachments: TaskSubmissionAttachment[];
+  /** Every capture linked to this submission, markers included — for SC Data. */
+  sc_shots?: ReportShot[];
   profiles?: { id: string; full_name: string | null; username: string | null } | null;
   task: {
     id: number;
@@ -73,6 +78,12 @@ type FeedItem = {
 
 /** Every submission for one task, oldest first — the original plus its resubmissions. */
 type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
+
+/**
+ * One task as it appears under one day. A task shows on every day its work was
+ * done, holding that day's round and the rounds before it — never later ones.
+ */
+type DayCard = { key: string; day: string; thread: Thread };
 
 /** A file already uploaded to `task-attachments` via the signed-slot route,
  *  waiting to be hung off the submission row it's posted with. Mirrors what
@@ -236,9 +247,23 @@ function formatDuration(ms: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-/** Total time logged on a task across every round — what a card shows. */
-function sumRounds(rounds: Record<string, number> | undefined): number {
-  return Object.values(rounds ?? {}).reduce((sum, ms) => sum + ms, 0);
+/**
+ * The days a thread entry sits on. A submission sits on the days its round's
+ * work was logged (or the day it was handed in, if no time was tracked); a note
+ * or review sits on the day it was made.
+ */
+function itemDays(item: FeedItem, time: TaskTime | undefined, timezone: string): string[] {
+  if (item.message_type !== "submission") return [localDay(item.created_at, timezone)];
+  return roundDays(item, time?.bySubmission[item.id], timezone);
+}
+
+/** "Nov 6" from a YYYY-MM-DD day key. */
+function formatDayKey(day: string): string {
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 /**
@@ -495,7 +520,11 @@ function SubmissionsPageInner() {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   // taskId -> round -> ms logged. JSON object keys are strings.
-  const [roundDurations, setRoundDurations] = useState<Record<string, Record<string, number>>>({});
+  // Raw material for each task's time — split into rounds and days below.
+  const [taskSubmissions, setTaskSubmissions] = useState<Record<string, Array<{ id: number; created_at: string }>>>({});
+  const [taskLogs, setTaskLogs] = useState<Record<string, Array<[string | null, number | null]>>>({});
+  // Time logs the SC Data captures ran under, for the report's capture gaps.
+  const [scLogs, setScLogs] = useState<Record<number, ReportLog>>({});
   const [reviewState, setReviewState] = useState<Record<string, string>>({});
   const [canReview, setCanReview] = useState(false);
   const [canEmptyTrash, setCanEmptyTrash] = useState(false);
@@ -675,7 +704,9 @@ function SubmissionsPageInner() {
       // project, assigner — applies to it without a second copy of the
       // filtering. Only the calendar reads it; the timeline skips it.
       setItems([...(data.submissions ?? []), ...(data.expected ?? [])]);
-      setRoundDurations(data.roundDurations ?? {});
+      setTaskSubmissions(data.taskSubmissions ?? {});
+      setTaskLogs(data.taskLogs ?? {});
+      setScLogs(data.scLogs ?? {});
       setReviewState(data.reviewState ?? {});
       setCanReview(Boolean(data.canReview));
       setCanEmptyTrash(Boolean(data.canEmptyTrash));
@@ -1293,41 +1324,76 @@ This cannot be undone.`
     return threads;
   }, [visibleItems]);
 
-  const pageCount = Math.max(1, Math.ceil(allThreads.length / THREADS_PER_PAGE));
+  // Each task's time, split into rounds (one per submission) and days — against
+  // ALL of the task's submissions, not just the ones the filters left visible.
+  const taskTimes = useMemo(() => {
+    const map = new Map<number, TaskTime>();
+    for (const [taskId, subs] of Object.entries(taskSubmissions)) {
+      const logs = (taskLogs[taskId] ?? []).map(([start_time, duration_ms]) => ({ start_time, duration_ms }));
+      map.set(Number(taskId), allocateTaskTime(subs, logs, orgTimezone));
+    }
+    return map;
+  }, [taskSubmissions, taskLogs, orgTimezone]);
+
+  // A task appears under every day one of its rounds was worked on (Toni's
+  // call, 2026-11-09): VAs submit daily, and each day's view holds that day's
+  // round with the earlier ones stacked beneath. Newest day first; within a
+  // day, the most recently submitted task first.
+  const allCards = useMemo(() => {
+    const cards: DayCard[] = [];
+    for (const thread of allThreads) {
+      const time = taskTimes.get(thread.taskId);
+      const days = new Set<string>();
+      for (const item of thread.items) {
+        if (item.message_type !== "submission") continue;
+        for (const d of itemDays(item, time, orgTimezone)) days.add(d);
+      }
+      // A thread with no submission at all still needs a home.
+      if (days.size === 0) days.add(localDay(thread.latest.created_at, orgTimezone));
+      for (const day of days) cards.push({ key: `${day}-${thread.taskId}`, day, thread });
+    }
+    cards.sort(
+      (a, b) =>
+        b.day.localeCompare(a.day) || b.thread.latest.created_at.localeCompare(a.thread.latest.created_at)
+    );
+    return cards;
+  }, [allThreads, taskTimes, orgTimezone]);
+
+  const pageCount = Math.max(1, Math.ceil(allCards.length / THREADS_PER_PAGE));
   // Filtering down to fewer results than the current page would otherwise
   // leave you staring at an empty page with no obvious way back.
   const safePage = Math.min(page, pageCount - 1);
 
   // A notification link (?taskId=) has to land on the card it's about, but
-  // the list is paged — a thread past the first 25 never mounts, so there's
+  // the list is paged — a card past the first 25 never mounts, so there's
   // nothing to expand or scroll to and the link just drops you on page 1.
-  // Jumps once per link; later paging and reloads are left alone.
+  // Lands on the task's newest day. Jumps once per link; later paging and
+  // reloads are left alone.
   const jumpedToHighlightRef = useRef<number | null>(null);
   useEffect(() => {
     if (highlightTaskId == null || jumpedToHighlightRef.current === highlightTaskId) return;
-    const index = allThreads.findIndex((t) => t.taskId === highlightTaskId);
+    const index = allCards.findIndex((c) => c.thread.taskId === highlightTaskId);
     if (index === -1) return;
     jumpedToHighlightRef.current = highlightTaskId;
     setPage(Math.floor(index / THREADS_PER_PAGE));
-  }, [allThreads, highlightTaskId]);
+  }, [allCards, highlightTaskId]);
 
   const threadsByDay = useMemo(() => {
     const start = safePage * THREADS_PER_PAGE;
-    const map = new Map<string, Thread[]>();
-    for (const thread of allThreads.slice(start, start + THREADS_PER_PAGE)) {
-      const day = localDay(thread.latest.created_at, orgTimezone);
-      const list = map.get(day) ?? [];
-      list.push(thread);
-      map.set(day, list);
+    const map = new Map<string, DayCard[]>();
+    for (const card of allCards.slice(start, start + THREADS_PER_PAGE)) {
+      const list = map.get(card.day) ?? [];
+      list.push(card);
+      map.set(card.day, list);
     }
     return map;
-  }, [allThreads, safePage, orgTimezone]);
+  }, [allCards, safePage]);
 
-  // What "select all" means: every thread on the current page — not every
-  // thread matching the filters across every page, which would let one click
-  // quietly stage a batch approval of work nobody has actually looked at yet.
+  // What "select all" means: every task on the current page — not every task
+  // matching the filters across every page, which would let one click quietly
+  // stage a batch approval of work nobody has actually looked at yet.
   const pageThreadIds = useMemo(
-    () => Array.from(threadsByDay.values()).flatMap((list) => list.map((t) => t.taskId)),
+    () => Array.from(new Set(Array.from(threadsByDay.values()).flatMap((list) => list.map((c) => c.thread.taskId)))),
     [threadsByDay]
   );
   const allPageSelected =
@@ -1761,7 +1827,8 @@ This cannot be undone.`
           onReview={review}
           onAddNote={addNote}
           loading={loading}
-          roundDurations={roundDurations}
+          taskTimes={taskTimes}
+          scLogs={scLogs}
           reviewState={reviewState}
           showTrash={showTrash}
           selectedTaskIds={selectedTaskIds}
@@ -1801,28 +1868,35 @@ function DayGroup({
   orgTimezone,
   threads,
   reviewState,
-  roundDurations,
+  taskTimes,
   children,
 }: {
   day: string;
   orgTimezone: string;
   threads: Thread[];
   reviewState: Record<string, string>;
-  roundDurations: Record<string, Record<string, number>>;
+  taskTimes: Map<number, TaskTime>;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
 
-  // Sum of the per-task totals on this day's cards, so the header always
-  // agrees with what's shown below it. Tasks with no logged time add nothing.
-  const dayTotalMs = threads.reduce(
-    (sum, t) => sum + sumRounds(roundDurations[String(t.taskId)]),
-    0
-  );
-  const timedCount = threads.filter((t) => sumRounds(roundDurations[String(t.taskId)]) > 0).length;
+  // Only work done on this day counts toward its total — every submitted
+  // round's time lands on the day it was logged, whenever it was handed in
+  // (Toni's call, 2026-11-09). Time not yet submitted counts nowhere.
+  const perTask = threads.map((t) => {
+    const time = taskTimes.get(t.taskId);
+    return Object.values(time?.bySubmission ?? {}).reduce((sum, r) => sum + (r.byDay[day] ?? 0), 0);
+  });
+  const dayTotalMs = perTask.reduce((a, b) => a + b, 0);
+  const timedCount = perTask.filter((ms) => ms > 0).length;
 
+  // Rounds that belong to this day — not every submission the task ever had.
   const submissionCount = threads.reduce(
-    (n, t) => n + t.items.filter((i) => i.message_type === "submission").length,
+    (n, t) =>
+      n +
+      t.items.filter(
+        (i) => i.message_type === "submission" && itemDays(i, taskTimes.get(t.taskId), orgTimezone).includes(day)
+      ).length,
     0
   );
   // Matches the cards exactly: anything still awaiting a decision counts.
@@ -1863,7 +1937,7 @@ function DayGroup({
         {dayTotalMs > 0 && (
           <span
             className="text-[11px] font-semibold tabular-nums text-walnut"
-            title={`Total time logged across the ${timedCount} task${timedCount === 1 ? "" : "s"} with hours on this day`}
+            title={`Submitted work done on this day, across ${timedCount} task${timedCount === 1 ? "" : "s"} — counted on the day the work was logged, whenever it was handed in`}
           >
             {formatDuration(dayTotalMs)} total
           </span>
@@ -2076,7 +2150,8 @@ function SubmissionEntry({
   item,
   index,
   thread,
-  roundMs,
+  round,
+  scLogs,
   timezone,
   canCancel,
   onCancelReversal,
@@ -2086,8 +2161,10 @@ function SubmissionEntry({
   /** The whole thread, so a submission is judged against the deadline that
    *  applied when it landed rather than whatever the task says now. */
   thread: FeedItem[];
-  /** Time logged during this revision round, if any was tracked. */
-  roundMs?: number;
+  /** This submission's round: the work logged since the previous submission. */
+  round?: RoundTime;
+  /** Time logs the SC Data captures ran under. */
+  scLogs: Record<number, ReportLog>;
   timezone: string;
   canCancel: boolean;
   onCancelReversal: (item: FeedItem) => void;
@@ -2152,6 +2229,14 @@ function SubmissionEntry({
 
   const isResubmission = index > 0;
   const late = isLate(item, timezone, thread);
+  const roundMs = round?.totalMs ?? 0;
+  const workDays = Object.keys(round?.byDay ?? {})
+    .filter((d) => (round?.byDay[d] ?? 0) > 0)
+    .sort();
+  // Handed in on a later day than the work it reports — its time still counts
+  // on the day the work was done, and this says so.
+  const submittedDay = localDay(item.created_at, timezone);
+  const submittedLater = workDays.length > 0 && submittedDay > workDays[workDays.length - 1];
 
   return (
     <div
@@ -2187,16 +2272,27 @@ function SubmissionEntry({
             On time
           </span>
         )}
-        {roundMs != null && roundMs > 0 && (
+        {roundMs > 0 && (
           <span
             className="rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut"
             title={
-              index === 0
+              (index === 0
                 ? "Time logged before this was first submitted"
-                : `Time logged reworking this after revision ${index}`
+                : "Time logged since the previous submission") +
+              (workDays.length > 1
+                ? `\n${workDays.map((d) => `${formatDayKey(d)}: ${formatDuration(round?.byDay[d] ?? 0)}`).join("\n")}`
+                : "")
             }
           >
             {formatDuration(roundMs)}
+          </span>
+        )}
+        {submittedLater && (
+          <span
+            className="rounded-full border border-slate-blue/20 bg-slate-blue-soft px-2 py-[2px] text-[10px] font-semibold text-slate-blue"
+            title={`Work done ${workDays.map(formatDayKey).join(", ")}; submitted ${formatDayKey(submittedDay)}. Its time counts on the day the work was done.`}
+          >
+            Submitted {formatDayKey(submittedDay)} · work {workDays.map(formatDayKey).join(", ")}
           </span>
         )}
       </div>
@@ -2226,6 +2322,191 @@ function SubmissionEntry({
       )}
 
       {item.attachments.length > 0 && <AttachmentGallery attachments={item.attachments} />}
+
+      {(item.sc_shots?.length ?? 0) > 0 && (
+        <ScDataPill shots={item.sc_shots!} logs={scLogs} timezone={timezone} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * SC Data — Admin's Screenshot Report for the captures behind one submission:
+ * how many, how many unchanged, away, no browser view, and stretches with no
+ * capture record. Closed by default; anyone can open it (Toni's call,
+ * 2026-11-09). Runs the same rules and pills as Admin's report
+ * (@/lib/screenshotReport, ScreenshotReportPills), so a change there shows here.
+ */
+function ScDataPill({
+  shots,
+  logs,
+  timezone,
+}: {
+  shots: ReportShot[];
+  logs: Record<number, ReportLog>;
+  timezone: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const sessions = useMemo(() => (open ? buildShotSessions(shots, logs) : []), [open, shots, logs]);
+
+  const count = (pick: (s: (typeof sessions)[number]) => number) => sessions.reduce((n, s) => n + pick(s), 0);
+  const batchCount = (b: { count: number }[]) => b.reduce((n, x) => n + x.count, 0);
+  const unchanged = count((s) => batchCount(s.summary.unchangedBatches));
+  const away = count((s) => batchCount(s.summary.awayBatches));
+  const noView = count((s) => batchCount(s.summary.notCapturedBatches));
+  const gaps = count((s) => s.summary.gaps.length);
+  const images = count((s) => s.shots.filter((x) => x.drive_file_id && x.screenshot_type !== "failed").length);
+
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut transition-colors hover:bg-parchment"
+        title="Screenshot report for this submission's captures"
+      >
+        SC Data
+        <svg className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="mt-1.5 space-y-2 rounded-lg border border-sand bg-cream/40 p-2">
+          <p className="text-[11px] text-espresso">
+            <span className="font-semibold">{shots.length}</span> capture{shots.length === 1 ? "" : "s"} total
+            {" · "}
+            {images} screenshot{images === 1 ? "" : "s"}
+            {" · "}
+            {unchanged} unchanged · {away} away · {noView} no browser view
+            {gaps > 0 && ` · ${gaps} no capture record`}
+          </p>
+          {sessions.map((s) => {
+            const first = s.shots[0];
+            const last = s.shots[s.shots.length - 1];
+            return (
+              <div key={s.logId ?? "none"} className="space-y-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                    {new Date(first.captureTime).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      timeZone: timezone,
+                    })}{" "}
+                    · {formatCaptureTime(first.captureTime, timezone)}
+                    {s.shots.length > 1 && ` – ${formatCaptureTime(last.captureTime, timezone)}`}
+                  </span>
+                  <span className="text-[10px] text-stone">
+                    {s.shots.length} shot{s.shots.length === 1 ? "" : "s"}
+                  </span>
+                  <CaptureStatePills summary={s.summary} orgTimezone={timezone} />
+                </div>
+                {s.summary.gaps.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <CaptureGapPills summary={s.summary} orgTimezone={timezone} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The task's all-time total, next to its title. Opens onto every round —
+ * including ones after the day being viewed — with each round's own time, so
+ * the whole effort is one click away from any day (Toni's call, 2026-11-09).
+ */
+function TaskTotalDropdown({
+  submissions,
+  taskTime,
+  viewDay,
+  timezone,
+}: {
+  submissions: FeedItem[];
+  taskTime: TaskTime | undefined;
+  viewDay: string;
+  timezone: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const totalMs = taskTime?.totalMs ?? 0;
+  const unsubmittedMs = taskTime?.unsubmittedMs ?? 0;
+  // Newest first, same as the stack.
+  const rows = [...submissions].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const indexOf = new Map(
+    [...submissions].sort((a, b) => a.created_at.localeCompare(b.created_at)).map((s, i) => [s.id, i])
+  );
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[11px] font-semibold tabular-nums text-walnut transition-colors hover:text-espresso"
+        title="Total time on this task, every round — click for each day's submission"
+      >
+        {formatDuration(totalMs)}
+        <svg className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 z-50 mt-1 w-72 rounded-lg border border-sand bg-white p-1.5 shadow-xl">
+          <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+            {rows.length} submission{rows.length === 1 ? "" : "s"}
+          </p>
+          {unsubmittedMs > 0 && (
+            <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px]">
+              <span className="text-stone">Not yet submitted</span>
+              <span className="shrink-0 font-semibold tabular-nums text-stone">{formatDuration(unsubmittedMs)}</span>
+            </div>
+          )}
+          {rows.map((s) => {
+            const round = taskTime?.bySubmission[s.id];
+            const days = itemDays(s, taskTime, timezone);
+            const later = days[0] > viewDay;
+            const idx = indexOf.get(s.id) ?? 0;
+            return (
+              <div
+                key={s.id}
+                className={`flex items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] ${
+                  days.includes(viewDay) ? "bg-cream" : ""
+                }`}
+              >
+                <span className="min-w-0 truncate text-bark">
+                  {days.map(formatDayKey).join(", ")}
+                  <span className="text-stone">
+                    {" "}
+                    · {idx === 0 ? "Submission" : `Resubmission ${idx}`}
+                    {later && " · later"}
+                  </span>
+                </span>
+                <span className="shrink-0 font-semibold tabular-nums text-espresso">
+                  {formatDuration(round?.totalMs ?? 0)}
+                </span>
+              </div>
+            );
+          })}
+          <div className="mt-1 flex items-center justify-between gap-2 border-t border-sand px-2 pt-1.5 text-[11px]">
+            <span className="font-semibold text-walnut">Total</span>
+            <span className="font-semibold tabular-nums text-espresso">{formatDuration(totalMs)}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2425,7 +2706,9 @@ function ThreadCard({
   busy,
   onReview,
   onAddNote,
-  rounds,
+  viewDay,
+  taskTime,
+  scLogs,
   state,
   timezone,
   trashed,
@@ -2461,8 +2744,13 @@ function ThreadCard({
   ) => void;
   /** Reviewer's flag is holding this task — see loadRoundData. */
   flagged?: boolean;
-  /** round index -> ms logged during that round. */
-  rounds: Record<string, number>;
+  /** The day this card is shown under — it holds that day's round and earlier
+   *  ones, never later. */
+  viewDay: string;
+  /** The task's time, split per submission and per day. */
+  taskTime: TaskTime | undefined;
+  /** Time logs the SC Data captures ran under. */
+  scLogs: Record<number, ReportLog>;
   /** "awaiting" | "revision_requested" | "approved" */
   state?: string;
   timezone: string;
@@ -2489,6 +2777,18 @@ function ThreadCard({
   const resubmissions = Math.max(0, submissions.length - 1);
   const submissionIndex = new Map(submissions.map((s, i) => [s.id, i]));
 
+  // This day's view: the round(s) worked on this day and everything before,
+  // newest at the top, the original submission at the bottom (Toni's call,
+  // 2026-11-09). A round sits on the first day its work was logged, so one
+  // handed in a day late still stacks where the work happened.
+  const firstDayOf = (item: FeedItem) => itemDays(item, taskTime, timezone)[0];
+  const dayItems = thread.items
+    .filter((item) => firstDayOf(item) <= viewDay)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  // Submissions after this day — not shown here, but worth knowing about.
+  const laterSubmissions = submissions.filter((s) => firstDayOf(s) > viewDay);
+  const newestSubmission = submissions[submissions.length - 1];
+
   const [expanded, setExpanded] = useState(autoExpand);
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -2507,7 +2807,10 @@ function ThreadCard({
 
   // One place decides what every field says, so the title and the detail
   // lines can never disagree about the same field.
-  const totalMs = sumRounds(rounds);
+  // Always the whole task — every round, whichever day is being viewed, plus
+  // anything logged since the latest submission. Each round's own figure sits
+  // on its entry below.
+  const totalMs = taskTime?.totalMs ?? 0;
 
   const fieldValue = (key: string): string | null => {
     switch (key) {
@@ -2798,12 +3101,12 @@ function ThreadCard({
         )}
 
         {totalMs > 0 && !hiddenFields.has("total_time") && titleField !== "total_time" && (
-          <span
-            className="shrink-0 text-[11px] font-semibold tabular-nums text-walnut"
-            title="Total time logged on this task across every round"
-          >
-            {formatDuration(totalMs)}
-          </span>
+          <TaskTotalDropdown
+            submissions={submissions}
+            taskTime={taskTime}
+            viewDay={viewDay}
+            timezone={timezone}
+          />
         )}
 
         {/* Buttons exist only while there's a decision to make. Once reviewed,
@@ -2961,9 +3264,27 @@ function ThreadCard({
         <div className="mt-0.5 pl-[18px] text-[11px] text-stone/80">{metaLine}</div>
       )}
 
+      {/* Rounds after this day aren't shown here — say so, so nobody reviewing
+          an earlier day misses that the task has moved on since. */}
+      {laterSubmissions.length > 0 && newestSubmission && (
+        <div className="mt-1 pl-[18px]">
+          <span
+            className="rounded-full border border-slate-blue/20 bg-slate-blue-soft px-2 py-[2px] text-[10px] font-semibold text-slate-blue"
+            title={`${laterSubmissions.length} later submission${laterSubmissions.length === 1 ? "" : "s"} on this task — open a later day to see ${laterSubmissions.length === 1 ? "it" : "them"}`}
+          >
+            Latest submission:{" "}
+            {new Date(newestSubmission.created_at).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              timeZone: timezone,
+            })}
+          </span>
+        </div>
+      )}
+
       {expanded && (
         <div className="mt-1 space-y-1">
-          {thread.items.map((item) => {
+          {dayItems.map((item) => {
             const idx = submissionIndex.get(item.id) ?? 0;
             return (
               <SubmissionEntry
@@ -2971,7 +3292,8 @@ function ThreadCard({
                 item={item}
                 index={idx}
                 thread={thread.items}
-                roundMs={item.message_type === "submission" ? rounds[String(idx)] : undefined}
+                round={item.message_type === "submission" ? taskTime?.bySubmission[item.id] : undefined}
+                scLogs={scLogs}
                 timezone={timezone}
                 canCancel={canReview}
                 onCancelReversal={onCancelReversal}
@@ -3142,7 +3464,8 @@ function TimelineView({
   onReview,
   onAddNote,
   loading,
-  roundDurations,
+  taskTimes,
+  scLogs,
   reviewState,
   showTrash,
   selectedTaskIds,
@@ -3158,7 +3481,7 @@ function TimelineView({
   onMarkRead,
   highlightTaskId,
 }: {
-  byDay: Map<string, Thread[]>;
+  byDay: Map<string, DayCard[]>;
   orgTimezone: string;
   canReview: boolean;
   busyId: number | null;
@@ -3177,7 +3500,8 @@ function TimelineView({
     type?: "comment" | "flag" | "flag_cleared"
   ) => void;
   loading: boolean;
-  roundDurations: Record<string, Record<string, number>>;
+  taskTimes: Map<number, TaskTime>;
+  scLogs: Record<number, ReportLog>;
   reviewState: Record<string, string>;
   showTrash: boolean;
   selectedTaskIds: Set<number>;
@@ -3197,6 +3521,11 @@ function TimelineView({
   highlightTaskId: number | null;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
+  // A task can sit on several days; a notification opens only its newest one.
+  const highlightKey =
+    highlightTaskId == null
+      ? null
+      : days.flatMap((d) => byDay.get(d) ?? []).find((c) => c.thread.taskId === highlightTaskId)?.key ?? null;
 
   if (loading) return <p className="text-[12px] text-stone">Loading submissions...</p>;
   if (days.length === 0) {
@@ -3214,19 +3543,21 @@ function TimelineView({
           key={day}
           day={day}
           orgTimezone={orgTimezone}
-          threads={byDay.get(day) ?? []}
+          threads={(byDay.get(day) ?? []).map((c) => c.thread)}
           reviewState={reviewState}
-          roundDurations={roundDurations}
+          taskTimes={taskTimes}
         >
-            {(byDay.get(day) ?? []).map((thread) => (
+            {(byDay.get(day) ?? []).map(({ key, thread }) => (
               <ThreadCard
-                key={thread.taskId}
+                key={key}
                 thread={thread}
+                viewDay={day}
                 canReview={canReview}
                 busy={busyId === thread.latest.id}
                 onReview={onReview}
                 onAddNote={onAddNote}
-                rounds={roundDurations[String(thread.taskId)] ?? {}}
+                taskTime={taskTimes.get(thread.taskId)}
+                scLogs={scLogs}
                 state={reviewState[String(thread.taskId)]}
                 timezone={orgTimezone}
                 trashed={showTrash}
@@ -3241,7 +3572,7 @@ function TimelineView({
                 unreadCount={unreadByTask[thread.taskId] ?? 0}
                 flagged={flaggedTasks[thread.taskId] === true}
                 onMarkRead={onMarkRead}
-                autoExpand={highlightTaskId === thread.taskId}
+                autoExpand={highlightKey === key}
               />
             ))}
         </DayGroup>

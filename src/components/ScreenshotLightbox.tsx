@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ScreenshotViewerFrame, { type ViewerLog, type ViewerPerson } from "@/components/ScreenshotViewerFrame";
+import { useOrgTimezone } from "@/hooks/useOrgTimezone";
+import type { ReportShot } from "@/lib/screenshotReport";
 
 interface ScreenshotLightboxProps {
   urls: string[];
@@ -12,6 +15,25 @@ interface ScreenshotLightboxProps {
   onClose: () => void;
 }
 
+type ShotMeta = { screenshot: ReportShot; person: ViewerPerson | null; log: ViewerLog | null };
+
+/** Every screenshot image is served as /api/drive-image?id=<drive_file_id>. */
+function driveIdOf(url: string): string | null {
+  if (!url.includes("/api/drive-image")) return null;
+  try {
+    return new URL(url, "http://local").searchParams.get("id");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The full-size viewer every page opens images in. A task screenshot gets the
+ * Admin Screenshot Report viewer — who, which task, capture type, when, and the
+ * task/account/client/category footer — looked up from its Drive id, so the
+ * pages that open it don't have to carry any of that. Anything else (an
+ * uploaded attachment, a bug-report capture) shows as a plain image.
+ */
 export default function ScreenshotLightbox({
   urls,
   initialIndex,
@@ -23,91 +45,56 @@ export default function ScreenshotLightbox({
   const shots = useMemo(
     () =>
       urls
-        .map((url, i) => ({ url, caption: captions?.[i] }))
+        .map((url, i) => ({ url, caption: captions?.[i], driveId: driveIdOf(url) }))
         .filter((s) => Boolean(s.url)),
     [urls, captions]
   );
-  const safeUrls = useMemo(() => shots.map((s) => s.url), [shots]);
-  const [currentIndex, setCurrentIndex] = useState(() => Math.min(Math.max(initialIndex, 0), Math.max(safeUrls.length - 1, 0)));
-  const currentUrl = safeUrls[currentIndex] ?? safeUrls[0] ?? "";
-  const showArrows = safeUrls.length > 1;
+  const [currentIndex, setCurrentIndex] = useState(() =>
+    Math.min(Math.max(initialIndex, 0), Math.max(shots.length - 1, 0))
+  );
+  const [meta, setMeta] = useState<Record<string, ShotMeta>>({});
+  // Org time, same as Admin's viewer — never the viewer's own clock.
+  const timezone = useOrgTimezone();
+
+  const driveIdKey = useMemo(
+    () => Array.from(new Set(shots.map((s) => s.driveId).filter((v): v is string => Boolean(v)))).join(","),
+    [shots]
+  );
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (!showArrows) return;
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        setCurrentIndex((index) => Math.max(0, index - 1));
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        setCurrentIndex((index) => Math.min(safeUrls.length - 1, index + 1));
-      }
-    }
+    if (!driveIdKey) return;
+    let cancelled = false;
+    fetch(`/api/screenshots/meta?driveIds=${encodeURIComponent(driveIdKey)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { shots: {} }))
+      .then((d) => {
+        if (!cancelled) setMeta(d.shots ?? {});
+      })
+      .catch(() => {
+        /* the image still shows; only the details around it are missing */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [driveIdKey]);
 
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, safeUrls.length, showArrows]);
+  const current = shots[currentIndex] ?? shots[0];
+  if (!current) return null;
+  const details = current.driveId ? meta[current.driveId] : undefined;
+  const canPrev = currentIndex > 0;
+  const canNext = currentIndex < shots.length - 1;
 
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80"
-      onClick={onClose}
-    >
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 text-white/80 hover:text-white text-2xl font-bold z-10 transition-colors"
-      >
-        &times;
-      </button>
-
-      {showArrows && (
-        <>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setCurrentIndex((index) => Math.max(0, index - 1));
-            }}
-            className="absolute left-4 top-1/2 -translate-y-1/2 text-white/80 hover:text-white text-2xl font-bold z-10 transition-colors"
-            aria-label="Previous screenshot"
-          >
-            &#8249;
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setCurrentIndex((index) => Math.min(safeUrls.length - 1, index + 1));
-            }}
-            className="absolute right-4 top-1/2 -translate-y-1/2 text-white/80 hover:text-white text-2xl font-bold z-10 transition-colors"
-            aria-label="Next screenshot"
-          >
-            &#8250;
-          </button>
-        </>
-      )}
-
-      <div className="flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
-        <img
-          src={currentUrl}
-          alt="Screenshot"
-          className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
-        />
-        {(shots[currentIndex]?.caption || showArrows) && (
-          <div className="flex items-center gap-3 text-sm font-medium text-white/80">
-            {shots[currentIndex]?.caption && <span>{shots[currentIndex].caption}</span>}
-            {showArrows && (
-              <span className="text-white/60">
-                {currentIndex + 1} / {safeUrls.length}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+    <ScreenshotViewerFrame
+      screenshot={details?.screenshot ?? null}
+      url={current.url}
+      person={details?.person ?? null}
+      log={details?.log ?? null}
+      timezone={timezone}
+      caption={current.caption}
+      position={{ index: currentIndex, count: shots.length }}
+      onClose={onClose}
+      onPrev={canPrev ? () => setCurrentIndex((i) => Math.max(0, i - 1)) : undefined}
+      onNext={canNext ? () => setCurrentIndex((i) => Math.min(shots.length - 1, i + 1)) : undefined}
+    />
   );
 }
