@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import RichTextEditor from "@/components/RichTextEditor";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import {
@@ -154,6 +154,24 @@ function isLongBody(body: string): boolean {
   return richTextToPlain(body).length > 200 || /<img\b/i.test(body);
 }
 
+// The field stores one URL and nothing else — this is the only way to tell an
+// uploaded image apart from an uploaded PDF/Word doc at display time.
+function isImageUrl(url: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url);
+}
+
+function fileNameFromUrl(url: string): string {
+  try {
+    return decodeURIComponent(url.split("/").pop() || url);
+  } catch {
+    return url;
+  }
+}
+
+// Accepted by both the OS file picker and the drag-drop zone below.
+const ATTACHMENT_ACCEPT =
+  "image/*,application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
 // ─── Badges ───────────────────────────────────────────────────────────────────
 
 function CategoryBadge({ category }: { category: Broadcast["category"] }) {
@@ -245,6 +263,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
   const [link, setLink] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageDragActive, setImageDragActive] = useState(false);
+  const imageDragCounter = useRef(0);
   const [sortOrder, setSortOrder] = useState(0);
 
   // Publish
@@ -623,6 +643,36 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     }
   }, [uploadBroadcastImage]);
 
+  // Counted rather than a plain boolean so dragging over a child element
+  // (the leave-then-enter the browser fires on the parent) doesn't flicker
+  // the highlight off mid-drag — same approach as AttachmentPicker.
+  const onImageDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    imageDragCounter.current += 1;
+    setImageDragActive(true);
+  }, []);
+  const onImageDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    imageDragCounter.current -= 1;
+    if (imageDragCounter.current <= 0) {
+      imageDragCounter.current = 0;
+      setImageDragActive(false);
+    }
+  }, []);
+  const onImageDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+  const onImageDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      imageDragCounter.current = 0;
+      setImageDragActive(false);
+      const f = e.dataTransfer.files?.[0];
+      if (f) handleImageUpload(f);
+    },
+    [handleImageUpload]
+  );
+
   // Every active team member, admins included, for individual selection
   const pickableMembers = teamMembers;
 
@@ -903,27 +953,55 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
               />
             </div>
 
-            {/* Image upload */}
+            {/* Image or file attachment */}
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                Image (optional)
+                Image or File (optional)
               </label>
               {imageUrl ? (
-                <div className="relative w-full rounded-lg overflow-hidden border border-sand mb-2">
-                  <img src={imageUrl} alt="Broadcast image" className="w-full max-h-48 object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setImageUrl("")}
-                    className="absolute top-2 right-2 rounded-full bg-white/80 p-1 text-espresso hover:bg-white shadow cursor-pointer"
-                    title="Remove image"
-                  >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </div>
+                isImageUrl(imageUrl) ? (
+                  <div className="relative w-full rounded-lg overflow-hidden border border-sand mb-2">
+                    <img src={imageUrl} alt="Broadcast image" className="w-full max-h-48 object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setImageUrl("")}
+                      className="absolute top-2 right-2 rounded-full bg-white/80 p-1 text-espresso hover:bg-white shadow cursor-pointer"
+                      title="Remove image"
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-cream mb-2 px-3 py-2">
+                    <a
+                      href={imageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate text-[12px] font-semibold text-espresso hover:underline"
+                    >
+                      📎 {fileNameFromUrl(imageUrl)}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setImageUrl("")}
+                      className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )
               ) : (
-                <label className="flex items-center gap-2 cursor-pointer w-fit rounded-lg border border-sand px-4 py-2 text-[13px] text-walnut hover:border-walnut transition-all">
+                <label
+                  onDragEnter={onImageDragEnter}
+                  onDragLeave={onImageDragLeave}
+                  onDragOver={onImageDragOver}
+                  onDrop={onImageDrop}
+                  className={`flex items-center gap-2 cursor-pointer w-fit rounded-lg border px-4 py-2 text-[13px] text-walnut transition-all ${
+                    imageDragActive ? "border-terracotta bg-terracotta-soft/20" : "border-dashed border-sand hover:border-walnut"
+                  }`}
+                >
                   {uploadingImage ? (
                     <>
                       <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
@@ -936,12 +1014,12 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                         <circle cx="8.5" cy="8.5" r="1.5" />
                         <polyline points="21 15 16 10 5 21" />
                       </svg>
-                      Upload image
+                      Upload image or file, or drag it here
                     </>
                   )}
                   <input
                     type="file"
-                    accept="image/*"
+                    accept={ATTACHMENT_ACCEPT}
                     className="hidden"
                     disabled={uploadingImage}
                     onChange={(e) => {
@@ -952,6 +1030,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                   />
                 </label>
               )}
+              <p className="mt-1 text-[11px] text-stone">Images, PDFs, and Word documents are supported.</p>
             </div>
 
             {/* Sort Order */}
