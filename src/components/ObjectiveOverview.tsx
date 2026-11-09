@@ -6,6 +6,7 @@ import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachmen
 import { linkifyText } from "@/lib/linkify";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import PdfPreviewModal from "@/components/PdfPreviewModal";
+import MultiSelectFilter from "@/components/MultiSelectFilter";
 import { PROJECT_STATUS_BY_VALUE } from "@/lib/projectStatus";
 
 type Stats = Record<string, { total: number; done: number }>;
@@ -285,10 +286,11 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   // "all" puts both side by side, newest first.
   const [docsView, setDocsView] = useState<"all" | "uploaded" | "submitted">("all");
   const [submittedFiles, setSubmittedFiles] = useState<SubmittedFileRow[]>([]);
-  const [docAccount, setDocAccount] = useState("");
-  const [docTask, setDocTask] = useState("");
-  const [docProject, setDocProject] = useState("");
-  const [docPerson, setDocPerson] = useState("");
+  // Multi-select filters — an empty set means "all" (MultiSelectFilter's rule).
+  const [docAccount, setDocAccount] = useState<Set<string>>(() => new Set());
+  const [docTask, setDocTask] = useState<Set<string>>(() => new Set());
+  const [docProject, setDocProject] = useState<Set<string>>(() => new Set());
+  const [docPerson, setDocPerson] = useState<Set<string>>(() => new Set());
   const [removedDocIds, setRemovedDocIds] = useState<Set<string>>(new Set());
   const [showRemovedDocs, setShowRemovedDocs] = useState(false);
   // In-place previews of the one image or PDF clicked.
@@ -520,14 +522,26 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     const rows = docsView === "uploaded" ? uploaded : docsView === "submitted" ? submitted : [...uploaded, ...submitted];
     return rows
       .filter((f) => showRemovedDocs === removedDocIds.has(f.id))
+      // A file added straight to an objective has no task, so no account of
+      // its own — it belongs to the objective's account (e.g. the EE plan
+      // under an EE objective), otherwise the account filter can't find it.
+      .map((f) => (f.account ? f : { ...f, account: projectById.get(f.project_id)?.account ?? null }))
       .sort((a, b) => (b.uploaded_at ?? "").localeCompare(a.uploaded_at ?? ""));
-  }, [files, submittedFiles, docsView, removedDocIds, showRemovedDocs]);
+  }, [files, submittedFiles, docsView, removedDocIds, showRemovedDocs, projectById]);
 
   const docOptions = useMemo(() => {
     const accounts = new Set<string>();
     const tasks = new Set<string>();
     const projectIds = new Set<string>();
     const people = new Map<string, string>();
+    // Every objective/operation in scope and its account is listed, not just
+    // the ones that happen to have files yet.
+    for (const id of dataScopeIds) {
+      const p = projectById.get(id);
+      if (!p) continue;
+      projectIds.add(id);
+      if (p.account) accounts.add(p.account);
+    }
     for (const f of docsInView) {
       if (f.account) accounts.add(f.account);
       if (f.task_name) tasks.add(f.task_name);
@@ -543,16 +557,16 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
         .sort((a, b) => byText(a[1], b[1])),
       people: [...people.entries()].sort((a, b) => byText(a[1], b[1])),
     };
-  }, [docsInView, projectById, kindLabel]);
+  }, [docsInView, projectById, kindLabel, dataScopeIds]);
 
   const filteredDocs = useMemo(
     () =>
       docsInView.filter(
         (f) =>
-          (!docAccount || f.account === docAccount) &&
-          (!docTask || f.task_name === docTask) &&
-          (!docProject || f.project_id === docProject) &&
-          (!docPerson || f.person_id === docPerson)
+          (docAccount.size === 0 || (f.account != null && docAccount.has(f.account))) &&
+          (docTask.size === 0 || (f.task_name != null && docTask.has(f.task_name))) &&
+          (docProject.size === 0 || docProject.has(f.project_id)) &&
+          (docPerson.size === 0 || (f.person_id != null && docPerson.has(f.person_id)))
       ),
     [docsInView, docAccount, docTask, docProject, docPerson]
   );
@@ -560,7 +574,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     () => [...files, ...submittedFiles].filter((f) => removedDocIds.has(f.id)).length,
     [files, submittedFiles, removedDocIds]
   );
-  const docFiltersOn = Boolean(docAccount || docTask || docProject || docPerson);
+  const docFiltersOn = docAccount.size + docTask.size + docProject.size + docPerson.size > 0;
 
   const submitPost = async () => {
     const projectId = scopeId ?? cTarget;
@@ -1197,7 +1211,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
           (from submissions), filterable by account, task, objective, person. */}
       <div className={cardClass("docs")}>
         <div className="flex items-center justify-between gap-2">
-          <h3 className={`${CARD_TITLE} mb-0`}>Docs &amp; Files</h3>
+          <h3 className={`${CARD_TITLE} mb-0`}>Assets, Docs, &amp; Files</h3>
           <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
             {([["all", "All"], ["uploaded", "Uploaded"], ["submitted", "Submitted"]] as const).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setDocsView(v)}
@@ -1213,26 +1227,19 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             [docTask, setDocTask, "All tasks", docOptions.tasks.map((t) => [t, t] as const)],
             [docProject, setDocProject, `All ${lc}s`, docOptions.projects],
             [docPerson, setDocPerson, "Everyone", docOptions.people],
-          ] as const).map(([value, setValue, allLabel, options]) => (
-            <select
-              key={allLabel}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              className="max-w-[180px] rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-            >
-              <option value="">{allLabel}</option>
-              {/* Keep a chosen value listed even when this tab has none of it,
-                  so the dropdown never shows a value that isn't an option. */}
-              {value && !options.some(([v]) => v === value) && <option value={value}>{value}</option>}
-              {options.map(([v, label]) => (
-                <option key={v} value={v}>{label}</option>
-              ))}
-            </select>
-          ))}
+          ] as const).map(([value, setValue, allLabel, options]) => {
+            // Keep chosen values listed even when this tab has none of them,
+            // so a selection never becomes invisible and impossible to untick.
+            const opts = options.map(([v, label]) => ({ value: v, label }));
+            for (const v of value) if (!opts.some((o) => o.value === v)) opts.push({ value: v, label: v });
+            return (
+              <MultiSelectFilter key={allLabel} allLabel={allLabel} options={opts} selected={value} onChange={setValue} />
+            );
+          })}
           {docFiltersOn && (
             <button
               type="button"
-              onClick={() => { setDocAccount(""); setDocTask(""); setDocProject(""); setDocPerson(""); }}
+              onClick={() => { setDocAccount(new Set()); setDocTask(new Set()); setDocProject(new Set()); setDocPerson(new Set()); }}
               className="px-2 py-[3px] text-[10px] font-semibold text-bark hover:text-espresso"
             >
               Clear

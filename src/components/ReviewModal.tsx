@@ -571,7 +571,7 @@ export default function ReviewModal({
                         disabled={busy}
                         className="accent-sage"
                       />
-                      File to Docs &amp; Files
+                      File to Assets, Docs, &amp; Files
                     </label>
                   )}
                   <button

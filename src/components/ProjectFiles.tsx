@@ -152,10 +152,10 @@ export default function ProjectFiles({ projectId, currentUserId, isAdmin, collap
             className="flex items-center gap-2 cursor-pointer"
           >
             <span className="text-bark text-[10px] w-3 shrink-0">{open ? "▼" : "▶"}</span>
-            <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Docs &amp; Files</h3>
+            <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Assets, Docs, &amp; Files</h3>
           </button>
         ) : (
-          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Docs &amp; Files</h3>
+          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Assets, Docs, &amp; Files</h3>
         )}
         {(!collapsible || open) && (
         <button

@@ -731,7 +731,7 @@ function SubmissionsPageInner() {
         if (fileToProject) {
           const data = await res.json().catch(() => ({}));
           if (data.fileError) {
-            alert(`Approved, but the files could not be filed to Docs & Files: ${data.fileError}`);
+            alert(`Approved, but the files could not be filed to Assets, Docs, & Files: ${data.fileError}`);
           }
         }
         // The thread entry is already written and can't be taken back, so a
