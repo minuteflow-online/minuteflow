@@ -2498,7 +2498,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   ["subtasks", "Subtasks"],
                   ["todos", "To-Do List"],
                   ["overview", `Sub-${kindLabel.toLowerCase()}s`],
-                  ["docs", "Docs & Files"],
+                  ["docs", "Assets"],
                 ] as const).map(([key, label]) => (
                   <button
                     key={key}
@@ -2795,7 +2795,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   ["overview", `${kindLabel} Overview`],
                   ["subtasks", "Subtasks"],
                   ["todos", "To-Do List"],
-                  ["docs", "Docs & Files"],
+                  ["docs", "Assets"],
                   ["progress", "Progress"],
                 ] as const).map(([key, label]) => (
                   <button

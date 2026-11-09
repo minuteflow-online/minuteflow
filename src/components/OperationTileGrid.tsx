@@ -44,7 +44,7 @@ export default function OperationTileGrid({ recurringCount, subtaskCount, onSele
     },
     {
       key: "files",
-      title: "Docs & Files",
+      title: "Assets",
       description: "Upload and share files for this Operation's team.",
     },
   ];
