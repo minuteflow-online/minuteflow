@@ -65,6 +65,61 @@ export function findCaptureGaps(
   return gaps;
 }
 
+/**
+ * One unbroken run of captures in the same state — the screen unchanged, the
+ * person away, or nothing for the browser to capture. Any capture in a different
+ * state ends the run, even a single one; the next matching capture starts a new run.
+ */
+export interface CaptureBatch {
+  /** Ids of the captures in the run, oldest first. */
+  ids: number[];
+  count: number;
+  start: string;
+  end: string;
+  minutes: number;
+}
+
+/**
+ * Splits a task's captures (oldest first) into runs where `inBatch` holds.
+ *
+ * How long a run lasted:
+ * - `from: "previous"` — measured from the capture before the run. An "unchanged"
+ *   capture is identical to the one before it, so the screen was already still at
+ *   that earlier capture.
+ * - `from: "first"` — measured from the run's first capture to the capture that
+ *   ended it (when the state was seen to stop). A run that reaches the end of the
+ *   task is measured to its own last capture, since nothing says how long after.
+ */
+export function findCaptureBatches<T extends { id: number; captureTime: string }>(
+  shots: T[],
+  inBatch: (shot: T) => boolean,
+  from: "previous" | "first"
+): CaptureBatch[] {
+  const batches: CaptureBatch[] = [];
+  let i = 0;
+  while (i < shots.length) {
+    if (!inBatch(shots[i])) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < shots.length && inBatch(shots[j + 1])) j++;
+
+    const startShot = from === "previous" && i > 0 ? shots[i - 1] : shots[i];
+    const endShot = from === "first" && j + 1 < shots.length ? shots[j + 1] : shots[j];
+    const span = new Date(endShot.captureTime).getTime() - new Date(startShot.captureTime).getTime();
+    batches.push({
+      ids: shots.slice(i, j + 1).map((s) => s.id),
+      count: j - i + 1,
+      start: startShot.captureTime,
+      end: endShot.captureTime,
+      minutes: Number.isFinite(span) ? Math.max(0, Math.round(span / 60000)) : 0,
+    });
+    i = j + 1;
+  }
+  return batches;
+}
+
 /** "1h 54m", "47m" — same shape the rest of the page uses for spans. */
 export function formatGapMinutes(minutes: number): string {
   const h = Math.floor(minutes / 60);

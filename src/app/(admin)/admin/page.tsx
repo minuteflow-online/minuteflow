@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { findCaptureGaps, formatGapMinutes } from "@/lib/screenshotGaps";
+import { findCaptureBatches, findCaptureGaps, formatGapMinutes, type CaptureBatch } from "@/lib/screenshotGaps";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -49,6 +49,7 @@ import {
   getInitials,
   getAvatarColor,
   getTodayBoundsInTimezone,
+  getDayBoundsInTimezone,
   getTimezoneAbbr,
   displayRole,
   screenshotCaptureTime,
@@ -181,6 +182,15 @@ type ScreenshotTaskGroup = {
   dateLabel: string;
   shots: CapturedScreenshot[];
 };
+
+/** Which field heads each task's set of screenshots. */
+type ScreenshotTitleField = "task" | "project" | "client_memo";
+
+const SCREENSHOT_TITLE_FIELDS: { value: ScreenshotTitleField; label: string }[] = [
+  { value: "task", label: "Task title" },
+  { value: "project", label: "Project" },
+  { value: "client_memo", label: "Client memo" },
+];
 
 /**
  * One person's day: their name and the date stated once, then every task they
@@ -658,6 +668,8 @@ export default function AdminPage() {
   const [screenshotDateFilter, setScreenshotDateFilter] = useState<string>("today");
   const [screenshotCustomStart, setScreenshotCustomStart] = useState<string>("");
   const [screenshotCustomEnd, setScreenshotCustomEnd] = useState<string>("");
+  // One calendar day (YYYY-MM-DD, org timezone) for the "Pick a Day" filter
+  const [screenshotDay, setScreenshotDay] = useState<string>("");
   const [loadingUrls, setLoadingUrls] = useState(false);
   // Logs behind screenshots that fall outside the recent-logs window (see screenshotLogMap)
   const [screenshotLogs, setScreenshotLogs] = useState<Record<number, TimeLog>>({});
@@ -734,6 +746,14 @@ export default function AdminPage() {
       screenshotDateStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     } else if (screenshotDateFilter === "all-time") {
       screenshotDateStart = "2020-01-01T00:00:00.000Z";
+    } else if (screenshotDateFilter === "day") {
+      if (screenshotDay) {
+        // Noon UTC of the picked date is that same calendar date in every
+        // timezone the team works in, so these are the org-timezone bounds of that day.
+        const bounds = getDayBoundsInTimezone(new Date(screenshotDay + "T12:00:00Z"), orgTimezone);
+        screenshotDateStart = bounds.start;
+        screenshotDateEnd = bounds.end;
+      }
     } else if (screenshotDateFilter === "custom") {
       if (screenshotCustomStart) {
         screenshotDateStart = new Date(screenshotCustomStart + "T00:00:00").toISOString();
@@ -821,7 +841,7 @@ export default function AdminPage() {
     }
 
     setLoading(false);
-  }, [screenshotDateFilter, screenshotCustomStart, screenshotCustomEnd, orgTimezone, screenshotFilter]);
+  }, [screenshotDateFilter, screenshotDay, screenshotCustomStart, screenshotCustomEnd, orgTimezone, screenshotFilter]);
 
   useEffect(() => {
     fetchData();
@@ -1755,6 +1775,9 @@ export default function AdminPage() {
               setScreenshotCustomStart={setScreenshotCustomStart}
               screenshotCustomEnd={screenshotCustomEnd}
               setScreenshotCustomEnd={setScreenshotCustomEnd}
+              screenshotDay={screenshotDay}
+              setScreenshotDay={setScreenshotDay}
+              currentUserId={currentUserId}
               screenshotUrls={screenshotUrls}
               loadingUrls={loadingUrls}
               setSelectedScreenshot={setSelectedScreenshot}
@@ -2184,6 +2207,9 @@ function ScreenshotsTab({
   setScreenshotCustomStart,
   screenshotCustomEnd,
   setScreenshotCustomEnd,
+  screenshotDay,
+  setScreenshotDay,
+  currentUserId,
   screenshotUrls,
   loadingUrls,
   setSelectedScreenshot,
@@ -2202,11 +2228,27 @@ function ScreenshotsTab({
   setScreenshotCustomStart: (v: string) => void;
   screenshotCustomEnd: string;
   setScreenshotCustomEnd: (v: string) => void;
+  screenshotDay: string;
+  setScreenshotDay: (v: string) => void;
+  currentUserId: string | null;
   screenshotUrls: Record<number, string>;
   loadingUrls: boolean;
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
   orgTimezone: string;
 }) {
+  // Which field heads each task's set of captures. Saved per admin, so it stays
+  // as chosen until changed again.
+  const { stored: storedTitlePrefs, persist: persistTitlePrefs } =
+    useFilterPrefs<{ titleField?: ScreenshotTitleField }>("admin-screenshots", currentUserId);
+  const [pickedTitleField, setPickedTitleField] = useState<ScreenshotTitleField | null>(null);
+  const savedTitleField = SCREENSHOT_TITLE_FIELDS.find((f) => f.value === storedTitlePrefs?.titleField)?.value;
+  const titleField: ScreenshotTitleField = pickedTitleField ?? savedTitleField ?? "task";
+  const changeTitleField = (v: ScreenshotTitleField) => {
+    setPickedTitleField(v);
+    persistTitlePrefs({ titleField: v });
+  };
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+
   return (
     <div className="rounded-xl border border-sand bg-white">
       <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
@@ -2224,15 +2266,38 @@ function ScreenshotsTab({
           </select>
           <select
             value={screenshotDateFilter}
-            onChange={(e) => setScreenshotDateFilter(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              // Start the calendar on today so a day is showing before one is picked
+              if (v === "day" && !screenshotDay) setScreenshotDay(today);
+              setScreenshotDateFilter(v);
+            }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="today">Today</option>
+            <option value="day">Pick a Day</option>
             <option value="week">Last 7 Days</option>
             <option value="month">Last 30 Days</option>
             <option value="all-time">All Time</option>
             <option value="custom">Custom Range</option>
           </select>
+          {screenshotDateFilter === "day" && (
+            <input
+              type="date"
+              value={screenshotDay}
+              max={today}
+              onChange={(e) => e.target.value && setScreenshotDay(e.target.value)}
+              onClick={(e) => {
+                // Open the calendar on any click, not only on the small icon
+                try {
+                  e.currentTarget.showPicker();
+                } catch {
+                  // older browsers: the native icon still opens it
+                }
+              }}
+              className="rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+            />
+          )}
           {screenshotDateFilter === "custom" && (
             <>
               <input
@@ -2250,6 +2315,18 @@ function ScreenshotsTab({
               />
             </>
           )}
+          <select
+            value={titleField}
+            onChange={(e) => changeTitleField(e.target.value as ScreenshotTitleField)}
+            title="What to show as the heading of each task's screenshots"
+            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+          >
+            {SCREENSHOT_TITLE_FIELDS.map((f) => (
+              <option key={f.value} value={f.value}>
+                Title: {f.label}
+              </option>
+            ))}
+          </select>
           <span className="ml-2 text-[11px] text-bark">
             {totalScreenshots} screenshots
           </span>
@@ -2308,6 +2385,7 @@ function ScreenshotsTab({
                         setSelectedScreenshot={setSelectedScreenshot}
                         orgTimezone={orgTimezone}
                         loadedWindow={loadedWindow}
+                        titleField={titleField}
                       />
                     ))}
                   </div>
@@ -2317,6 +2395,86 @@ function ScreenshotsTab({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── Capture-state pill with its runs ──────────────────────── */
+
+/**
+ * "13 unchanged · 1h 5m" — the total count and total time for one capture state on
+ * a task. Clicking it lists each unbroken run (count, time span, duration); clicking
+ * a run scrolls to its first capture.
+ */
+function CaptureBatchPill({
+  batches,
+  noun,
+  colorClass,
+  title,
+  orgTimezone,
+  onJump,
+}: {
+  batches: CaptureBatch[];
+  noun: string;
+  colorClass: string;
+  title: string;
+  orgTimezone: string;
+  onJump: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  if (batches.length === 0) return null;
+  const totalCount = batches.reduce((n, b) => n + b.count, 0);
+  const totalMinutes = batches.reduce((n, b) => n + b.minutes, 0);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={title}
+        className={`flex items-center gap-1 rounded-full border px-2 py-[1px] text-[9px] font-semibold ${colorClass}`}
+      >
+        {totalCount} {noun} · {formatGapMinutes(totalMinutes)}
+        <svg className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute left-0 z-50 mt-1 w-64 rounded-lg border border-sand bg-white p-1.5 shadow-xl">
+          <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+            {batches.length} batch{batches.length !== 1 ? "es" : ""}
+          </p>
+          {batches.map((b, i) => (
+            <button
+              key={b.ids[0]}
+              type="button"
+              onClick={() => {
+                onJump(b.ids[0]);
+                setOpen(false);
+              }}
+              className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-[11px] text-espresso transition-colors hover:bg-cream"
+            >
+              <span className="text-bark">
+                #{i + 1} · {formatCaptureTime(b.start, orgTimezone)} – {formatCaptureTime(b.end, orgTimezone)}
+              </span>
+              <span className="shrink-0 font-semibold">
+                {b.count} · {formatGapMinutes(b.minutes)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2333,6 +2491,7 @@ function TaskScreenshotCard({
   setSelectedScreenshot,
   orgTimezone,
   loadedWindow,
+  titleField,
 }: {
   group: ScreenshotTaskGroup;
   vaName: string;
@@ -2340,10 +2499,17 @@ function TaskScreenshotCard({
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
   orgTimezone: string;
   loadedWindow: { start: number; end: number } | null;
+  titleField: ScreenshotTitleField;
 }) {
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
-  const unchangedCount = group.shots.filter((s) => s.unchanged).length;
+  // The heading follows the admin's chosen field. When that field is empty on this
+  // task, the task name stands in (muted) so the set is never untitled.
+  const chosenTitle =
+    titleField === "project" ? group.log?.project?.trim() :
+    titleField === "client_memo" ? group.log?.client_memo?.trim() :
+    group.taskName;
+  const titleLabel = SCREENSHOT_TITLE_FIELDS.find((f) => f.value === titleField)?.label ?? "Task title";
   // Stretches with neither a screenshot nor a marker: capture wasn't running or
   // couldn't report, which is different from a slot that recorded a reason.
   const gaps = findCaptureGaps(group.shots.map((s) => s.captureTime), group.log, undefined, loadedWindow);
@@ -2351,43 +2517,69 @@ function TaskScreenshotCard({
   // browser. Counting them together reads as an accusation the data does not
   // support — a VA in a Zoom meeting produces "could not capture" all hour.
   const AWAY_REASONS = ["Computer idle", "Screen locked"];
-  const idleCount = group.shots.filter(
-    (s) => s.screenshot_type === "failed" && AWAY_REASONS.includes(s.failure_reason ?? "")
-  ).length;
-  const notCapturedCount = group.shots.filter(
-    (s) => s.screenshot_type === "failed" && !AWAY_REASONS.includes(s.failure_reason ?? "")
-  ).length;
+  const isAway = (s: CapturedScreenshot) =>
+    s.screenshot_type === "failed" && AWAY_REASONS.includes(s.failure_reason ?? "");
+  const isNotCaptured = (s: CapturedScreenshot) =>
+    s.screenshot_type === "failed" && !AWAY_REASONS.includes(s.failure_reason ?? "");
+  // Unbroken runs of each state. Any capture in another state ends a run.
+  const unchangedBatches = findCaptureBatches(group.shots, (s) => s.unchanged, "previous");
+  const awayBatches = findCaptureBatches(group.shots, isAway, "first");
+  const notCapturedBatches = findCaptureBatches(group.shots, isNotCaptured, "first");
+
+  const jumpToShot = (id: number) => {
+    document.getElementById(`ss-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   return (
     <div>
       {/* Task name and its time span. Whose day this is and which date sits on the
           block header above, so it isn't repeated for every task. */}
       <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-[12px] font-semibold text-espresso">{group.taskName}</span>
+        {chosenTitle ? (
+          <span
+            className="max-w-[60ch] truncate text-[12px] font-semibold text-espresso"
+            title={titleField === "task" ? undefined : `${chosenTitle}\nTask: ${group.taskName}`}
+          >
+            {chosenTitle}
+          </span>
+        ) : (
+          <span
+            className="text-[12px] font-semibold text-stone"
+            title={`No ${titleLabel.toLowerCase()} on this task — showing the task title`}
+          >
+            {group.taskName}
+          </span>
+        )}
         {group.log?.account && <span className="text-[10px] text-bark">{group.log.account}</span>}
         {group.log?.category && (
           <span className="rounded-full border border-sand bg-white px-2 py-[1px] text-[9px] font-semibold text-bark">
             {group.log.category}
           </span>
         )}
-        {unchangedCount > 0 && (
-          <span className="rounded-full border border-amber/20 bg-amber-soft px-2 py-[1px] text-[9px] font-semibold text-amber">
-            {unchangedCount} unchanged
-          </span>
-        )}
-        {idleCount > 0 && (
-          <span className="rounded-full border border-stone/20 bg-stone/10 px-2 py-[1px] text-[9px] font-semibold text-stone">
-            {idleCount} away
-          </span>
-        )}
-        {notCapturedCount > 0 && (
-          <span
-            className="rounded-full border border-sand bg-parchment px-2 py-[1px] text-[9px] font-semibold text-bark"
-            title="Nothing to capture in the browser — working in another app, or on a page the extension cannot read. Not a claim about the person."
-          >
-            {notCapturedCount} no browser view
-          </span>
-        )}
+        <CaptureBatchPill
+          batches={unchangedBatches}
+          noun="unchanged"
+          colorClass="border-amber/20 bg-amber-soft text-amber"
+          title="Screen identical to the capture before it. Each run is timed from that earlier capture to the last identical one."
+          orgTimezone={orgTimezone}
+          onJump={jumpToShot}
+        />
+        <CaptureBatchPill
+          batches={awayBatches}
+          noun="away"
+          colorClass="border-stone/20 bg-stone/10 text-stone"
+          title="Computer idle or screen locked. Each run is timed from its first capture to the capture that ended it."
+          orgTimezone={orgTimezone}
+          onJump={jumpToShot}
+        />
+        <CaptureBatchPill
+          batches={notCapturedBatches}
+          noun="no browser view"
+          colorClass="border-sand bg-parchment text-bark"
+          title="Nothing to capture in the browser — working in another app, or on a page the extension cannot read. Not a claim about the person. Each run is timed from its first capture to the capture that ended it."
+          orgTimezone={orgTimezone}
+          onJump={jumpToShot}
+        />
         <span className="ml-auto text-[10px] text-stone">
           {formatCaptureTime(first.captureTime, orgTimezone)}
           {group.shots.length > 1 && ` – ${formatCaptureTime(last.captureTime, orgTimezone)}`}
@@ -2423,6 +2615,7 @@ function TaskScreenshotCard({
           return (
             <button
               key={ss.id}
+              id={`ss-${ss.id}`}
               onClick={() => setSelectedScreenshot(ss)}
               className="group relative cursor-pointer overflow-hidden rounded-lg border border-sand bg-parchment transition-all hover:border-terracotta hover:shadow-md"
               title={ss.failure_reason || ss.filename}

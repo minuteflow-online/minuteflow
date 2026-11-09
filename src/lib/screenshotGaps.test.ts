@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findCaptureGaps, formatGapMinutes } from "@/lib/screenshotGaps";
+import { findCaptureBatches, findCaptureGaps, formatGapMinutes } from "@/lib/screenshotGaps";
 
 const at = (hhmm: string) => `2026-09-30T${hhmm}:00.000Z`;
 
@@ -93,5 +93,39 @@ describe("formatGapMinutes", () => {
     expect(formatGapMinutes(114)).toBe("1h 54m");
     expect(formatGapMinutes(47)).toBe("47m");
     expect(formatGapMinutes(120)).toBe("2h");
+  });
+});
+
+describe("findCaptureBatches", () => {
+  // u = unchanged, c = changed, a = away
+  const make = (states: string) =>
+    states.split("").map((s, i) => ({
+      id: i + 1,
+      state: s,
+      captureTime: at(`01:${String(i * 5).padStart(2, "0")}`),
+    }));
+
+  it("splits unchanged runs at every change, measured from the capture before", () => {
+    const shots = make("cuucuuu");
+    const batches = findCaptureBatches(shots, (s) => s.state === "u", "previous");
+    expect(batches.map((b) => [b.count, b.minutes])).toEqual([
+      [2, 10],
+      [3, 15],
+    ]);
+    expect(batches[0].ids).toEqual([2, 3]);
+  });
+
+  it("measures away runs to the capture that ended them", () => {
+    const shots = make("caacaa");
+    const batches = findCaptureBatches(shots, (s) => s.state === "a", "first");
+    // 01:05 → 01:15 (back at the 4th capture); last run has nothing after it
+    expect(batches.map((b) => [b.count, b.minutes])).toEqual([
+      [2, 10],
+      [2, 5],
+    ]);
+  });
+
+  it("returns nothing when no capture matches", () => {
+    expect(findCaptureBatches(make("ccc"), (s) => s.state === "u", "previous")).toEqual([]);
   });
 });
