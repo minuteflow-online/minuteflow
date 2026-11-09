@@ -30,7 +30,7 @@ import {
   timelinessOf as sharedTimelinessOf,
   type Timeliness,
 } from "@/lib/onTime";
-import { allocateTaskTime, roundDays, type RoundTime, type TaskTime } from "@/lib/submissionTime";
+import { allocateTaskTime, formatStamp, roundDays, workedSpanLabel, type RoundTime, type TaskTime } from "@/lib/submissionTime";
 import { buildShotSessions, formatCaptureTime, type ReportLog, type ReportShot } from "@/lib/screenshotReport";
 import { CaptureGapPills, CaptureStatePills } from "@/components/ScreenshotReportPills";
 
@@ -2170,12 +2170,9 @@ function SubmissionEntry({
   onCancelReversal: (item: FeedItem) => void;
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
-  const time = new Date(item.created_at).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const [scOpen, setScOpen] = useState(false);
+  // When it was handed in, in org time like every other day on this page.
+  const time = formatStamp(new Date(item.created_at).getTime(), timezone, true);
 
   // Reviews and notes are events between rounds, not work turned in — they read
   // as a single line so the submissions stay the backbone of the thread. A
@@ -2233,10 +2230,12 @@ function SubmissionEntry({
   const workDays = Object.keys(round?.byDay ?? {})
     .filter((d) => (round?.byDay[d] ?? 0) > 0)
     .sort();
-  // Handed in on a later day than the work it reports — its time still counts
-  // on the day the work was done, and this says so.
-  const submittedDay = localDay(item.created_at, timezone);
-  const submittedLater = workDays.length > 0 && submittedDay > workDays[workDays.length - 1];
+  // When the work itself happened ("Processed"): first log start to last log
+  // end. "Submitted" is only when it was handed in. Together they replace the
+  // old "Submitted Nov 9 · work Nov 8" pill, which said the same thing twice.
+  const sessions = round?.sessions ?? [];
+  const worked = workedSpanLabel(sessions, timezone);
+  const hasScData = (item.sc_shots?.length ?? 0) > 0;
 
   return (
     <div
@@ -2262,7 +2261,21 @@ function SubmissionEntry({
             See the legend at the top of the page. */}
         <RevisionBadge count={index} late={late === true} />
         <span className="text-[10px] text-stone/80">
-          {who} · {time}
+          {who} · Submitted: {time}
+          {worked && (
+            <span
+              title={
+                sessions.length > 1
+                  ? sessions
+                      .map((s) => `${workedSpanLabel([s], timezone)} (${formatDuration(s.endMs - s.startMs)})`)
+                      .join("\n")
+                  : undefined
+              }
+            >
+              {" "}· Processed: {worked}
+              {sessions.length > 1 ? ` · ${sessions.length} sessions` : ""}
+            </span>
+          )}
         </span>
         {late === false && (
           <span
@@ -2287,15 +2300,11 @@ function SubmissionEntry({
             {formatDuration(roundMs)}
           </span>
         )}
-        {submittedLater && (
-          <span
-            className="rounded-full border border-slate-blue/20 bg-slate-blue-soft px-2 py-[2px] text-[10px] font-semibold text-slate-blue"
-            title={`Work done ${workDays.map(formatDayKey).join(", ")}; submitted ${formatDayKey(submittedDay)}. Its time counts on the day the work was done.`}
-          >
-            Submitted {formatDayKey(submittedDay)} · work {workDays.map(formatDayKey).join(", ")}
-          </span>
-        )}
+        {/* Far right of the label line; the report opens just under it. */}
+        {hasScData && <ScDataPill open={scOpen} onToggle={() => setScOpen((v) => !v)} />}
       </div>
+
+      {hasScData && scOpen && <ScDataPanel shots={item.sc_shots!} logs={scLogs} timezone={timezone} />}
 
       {/* Capped with its own scroll: a write-up can run to twenty lines, and at
           full height one entry pushes every other submission off the screen. */}
@@ -2323,9 +2332,6 @@ function SubmissionEntry({
 
       {item.attachments.length > 0 && <AttachmentGallery attachments={item.attachments} />}
 
-      {(item.sc_shots?.length ?? 0) > 0 && (
-        <ScDataPill shots={item.sc_shots!} logs={scLogs} timezone={timezone} />
-      )}
     </div>
   );
 }
@@ -2337,7 +2343,24 @@ function SubmissionEntry({
  * 2026-11-09). Runs the same rules and pills as Admin's report
  * (@/lib/screenshotReport, ScreenshotReportPills), so a change there shows here.
  */
-function ScDataPill({
+function ScDataPill({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="ml-auto flex shrink-0 items-center gap-1 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut transition-colors hover:bg-parchment"
+      title="Screenshot report for this submission's captures"
+    >
+      SC Data
+      <svg className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+        <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+      </svg>
+    </button>
+  );
+}
+
+/** What the SC Data pill opens: the report itself, under the submission line. */
+function ScDataPanel({
   shots,
   logs,
   timezone,
@@ -2346,8 +2369,7 @@ function ScDataPill({
   logs: Record<number, ReportLog>;
   timezone: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const sessions = useMemo(() => (open ? buildShotSessions(shots, logs) : []), [open, shots, logs]);
+  const sessions = useMemo(() => buildShotSessions(shots, logs), [shots, logs]);
 
   const count = (pick: (s: (typeof sessions)[number]) => number) => sessions.reduce((n, s) => n + pick(s), 0);
   const batchCount = (b: { count: number }[]) => b.reduce((n, x) => n + x.count, 0);
@@ -2359,20 +2381,7 @@ function ScDataPill({
 
   return (
     <div className="mt-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut transition-colors hover:bg-parchment"
-        title="Screenshot report for this submission's captures"
-      >
-        SC Data
-        <svg className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="mt-1.5 space-y-2 rounded-lg border border-sand bg-cream/40 p-2">
+        <div className="space-y-2 rounded-lg border border-sand bg-cream/40 p-2">
           <p className="text-[11px] text-espresso">
             <span className="font-semibold">{shots.length}</span> capture{shots.length === 1 ? "" : "s"} total
             {" · "}
@@ -2410,7 +2419,6 @@ function ScDataPill({
             );
           })}
         </div>
-      )}
     </div>
   );
 }
@@ -2861,8 +2869,10 @@ function ThreadCard({
 
   // The field used as the title is skipped here — printing it twice on one
   // card is never what was wanted.
+  // Total time is left out too: it already sits next to View task, and a second
+  // copy under the title read as a different number.
   const metaLine = CARD_FIELDS.filter(
-    (f) => !hiddenFields.has(f.key) && f.key !== titleField
+    (f) => !hiddenFields.has(f.key) && f.key !== titleField && f.key !== "total_time"
   )
     .map((f) => fieldValue(f.key))
     .filter(Boolean)

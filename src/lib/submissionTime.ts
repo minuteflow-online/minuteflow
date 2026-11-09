@@ -18,6 +18,8 @@ export type RoundTime = {
   totalMs: number;
   /** YYYY-MM-DD (org time) -> ms of this round's work logged that day. */
   byDay: Record<string, number>;
+  /** Each logged stretch of this round, earliest first (epoch ms). */
+  sessions: Array<{ startMs: number; endMs: number }>;
 };
 
 export type TaskTime = {
@@ -38,7 +40,7 @@ export function allocateTaskTime(
   const marks = ordered.map((s) => new Date(s.created_at).getTime());
 
   const bySubmission: Record<number, RoundTime> = {};
-  for (const s of ordered) bySubmission[s.id] = { totalMs: 0, byDay: {} };
+  for (const s of ordered) bySubmission[s.id] = { totalMs: 0, byDay: {}, sessions: [] };
 
   let unsubmittedMs = 0;
   let totalMs = 0;
@@ -61,7 +63,10 @@ export function allocateTaskTime(
     const day = localDay(log.start_time, timezone);
     round.totalMs += ms;
     round.byDay[day] = (round.byDay[day] ?? 0) + ms;
+    round.sessions.push({ startMs: start, endMs: start + ms });
   }
+
+  for (const r of Object.values(bySubmission)) r.sessions.sort((a, b) => a.startMs - b.startMs);
 
   return { bySubmission, unsubmittedMs, totalMs };
 }
@@ -79,4 +84,31 @@ export function roundDays(
   const worked = Object.keys(round?.byDay ?? {}).filter((d) => (round?.byDay[d] ?? 0) > 0);
   if (worked.length > 0) return worked.sort();
   return [localDay(submission.created_at, timezone)];
+}
+
+/** "Nov 8, 11:20 PM" (or just "11:20 PM") in org time. */
+export function formatStamp(ms: number, timezone: string, withDate: boolean): string {
+  return new Date(ms).toLocaleString("en-US", {
+    timeZone: timezone,
+    ...(withDate ? { month: "short", day: "numeric" } : {}),
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * When a round's work happened: first log start to last log end, in org time.
+ * The end carries its own date only when it falls on a later day than the start.
+ * Null when nothing was logged.
+ */
+export function workedSpanLabel(
+  sessions: Array<{ startMs: number; endMs: number }>,
+  timezone: string
+): string | null {
+  if (sessions.length === 0) return null;
+  const startMs = Math.min(...sessions.map((s) => s.startMs));
+  const endMs = Math.max(...sessions.map((s) => s.endMs));
+  const sameDay =
+    localDay(new Date(startMs).toISOString(), timezone) === localDay(new Date(endMs).toISOString(), timezone);
+  return `${formatStamp(startMs, timezone, true)} – ${formatStamp(endMs, timezone, !sameDay)}`;
 }

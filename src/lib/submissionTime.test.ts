@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocateTaskTime, roundDays } from "./submissionTime";
+import { allocateTaskTime, roundDays, workedSpanLabel } from "./submissionTime";
 
 const TZ = "America/New_York";
 const H = 3_600_000;
@@ -67,13 +67,46 @@ describe("allocateTaskTime", () => {
 describe("roundDays", () => {
   it("is the days the work was logged on", () => {
     expect(
-      roundDays({ id: 1, created_at: "2026-11-07T12:00:00Z" }, { totalMs: 1, byDay: { "2026-11-06": 1 } }, TZ)
+      roundDays({ id: 1, created_at: "2026-11-07T12:00:00Z" }, { totalMs: 1, byDay: { "2026-11-06": 1 }, sessions: [] }, TZ)
     ).toEqual(["2026-11-06"]);
   });
 
   it("falls back to the submission day when no time was logged", () => {
-    expect(roundDays({ id: 1, created_at: "2026-11-07T12:00:00Z" }, { totalMs: 0, byDay: {} }, TZ)).toEqual([
+    expect(roundDays({ id: 1, created_at: "2026-11-07T12:00:00Z" }, { totalMs: 0, byDay: {}, sessions: [] }, TZ)).toEqual([
       "2026-11-07",
     ]);
+  });
+});
+
+describe("round sessions and worked span", () => {
+  // Nov 8, 11:30 PM ET for 1h, then Nov 9, 12:40 AM ET for 58m; submitted Nov 9, 1:55 AM ET.
+  const t = allocateTaskTime(
+    [{ id: 1, created_at: "2026-11-09T06:55:00Z" }],
+    [
+      { start_time: "2026-11-09T05:40:00Z", duration_ms: 58 * M },
+      { start_time: "2026-11-09T04:30:00Z", duration_ms: 1 * H },
+    ],
+    TZ
+  );
+
+  it("keeps each logged stretch, earliest first", () => {
+    expect(t.bySubmission[1].sessions).toEqual([
+      { startMs: Date.parse("2026-11-09T04:30:00Z"), endMs: Date.parse("2026-11-09T05:30:00Z") },
+      { startMs: Date.parse("2026-11-09T05:40:00Z"), endMs: Date.parse("2026-11-09T06:38:00Z") },
+    ]);
+  });
+
+  it("labels the span from first start to last end, dating the end when it crosses midnight", () => {
+    expect(workedSpanLabel(t.bySubmission[1].sessions, TZ)).toBe("Nov 8, 11:30 PM – Nov 9, 1:38 AM");
+  });
+
+  it("dates only the start when the work stayed on one day", () => {
+    expect(
+      workedSpanLabel([{ startMs: Date.parse("2026-11-05T14:00:00Z"), endMs: Date.parse("2026-11-05T16:00:00Z") }], TZ)
+    ).toBe("Nov 5, 9:00 AM – 11:00 AM");
+  });
+
+  it("is null with nothing logged", () => {
+    expect(workedSpanLabel([], TZ)).toBeNull();
   });
 });
