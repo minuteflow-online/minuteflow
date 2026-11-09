@@ -2236,17 +2236,39 @@ function ScreenshotsTab({
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
   orgTimezone: string;
 }) {
-  // Which field heads each task's set of captures. Saved per admin, so it stays
-  // as chosen until changed again.
-  const { stored: storedTitlePrefs, persist: persistTitlePrefs } =
-    useFilterPrefs<{ titleField?: ScreenshotTitleField }>("admin-screenshots", currentUserId);
-  const [pickedTitleField, setPickedTitleField] = useState<ScreenshotTitleField | null>(null);
-  const savedTitleField = SCREENSHOT_TITLE_FIELDS.find((f) => f.value === storedTitlePrefs?.titleField)?.value;
-  const titleField: ScreenshotTitleField = pickedTitleField ?? savedTitleField ?? "task";
-  const changeTitleField = (v: ScreenshotTitleField) => {
-    setPickedTitleField(v);
-    persistTitlePrefs({ titleField: v });
+  // Which fields head each task's set of captures (any combination). Saved per
+  // admin, so it stays as chosen until changed again. `titleField` is the older
+  // single-choice save, still read so an earlier pick carries over.
+  const { stored: storedTitlePrefs, persist: persistTitlePrefs } = useFilterPrefs<{
+    titleFields?: ScreenshotTitleField[];
+    titleField?: ScreenshotTitleField;
+  }>("admin-screenshots", currentUserId);
+  const [pickedTitleFields, setPickedTitleFields] = useState<ScreenshotTitleField[] | null>(null);
+  const savedTitleFields = (storedTitlePrefs?.titleFields ?? (storedTitlePrefs?.titleField ? [storedTitlePrefs.titleField] : []))
+    .filter((v) => SCREENSHOT_TITLE_FIELDS.some((f) => f.value === v));
+  const titleFields: ScreenshotTitleField[] =
+    pickedTitleFields ?? (savedTitleFields.length > 0 ? savedTitleFields : ["task"]);
+  const toggleTitleField = (v: ScreenshotTitleField) => {
+    const has = titleFields.includes(v);
+    // At least one stays ticked, so the heading always has something to show
+    if (has && titleFields.length === 1) return;
+    // Kept in the list's own order, whatever order they were ticked in
+    const next = SCREENSHOT_TITLE_FIELDS.map((f) => f.value).filter((f) =>
+      f === v ? !has : titleFields.includes(f)
+    );
+    setPickedTitleFields(next);
+    persistTitlePrefs({ titleFields: next });
   };
+  const [titleMenuOpen, setTitleMenuOpen] = useState(false);
+  const titleMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!titleMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (titleMenuRef.current && !titleMenuRef.current.contains(e.target as Node)) setTitleMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [titleMenuOpen]);
   const today = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
 
   return (
@@ -2315,18 +2337,46 @@ function ScreenshotsTab({
               />
             </>
           )}
-          <select
-            value={titleField}
-            onChange={(e) => changeTitleField(e.target.value as ScreenshotTitleField)}
-            title="What to show as the heading of each task's screenshots"
-            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
-          >
-            {SCREENSHOT_TITLE_FIELDS.map((f) => (
-              <option key={f.value} value={f.value}>
-                Title: {f.label}
-              </option>
-            ))}
-          </select>
+          <div ref={titleMenuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setTitleMenuOpen((o) => !o)}
+              title="What to show as the heading of each task's screenshots"
+              className="flex items-center gap-1 rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors hover:border-terracotta"
+            >
+              Title:{" "}
+              {SCREENSHOT_TITLE_FIELDS.filter((f) => titleFields.includes(f.value))
+                .map((f) => f.label)
+                .join(", ")}
+              <svg className={`h-3 w-3 text-bark transition-transform ${titleMenuOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+              </svg>
+            </button>
+            {titleMenuOpen && (
+              <div className="absolute right-0 z-50 mt-1 w-48 rounded-lg border border-sand bg-white p-1 shadow-xl">
+                {SCREENSHOT_TITLE_FIELDS.map((f) => {
+                  const checked = titleFields.includes(f.value);
+                  const locked = checked && titleFields.length === 1;
+                  return (
+                    <label
+                      key={f.value}
+                      className={`flex items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30 ${locked ? "cursor-default" : "cursor-pointer"}`}
+                      title={locked ? "At least one field stays selected" : undefined}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={locked}
+                        onChange={() => toggleTitleField(f.value)}
+                        className="accent-terracotta"
+                      />
+                      <span className="text-[11px] text-espresso">{f.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <span className="ml-2 text-[11px] text-bark">
             {totalScreenshots} screenshots
           </span>
@@ -2385,7 +2435,7 @@ function ScreenshotsTab({
                         setSelectedScreenshot={setSelectedScreenshot}
                         orgTimezone={orgTimezone}
                         loadedWindow={loadedWindow}
-                        titleField={titleField}
+                        titleFields={titleFields}
                       />
                     ))}
                   </div>
@@ -2491,7 +2541,7 @@ function TaskScreenshotCard({
   setSelectedScreenshot,
   orgTimezone,
   loadedWindow,
-  titleField,
+  titleFields,
 }: {
   group: ScreenshotTaskGroup;
   vaName: string;
@@ -2499,17 +2549,21 @@ function TaskScreenshotCard({
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
   orgTimezone: string;
   loadedWindow: { start: number; end: number } | null;
-  titleField: ScreenshotTitleField;
+  titleFields: ScreenshotTitleField[];
 }) {
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
-  // The heading follows the admin's chosen field. When that field is empty on this
-  // task, the task name stands in (muted) so the set is never untitled.
-  const chosenTitle =
-    titleField === "project" ? group.log?.project?.trim() :
-    titleField === "client_memo" ? group.log?.client_memo?.trim() :
+  // The heading is every chosen field that has a value, joined in list order.
+  // When none of them do, the task name stands in (muted) so the set is never untitled.
+  const fieldValue = (f: ScreenshotTitleField) =>
+    f === "project" ? group.log?.project?.trim() :
+    f === "client_memo" ? group.log?.client_memo?.trim() :
     group.taskName;
-  const titleLabel = SCREENSHOT_TITLE_FIELDS.find((f) => f.value === titleField)?.label ?? "Task title";
+  const titleParts = titleFields.map(fieldValue).filter((v): v is string => !!v);
+  const chosenTitle = titleParts.join(" · ");
+  const titleLabels = SCREENSHOT_TITLE_FIELDS.filter((f) => titleFields.includes(f.value))
+    .map((f) => f.label.toLowerCase())
+    .join(" or ");
   // Stretches with neither a screenshot nor a marker: capture wasn't running or
   // couldn't report, which is different from a slot that recorded a reason.
   const gaps = findCaptureGaps(group.shots.map((s) => s.captureTime), group.log, undefined, loadedWindow);
@@ -2538,14 +2592,14 @@ function TaskScreenshotCard({
         {chosenTitle ? (
           <span
             className="max-w-[60ch] truncate text-[12px] font-semibold text-espresso"
-            title={titleField === "task" ? undefined : `${chosenTitle}\nTask: ${group.taskName}`}
+            title={titleFields.includes("task") ? chosenTitle : `${chosenTitle}\nTask: ${group.taskName}`}
           >
             {chosenTitle}
           </span>
         ) : (
           <span
             className="text-[12px] font-semibold text-stone"
-            title={`No ${titleLabel.toLowerCase()} on this task — showing the task title`}
+            title={`No ${titleLabels} on this task — showing the task title`}
           >
             {group.taskName}
           </span>
