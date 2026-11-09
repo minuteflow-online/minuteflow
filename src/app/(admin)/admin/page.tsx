@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import React, { Fragment, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { findCaptureBatches, findCaptureGaps, formatGapMinutes, type CaptureBatch } from "@/lib/screenshotGaps";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -191,6 +191,13 @@ const SCREENSHOT_TITLE_FIELDS: { value: ScreenshotTitleField; label: string }[] 
   { value: "project", label: "Project" },
   { value: "client_memo", label: "Client memo" },
 ];
+
+/** One shade per field, so a heading with several fields reads at a glance. */
+const SCREENSHOT_TITLE_COLORS: Record<ScreenshotTitleField, string> = {
+  task: "text-espresso",
+  project: "text-slate-blue",
+  client_memo: "text-clay-rose",
+};
 
 /**
  * One person's day: their name and the date stated once, then every task they
@@ -2559,8 +2566,10 @@ function TaskScreenshotCard({
     f === "project" ? group.log?.project?.trim() :
     f === "client_memo" ? group.log?.client_memo?.trim() :
     group.taskName;
-  const titleParts = titleFields.map(fieldValue).filter((v): v is string => !!v);
-  const chosenTitle = titleParts.join(" · ");
+  const titleParts = titleFields
+    .map((f) => ({ field: f, value: fieldValue(f) }))
+    .filter((p): p is { field: ScreenshotTitleField; value: string } => !!p.value);
+  const chosenTitle = titleParts.map((p) => p.value).join(" · ");
   const titleLabels = SCREENSHOT_TITLE_FIELDS.filter((f) => titleFields.includes(f.value))
     .map((f) => f.label.toLowerCase())
     .join(" or ");
@@ -2591,10 +2600,15 @@ function TaskScreenshotCard({
       <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         {chosenTitle ? (
           <span
-            className="max-w-[60ch] truncate text-[12px] font-semibold text-espresso"
+            className="max-w-[60ch] truncate text-[12px] font-semibold"
             title={titleFields.includes("task") ? chosenTitle : `${chosenTitle}\nTask: ${group.taskName}`}
           >
-            {chosenTitle}
+            {titleParts.map((p, i) => (
+              <Fragment key={p.field}>
+                {i > 0 && <span className="text-stone"> · </span>}
+                <span className={SCREENSHOT_TITLE_COLORS[p.field]}>{p.value}</span>
+              </Fragment>
+            ))}
           </span>
         ) : (
           <span
