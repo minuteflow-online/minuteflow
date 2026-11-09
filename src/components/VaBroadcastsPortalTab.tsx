@@ -41,6 +41,22 @@ interface Broadcast {
 
 // ─── Helpers ──────────────────────────────────────────────────
 
+// The field stores one URL and nothing else — this is the only way to tell an
+// uploaded image apart from an uploaded PDF/Word doc at display time. Mirrors
+// VaBroadcastsAdminTab's own copy (kept local rather than shared — a browser/
+// portal split this small isn't worth a new lib file for).
+function isImageUrl(url: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url);
+}
+
+function fileNameFromUrl(url: string): string {
+  try {
+    return decodeURIComponent(url.split("/").pop() || url);
+  } catch {
+    return url;
+  }
+}
+
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
     month: "short",
@@ -306,11 +322,22 @@ function BroadcastCard({
         </div>
       )}
 
-      {/* Image */}
+      {/* Image or file attachment */}
       {broadcast.image_url && (
-        <div className="mb-3 rounded-lg overflow-hidden">
-          <img src={broadcast.image_url} alt={broadcast.title} className="w-full max-h-64 object-cover" />
-        </div>
+        isImageUrl(broadcast.image_url) ? (
+          <div className="mb-3 rounded-lg overflow-hidden">
+            <img src={broadcast.image_url} alt={broadcast.title} className="w-full max-h-64 object-cover" />
+          </div>
+        ) : (
+          <a
+            href={broadcast.image_url}
+            target="_blank"
+            rel="noreferrer"
+            className="mb-3 inline-flex max-w-full items-center gap-1 rounded-full border border-sand bg-white px-2 py-[2px] text-[11px] font-semibold text-espresso hover:bg-cream"
+          >
+            <span className="truncate">📎 {fileNameFromUrl(broadcast.image_url)}</span>
+          </a>
+        )
       )}
 
       {/* Body */}
