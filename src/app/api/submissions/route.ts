@@ -163,22 +163,61 @@ async function loadAttachments(
  */
 async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
   const bySubmission = new Map<number, Array<Record<string, unknown>>>();
-  if (submissionIds.length === 0) return bySubmission;
+  /**
+   * Every capture linked to a submission — markers ("Computer idle", "no
+   * browser view") included — for the SC Data pill, which runs Admin's
+   * Screenshot Report rules over them in the browser (@/lib/screenshotReport).
+   */
+  const reportBySubmission = new Map<number, Array<Record<string, unknown>>>();
+  /** The time logs those captures ran under, for the report's capture gaps. */
+  const reportLogs: Record<number, { start_time: string | null; end_time: string | null; category: string | null }> = {};
+  if (submissionIds.length === 0) return { bySubmission, reportBySubmission, reportLogs };
 
   const idChunks: number[][] = [];
   for (let i = 0; i < submissionIds.length; i += 100) idChunks.push(submissionIds.slice(i, i + 100));
-  const rows = (
+  const allRows = (
     await Promise.all(
       idChunks.map((ids) =>
-        admin
-          .from("task_screenshots")
-          .select("id, submission_id, filename, drive_file_id")
-          .in("submission_id", ids)
-          .not("drive_file_id", "is", null)
+        fetchAllPages((from, to) =>
+          admin
+            .from("task_screenshots")
+            .select(
+              "id, submission_id, log_id, filename, drive_file_id, screenshot_type, failure_reason, created_at, captured_at, image_hash"
+            )
+            .in("submission_id", ids)
+            .order("id")
+            .range(from, to)
+        )
       )
     )
-  ).flatMap((r) => r.data ?? []);
+  ).flatMap((r) => r.data ?? []) as Array<Record<string, unknown>>;
 
+  for (const s of allRows) {
+    const { submission_id: sid, ...shot } = s;
+    const list = reportBySubmission.get(sid as number) ?? [];
+    list.push(shot);
+    reportBySubmission.set(sid as number, list);
+  }
+
+  const logIds = Array.from(
+    new Set(allRows.map((s) => s.log_id as number | null).filter((v): v is number => v != null))
+  );
+  for (let i = 0; i < logIds.length; i += 200) {
+    const { data } = await admin
+      .from("time_logs")
+      .select("id, start_time, end_time, category")
+      .in("id", logIds.slice(i, i + 200));
+    for (const l of data ?? []) {
+      reportLogs[l.id as number] = {
+        start_time: (l.start_time as string | null) ?? null,
+        end_time: (l.end_time as string | null) ?? null,
+        category: (l.category as string | null) ?? null,
+      };
+    }
+  }
+
+  // Only real images ride in the gallery; markers have nothing to show.
+  const rows = allRows.filter((s) => s.drive_file_id != null);
   for (const s of rows) {
     const list = bySubmission.get(s.submission_id as number) ?? [];
     list.push({
@@ -193,23 +232,29 @@ async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
     });
     bySubmission.set(s.submission_id as number, list);
   }
-  return bySubmission;
+  return { bySubmission, reportBySubmission, reportLogs };
 }
 
 /**
- * Time spent per revision round, and where each task currently stands.
+ * Where each task currently stands, plus the raw material for its time: every
+ * (non-trashed) submission on the task and every log worked under it.
  *
- * A log belongs to round N when N revisions had been issued before it
- * started — the same rule the R badge uses, so the timing and the label can
- * never disagree. Round 0 is the original work, 1 is the first rework, etc.
+ * The split itself — which submission's round a log belongs to, and which day
+ * it counts toward — happens in the browser via @/lib/submissionTime, because
+ * it depends on the org timezone, and because the full submission list matters:
+ * a page filtered down to some submissions must still split time against all
+ * of them.
  */
 async function loadRoundData(admin: AdminClient, taskIds: number[], completedTasks: Set<number>) {
-  const roundDurations: Record<number, Record<number, number>> = {};
+  /** taskId -> its submissions (id, created_at), oldest first. */
+  const taskSubmissions: Record<number, Array<{ id: number; created_at: string }>> = {};
+  /** taskId -> every log worked under it, as [start_time, duration_ms]. */
+  const taskLogs: Record<number, Array<[string | null, number | null]>> = {};
   /** taskId -> "awaiting" | "revision_requested" | "approved" | "completed" */
   const reviewState: Record<number, string> = {};
   /** taskId -> true while a reviewer's flag is the newest thing on the thread. */
   const flaggedTasks: Record<number, boolean> = {};
-  if (taskIds.length === 0) return { roundDurations, reviewState, flaggedTasks };
+  if (taskIds.length === 0) return { taskSubmissions, taskLogs, reviewState, flaggedTasks };
 
   const [revisionRes, logRes] = await Promise.all([
     // Every thread entry, not just revisions: the newest one also tells us
@@ -217,7 +262,7 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
     fetchAllPages((from, to) =>
       admin
         .from("task_submissions")
-        .select("assigned_task_id, message_type, created_at")
+        .select("id, assigned_task_id, message_type, created_at")
         .in("assigned_task_id", taskIds)
         // A trashed entry must not decide where the task stands — cancelling
         // a mistaken reversal works by trashing it, so counting it here would
@@ -243,15 +288,18 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
   ]);
 
   const allEntries = (revisionRes.data ?? []) as Array<{
+    id: number;
     assigned_task_id: number;
     message_type: string;
     created_at: string;
   }>;
 
-  const revisionTimes = new Map<number, string[]>();
   for (const r of allEntries) {
-    if (r.message_type !== "revision") continue;
-    revisionTimes.set(r.assigned_task_id, (revisionTimes.get(r.assigned_task_id) ?? []).concat(r.created_at));
+    if (r.message_type !== "submission") continue;
+    (taskSubmissions[r.assigned_task_id] ??= []).push({ id: r.id, created_at: r.created_at });
+  }
+  for (const list of Object.values(taskSubmissions)) {
+    list.sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
   // The newest submission/revision/approval decides where a task stands.
@@ -331,21 +379,12 @@ async function loadRoundData(admin: AdminClient, taskIds: number[], completedTas
     duration_ms: number | null;
   }>;
 
-  for (const taskId of taskIds) {
-    const times = (revisionTimes.get(taskId) ?? []).slice().sort();
-    const buckets: Record<number, number> = {};
-
-    for (const log of logs) {
-      if (log.assigned_task_id !== taskId) continue;
-      if (!log.start_time) continue;
-      const round = times.filter((t) => t < log.start_time!).length;
-      buckets[round] = (buckets[round] ?? 0) + Number(log.duration_ms ?? 0);
-    }
-
-    if (Object.keys(buckets).length > 0) roundDurations[taskId] = buckets;
+  for (const log of logs) {
+    if (log.assigned_task_id == null || !log.start_time) continue;
+    (taskLogs[log.assigned_task_id] ??= []).push([log.start_time, log.duration_ms]);
   }
 
-  return { roundDurations, reviewState, flaggedTasks };
+  return { taskSubmissions, taskLogs, reviewState, flaggedTasks };
 }
 
 /**
@@ -739,9 +778,6 @@ export async function GET(request: Request) {
   }
 
   const submissionIds = rows.map((r) => r.id);
-  // A log belongs to round N when N revisions had been issued before it
-  // started — the same rule the R badge uses, so the timing and the label can
-  // never disagree. Round 0 is the original work, 1 is the first rework, etc.
   const taskIds = Array.from(
     new Set(rows.map((r) => r.assigned_tasks?.id).filter((v): v is number => v != null))
   );
@@ -756,14 +792,15 @@ export async function GET(request: Request) {
   // stacking, not any single slow query, was the real source of "submissions
   // takes a while to load": roughly half a dozen sequential Supabase
   // round-trips add up fast even when each one individually is fine.
-  const [filesBySubmission, screenshotsBySubmission, roundData, expected, unreadByTask] = await Promise.all([
+  const [filesBySubmission, screenshotData, roundData, expected, unreadByTask] = await Promise.all([
     loadAttachments(admin, submissionIds, rows),
     loadScreenshots(admin, submissionIds),
     loadRoundData(admin, taskIds, completedTasks),
     expectedPromise,
     loadUnreadByTask(admin, rows, user.id),
   ]);
-  const { roundDurations, reviewState, flaggedTasks } = roundData;
+  const { taskSubmissions, taskLogs, reviewState, flaggedTasks } = roundData;
+  const { bySubmission: screenshotsBySubmission, reportBySubmission, reportLogs } = screenshotData;
 
   const submissions = rows.map((row) => {
     const task = row.assigned_tasks;
@@ -771,6 +808,9 @@ export async function GET(request: Request) {
     void _omit;
     return {
       ...rest,
+      // Every capture linked to this submission, markers included — what the
+      // SC Data pill runs the Screenshot Report over.
+      sc_shots: reportBySubmission.get(row.id) ?? [],
       // Screenshots first — they're what was actually happening while the
       // task ran, so they lead the gallery; anything hand-attached follows.
       attachments: [...(screenshotsBySubmission.get(row.id) ?? []), ...(filesBySubmission.get(row.id) ?? [])],
@@ -809,7 +849,9 @@ export async function GET(request: Request) {
   return Response.json({
     submissions,
     expected,
-    roundDurations,
+    taskSubmissions,
+    taskLogs,
+    scLogs: reportLogs,
     reviewState,
     flaggedTasks,
     unreadByTask,
