@@ -224,7 +224,7 @@ export async function POST(request: NextRequest) {
 
     const { data: logEntry } = await supabase
       .from("time_logs")
-      .select("full_name, username, task_name")
+      .select("full_name, username, task_name, category")
       .eq("id", Number(logId))
       .single();
 
@@ -240,6 +240,15 @@ export async function POST(request: NextRequest) {
       if (profile) {
         vaName = profile.full_name || profile.username || "Unknown";
       }
+    }
+
+    // Clock In / Clock Out are zero-duration boundary markers (see the
+    // dashboard's clockIn()/performClockOut()), never a real task to work on —
+    // a capture arriving for one means a caller mistook "no active task yet"
+    // for an active task. Same shape as the on-break skip above: silently
+    // dropped before the expensive Drive upload, nothing stored.
+    if (logEntry?.category === "Clock In" || logEntry?.category === "Clock Out") {
+      return Response.json({ ok: true, skipped: "clock in/out marker" });
     }
 
     // The moment the shot was taken. Uploads can sit in the extension's local
