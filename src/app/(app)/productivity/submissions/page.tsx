@@ -1233,9 +1233,7 @@ This cannot be undone.`
     (canReview && assignedByFilter.size > 0 ? 1 : 0) +
     (categoryFilter.size > 0 ? 1 : 0) +
     (accountFilter.size > 0 ? 1 : 0) +
-    (clientFilter.size > 0 ? 1 : 0) +
-    (taskDateFrom || taskDateTo ? 1 : 0) +
-    (submissionDateFrom || submissionDateTo ? 1 : 0);
+    (clientFilter.size > 0 ? 1 : 0);
 
   // Only submissions are numbered — a note or an approval sits between rounds
   // without being one, so counting every entry would inflate the R.
@@ -1517,10 +1515,14 @@ This cannot be undone.`
           </button>
         )}
 
-        {/* What you'd reach for constantly stays on screen. The eight
-            narrower, less-often-touched filters (Fields, work type, project,
-            assigner, category, account, client, both date ranges) tuck
-            behind "More filters" below (Toni's call, 2026-11-07). */}
+        <DateRangeChip label="Task date" from={taskDateFrom} to={taskDateTo} onChange={(f, t) => { setTaskDateFrom(f); setTaskDateTo(t); }} />
+        <DateRangeChip label="Submission date" from={submissionDateFrom} to={submissionDateTo} onChange={(f, t) => { setSubmissionDateFrom(f); setSubmissionDateTo(t); }} />
+
+        {/* What you'd reach for constantly stays on screen. The narrower,
+            less-often-touched filters (Fields, work type, project, assigner,
+            category, account, client) tuck behind "More filters" below
+            (Toni's call, 2026-11-07); the two date ranges sit up here next
+            to Unread/Flagged instead (Toni's call, 2026-11-09). */}
         {seesAll && (
           <MultiSelectFilter
             allLabel="All VAs"
@@ -1665,9 +1667,6 @@ This cannot be undone.`
             onChange={setClientFilter}
             options={clients.map((c) => ({ value: c.id, label: c.name }))}
           />
-
-          <DateRangeChip label="Task date" from={taskDateFrom} to={taskDateTo} onChange={(f, t) => { setTaskDateFrom(f); setTaskDateTo(t); }} />
-          <DateRangeChip label="Submission date" from={submissionDateFrom} to={submissionDateTo} onChange={(f, t) => { setSubmissionDateFrom(f); setSubmissionDateTo(t); }} />
         </div>
       )}
 
