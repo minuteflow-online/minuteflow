@@ -2748,6 +2748,18 @@ function ThreadCard({
           <span className="shrink-0 rounded-full border border-stone/20 bg-stone/10 px-2 py-[2px] text-[10px] font-semibold text-stone">
             {scopeLabel(head)}
           </span>
+          {/* Status lives here, next to what the task is — separate from the
+              action buttons on the right, which are for doing something about
+              it (review a decision, or close it out after approval). Toni's
+              call, 2026-11-09: the two were sitting in the same spot and
+              reading as one thing. */}
+          {pill && (
+            <span
+              className={`shrink-0 rounded-full border px-2 py-[2px] text-[10px] font-semibold ${pill.className}`}
+            >
+              {pill.label}
+            </span>
+          )}
         </button>
 
         {/* Straight into the real task editor rather than a second copy of it
@@ -2772,7 +2784,8 @@ function ThreadCard({
         )}
 
         {/* Buttons exist only while there's a decision to make. Once reviewed,
-            the pill states the outcome and there's nothing left to click. */}
+            the pill (shown next to the badge above) states the outcome and
+            there's nothing left to click. */}
         {canReview && latest.task && awaitingReview ? (
           <div className="flex shrink-0 items-center gap-1.5">
             {/* A task that never required review can't be 'approved' by a
@@ -2835,13 +2848,6 @@ function ThreadCard({
           </div>
         ) : (
           <div className="flex shrink-0 items-center gap-1.5">
-            {pill && (
-              <span
-                className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${pill.className}`}
-              >
-                {pill.label}
-              </span>
-            )}
             {/* An auto-approved task was never actually looked at — Undo alone
                 just puts it back in the queue, so a reviewer who already knows
                 it needs rework would have to Undo, then find Revise, then
