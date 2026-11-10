@@ -2042,7 +2042,7 @@ function SubmissionsLegend() {
       </span>
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
-        {(["awaiting", "revision_requested", "approved", "auto_approved", "in_progress"] as const).map((key) => (
+        {(["revision_requested", "approved", "auto_approved"] as const).map((key) => (
           <span
             key={key}
             className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${REVIEW_STATE_PILL[key].className}`}
@@ -2050,6 +2050,16 @@ function SubmissionsLegend() {
             {REVIEW_STATE_PILL[key].label}
           </span>
         ))}
+      </span>
+
+      {/* IP and NR are independent facts — a submission can be both, so each
+          gets its own small circle instead of one pill that can only say one
+          thing at a time (Toni's call, 2026-11-10). */}
+      <span className="flex items-center gap-1.5 text-[11px] text-stone">
+        <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-slate-blue text-white">IP</span>
+        in progress
+        <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-amber text-white">NR</span>
+        needs review
       </span>
         </div>
       )}
@@ -3044,13 +3054,19 @@ function ThreadCard({
     .filter((item) => item.message_type === "submission")
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
   const inProgress = latestSubmission?.progress_status === "in_progress";
-  const pill = inProgress
-    ? REVIEW_STATE_PILL.in_progress
-    : autoApproved
-      ? REVIEW_STATE_PILL.auto_approved
-      : state
-        ? REVIEW_STATE_PILL[state]
-        : undefined;
+  // In Progress and Needs Review are independent facts — a VA can report
+  // in-progress AND ask for review on the same submission — so each gets its
+  // own small circle (IP / NR) rather than one pill that can only say one
+  // thing at a time. Toni's call, 2026-11-10: a combined pill meant asking for
+  // review on in-progress work made the "in progress" status disappear, which
+  // read as a bug even though nothing was actually lost. Everything decided
+  // (approved, rejected, etc.) keeps its own full-text pill — those aren't
+  // the ambiguous case this is fixing.
+  const pill = autoApproved
+    ? REVIEW_STATE_PILL.auto_approved
+    : state && state !== "awaiting"
+      ? REVIEW_STATE_PILL[state]
+      : undefined;
 
   return (
     <div ref={cardRef} className="rounded-lg border border-sand bg-white px-3 py-2.5">
@@ -3107,6 +3123,22 @@ function ThreadCard({
               it (review a decision, or close it out after approval). Toni's
               call, 2026-11-09: the two were sitting in the same spot and
               reading as one thing. */}
+          {inProgress && (
+            <span
+              className="shrink-0 text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-slate-blue text-white"
+              title="In progress — a status update from the VA, not a handoff"
+            >
+              IP
+            </span>
+          )}
+          {awaitingReview && (
+            <span
+              className="shrink-0 text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-amber text-white"
+              title="Needs review"
+            >
+              NR
+            </span>
+          )}
           {pill && (
             <span
               className={`shrink-0 rounded-full border px-2 py-[2px] text-[10px] font-semibold ${pill.className}`}
