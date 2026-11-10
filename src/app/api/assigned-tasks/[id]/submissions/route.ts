@@ -78,7 +78,7 @@ async function withAttachments(
 
   const { data: files } = await admin
     .from("assigned_task_attachments")
-    .select("id, submission_id, filename, storage_path, file_size, mime_type")
+    .select("id, submission_id, filename, storage_path, file_size, mime_type, kind")
     .in(
       "submission_id",
       submissions.map((s) => s.id)
@@ -262,6 +262,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     filename: string;
     size: number;
     mime_type: string | null;
+    kind: string | null;
   }> = [];
   /** A revision may carry a new deadline for the rework. */
   let dueAt: string | null = null;
@@ -316,16 +317,17 @@ export async function POST(request: Request, { params }: RouteContext) {
     const prefix = `tasks/${id}/submissions/`;
     pendingAttachments = (Array.isArray(body.attachments) ? body.attachments : [])
       .filter(
-        (a: unknown): a is { path: string; filename?: string; size?: number; mime_type?: string } =>
+        (a: unknown): a is { path: string; filename?: string; size?: number; mime_type?: string; kind?: string } =>
           Boolean(a) &&
           typeof (a as { path?: unknown }).path === "string" &&
           (a as { path: string }).path.startsWith(prefix)
       )
-      .map((a: { path: string; filename?: string; size?: number; mime_type?: string }) => ({
+      .map((a: { path: string; filename?: string; size?: number; mime_type?: string; kind?: string }) => ({
         path: a.path,
         filename: String(a.filename ?? a.path.split("/").pop() ?? "attachment"),
         size: Number(a.size ?? 0),
         mime_type: a.mime_type ?? null,
+        kind: a.kind === "screenshot" || a.kind === "file" ? a.kind : null,
       }));
   }
 
@@ -437,6 +439,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         file_size: attachment.size || null,
         mime_type: attachment.mime_type,
         uploaded_by: user.id,
+        kind: attachment.kind,
       });
       if (attachError) throw new Error(attachError.message);
     }

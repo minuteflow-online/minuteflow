@@ -2537,76 +2537,94 @@ function AttachmentGallery({ attachments }: { attachments: TaskSubmissionAttachm
 
   if (attachments.length === 0) return null;
 
-  const images = attachments.filter((f) => (f.mime_type ?? "").startsWith("image/") && f.url);
-  const others = attachments.filter((f) => !images.includes(f));
+  // Tagged at submission time by the Submit modal's two drop zones — shown as
+  // separate groups rather than one undifferentiated pile of thumbnails
+  // (Toni's call, 2026-11-10). Anything from before that split existed, or
+  // attached through a path that doesn't set it (a note, the task editor),
+  // has no kind and falls under Files — the less presumptuous of the two.
+  const screenshots = attachments.filter((f) => f.kind === "screenshot");
+  const files = attachments.filter((f) => f.kind !== "screenshot");
+
+  const group = (label: string, items: TaskSubmissionAttachment[]) => {
+    if (items.length === 0) return null;
+    const images = items.filter((f) => (f.mime_type ?? "").startsWith("image/") && f.url);
+    const others = items.filter((f) => !images.includes(f));
+    return (
+      <div className="space-y-1" key={label}>
+        <p className="text-[9px] font-semibold uppercase tracking-wide text-stone/70">{label}</p>
+        {images.length > 0 && (
+          <div className="flex gap-1.5 overflow-x-auto pb-1">
+            {images.map((file, i) => (
+              <button
+                key={file.id}
+                type="button"
+                onClick={() =>
+                  setLightbox({ urls: images.map((f) => f.url as string), index: i })
+                }
+                title={file.filename}
+                className="shrink-0 overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={file.url as string}
+                  alt={file.filename}
+                  loading="lazy"
+                  className="h-[72px] w-[96px] object-cover"
+                />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {others.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {others.map((file) => {
+              const isHtml =
+                (file.mime_type ?? "").includes("html") || /\.html?$/i.test(file.filename);
+              return (
+                <span key={file.id} className="inline-flex items-center gap-1">
+                  {isHtml && file.url ? (
+                    // The raw URL shows the page's source (Supabase serves it as
+                    // text/plain), so the filename opens the preview instead.
+                    <button
+                      type="button"
+                      onClick={() => setPreviewFile(file)}
+                      className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
+                    >
+                      {file.filename}
+                    </button>
+                  ) : (
+                    <a
+                      href={file.url ?? "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
+                    >
+                      {file.filename}
+                    </a>
+                  )}
+                  {isHtml && file.url && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewFile(file)}
+                      className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] font-semibold text-espresso transition-colors hover:bg-cream"
+                    >
+                      Preview
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <div className="mt-1.5 space-y-1.5">
-      {images.length > 0 && (
-        <div className="flex gap-1.5 overflow-x-auto pb-1">
-          {images.map((file, i) => (
-            <button
-              key={file.id}
-              type="button"
-              onClick={() =>
-                setLightbox({ urls: images.map((f) => f.url as string), index: i })
-              }
-              title={file.filename}
-              className="shrink-0 overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={file.url as string}
-                alt={file.filename}
-                loading="lazy"
-                className="h-[72px] w-[96px] object-cover"
-              />
-            </button>
-          ))}
-        </div>
-      )}
-
-      {others.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {others.map((file) => {
-            const isHtml =
-              (file.mime_type ?? "").includes("html") || /\.html?$/i.test(file.filename);
-            return (
-              <span key={file.id} className="inline-flex items-center gap-1">
-                {isHtml && file.url ? (
-                  // The raw URL shows the page's source (Supabase serves it as
-                  // text/plain), so the filename opens the preview instead.
-                  <button
-                    type="button"
-                    onClick={() => setPreviewFile(file)}
-                    className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
-                  >
-                    {file.filename}
-                  </button>
-                ) : (
-                  <a
-                    href={file.url ?? "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-lg border border-sand bg-cream/40 px-2 py-1 text-[11px] text-terracotta hover:bg-cream"
-                  >
-                    {file.filename}
-                  </a>
-                )}
-                {isHtml && file.url && (
-                  <button
-                    type="button"
-                    onClick={() => setPreviewFile(file)}
-                    className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] font-semibold text-espresso transition-colors hover:bg-cream"
-                  >
-                    Preview
-                  </button>
-                )}
-              </span>
-            );
-          })}
-        </div>
-      )}
+    <div className="mt-1.5 space-y-2">
+      {group("Screenshots", screenshots)}
+      {group("Files", files)}
 
       {lightbox && (
         <ScreenshotLightbox

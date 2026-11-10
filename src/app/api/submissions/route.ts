@@ -56,7 +56,7 @@ async function loadAttachments(
   const filesBySubmission = new Map<number, Array<Record<string, unknown>>>();
   if (submissionIds.length === 0) return filesBySubmission;
 
-  const select = "id, submission_id, filename, storage_path, file_size, mime_type";
+  const select = "id, submission_id, filename, storage_path, file_size, mime_type, kind";
   const fetchAll = async (
     page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>
   ) => (await fetchAllPages(page)).data;
