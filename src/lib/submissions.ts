@@ -46,6 +46,11 @@ export interface TaskSubmissionAttachment {
   file_size: number | null;
   mime_type: string | null;
   url: string | null;
+  /** Which of the Submit modal's two drop zones this came from — "screenshot"
+   *  (process shots) or "file" (the finished deliverable). Null on anything
+   *  attached before this split existed, or through a path that doesn't set
+   *  it (a note's attachment, the task editor's own upload). */
+  kind: "screenshot" | "file" | null;
 }
 
 export interface TaskSubmission {
