@@ -11,6 +11,7 @@ import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
 import TeamSidebar from "@/components/TeamSidebar";
 import ActivityLog from "@/components/ActivityLog";
 import DashboardBoardView from "@/components/DashboardBoardView";
+import DashboardCalendarView from "@/components/DashboardCalendarView";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
 import DashboardMessagePanel from "@/components/DashboardMessagePanel";
@@ -3830,6 +3831,14 @@ export default function DashboardPage() {
           userId={userId}
           isAdmin={hasBroadAdminAccess({ role })}
           teamMembers={teamMembers.map((m) => m.profile)}
+        />
+      )}
+
+      {userId && (
+        <DashboardCalendarView
+          userId={userId}
+          isAdmin={hasBroadAdminAccess({ role })}
+          orgTimezone={orgTimezone}
         />
       )}
 
