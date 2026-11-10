@@ -142,6 +142,10 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
   const [savingSub, setSavingSub] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [expandedSection, setExpandedSection] = useState<"main" | "adhoc" | null>(null);
+  // Collapsed state is purely visual — the board keeps fetching/polling
+  // underneath, same as the Subtasks reference list's own ▶/▼ toggle this
+  // mirrors, so expanding it again never shows stale data.
+  const [collapsed, setCollapsed] = useState(false);
   const editTaskEditorRef = useRef<TaskEditorHandle | null>(null);
 
   const allSubtasks = [...buckets.objective, ...buckets.operation, ...buckets.adhoc];
@@ -290,50 +294,39 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Board View</h3>
-        <div className="flex items-center gap-1.5">
-          {TOGGLE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setToggle(opt.value)}
-              className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
-                toggle === opt.value ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="flex items-center gap-1.5 cursor-pointer"
+        >
+          <span className="text-bark text-[9px] w-2 shrink-0">{collapsed ? "▶" : "▼"}</span>
+          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Board View</h3>
+        </button>
+        {!collapsed && (
+          <div className="flex items-center gap-1.5">
+            {TOGGLE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setToggle(opt.value)}
+                className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                  toggle === opt.value ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className={mainExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
-        <div className={mainExpanded ? "flex-1 min-w-0 overflow-auto" : "flex-1 min-w-0"}>
-          <SubtaskBoardView
-            subtasks={scopedSubtasks}
-            editingSubId={editingInAdHoc ? null : editingSubId}
-            onOpenEdit={openEdit}
-            formatDate={formatDate}
-            StatusBadge={StatusBadge}
-            activeProfiles={teamMembers}
-            onMoveStatus={handleMoveStatus}
-            currentUserId={userId}
-            canSetSitewide={false}
-            expanded={mainExpanded}
-            onToggleExpanded={() => setExpandedSection((v) => (v === "main" ? null : "main"))}
-          />
-        </div>
-        {!editingInAdHoc && renderEditPanel(mainExpanded)}
-      </div>
-
-      {buckets.adhoc.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Ad Hoc Tasks</p>
-          <div className={adHocExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
-            <div className={adHocExpanded ? "flex-1 min-w-0 overflow-auto" : "flex-1 min-w-0"}>
+      {!collapsed && (
+        <>
+          <div className={mainExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
+            <div className={mainExpanded ? "flex-1 min-w-0 overflow-auto" : "flex-1 min-w-0"}>
               <SubtaskBoardView
-                subtasks={buckets.adhoc}
-                editingSubId={editingInAdHoc ? editingSubId : null}
+                subtasks={scopedSubtasks}
+                editingSubId={editingInAdHoc ? null : editingSubId}
                 onOpenEdit={openEdit}
                 formatDate={formatDate}
                 StatusBadge={StatusBadge}
@@ -341,13 +334,37 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
                 onMoveStatus={handleMoveStatus}
                 currentUserId={userId}
                 canSetSitewide={false}
-                expanded={adHocExpanded}
-                onToggleExpanded={() => setExpandedSection((v) => (v === "adhoc" ? null : "adhoc"))}
+                expanded={mainExpanded}
+                onToggleExpanded={() => setExpandedSection((v) => (v === "main" ? null : "main"))}
               />
             </div>
-            {editingInAdHoc && renderEditPanel(adHocExpanded)}
+            {!editingInAdHoc && renderEditPanel(mainExpanded)}
           </div>
-        </div>
+
+          {buckets.adhoc.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Ad Hoc Tasks</p>
+              <div className={adHocExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
+                <div className={adHocExpanded ? "flex-1 min-w-0 overflow-auto" : "flex-1 min-w-0"}>
+                  <SubtaskBoardView
+                    subtasks={buckets.adhoc}
+                    editingSubId={editingInAdHoc ? editingSubId : null}
+                    onOpenEdit={openEdit}
+                    formatDate={formatDate}
+                    StatusBadge={StatusBadge}
+                    activeProfiles={teamMembers}
+                    onMoveStatus={handleMoveStatus}
+                    currentUserId={userId}
+                    canSetSitewide={false}
+                    expanded={adHocExpanded}
+                    onToggleExpanded={() => setExpandedSection((v) => (v === "adhoc" ? null : "adhoc"))}
+                  />
+                </div>
+                {editingInAdHoc && renderEditPanel(adHocExpanded)}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
