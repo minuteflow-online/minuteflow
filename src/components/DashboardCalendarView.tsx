@@ -224,8 +224,8 @@ export default function DashboardCalendarView({ userId, isAdmin, orgTimezone }: 
                 </div>
                 <div className="space-y-1.5 min-h-[20px]">
                   {dayTasks.map((t) => (
-                    <div key={t.id} className="rounded-lg border border-sand bg-white p-2 space-y-1">
-                      <p className="text-[11px] font-semibold text-espresso leading-tight line-clamp-2">
+                    <div key={t.id} className="rounded-lg border border-sand bg-white px-2 py-1.5 space-y-1">
+                      <p className="text-[10px] font-semibold text-espresso leading-tight line-clamp-2">
                         {t.task_name}
                       </p>
                       <StatusBadge status={t.status} />
