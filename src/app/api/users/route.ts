@@ -355,6 +355,7 @@ export async function PATCH(request: Request) {
     "assignments_label",
     "emails_disabled",
     "clock_in_disabled",
+    "web_tracking_override_until",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

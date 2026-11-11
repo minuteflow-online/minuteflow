@@ -4108,6 +4108,54 @@ They will not be able to clock in or start a timer. They can still sign in, work
                                 </span>
                               </span>
                             </label>
+
+                            {(() => {
+                              const overrideActive = Boolean(
+                                p.web_tracking_override_until &&
+                                  new Date(p.web_tracking_override_until).getTime() > Date.now()
+                              );
+                              return (
+                                <label className="flex items-start gap-2 text-[12px] text-espresso cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={overrideActive}
+                                    onChange={async (e) => {
+                                      const grant = e.target.checked;
+                                      if (
+                                        grant &&
+                                        !confirm(
+                                          `Grant ${p.full_name || p.username} 24 hours of web time-tracking on Windows?
+
+For when their desktop app is broken — they'll be able to clock in and start a timer on the website again until this expires on its own.`
+                                        )
+                                      ) {
+                                        return;
+                                      }
+                                      await fetch("/api/users", {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({
+                                          user_id: p.id,
+                                          web_tracking_override_until: grant
+                                            ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+                                            : null,
+                                        }),
+                                      });
+                                      fetchData();
+                                    }}
+                                    className="mt-[2px] h-3.5 w-3.5 rounded border-sand accent-terracotta cursor-pointer"
+                                  />
+                                  <span>
+                                    Emergency web tracking (Windows)
+                                    <span className="block text-[11px] text-bark">
+                                      {overrideActive
+                                        ? `Active until ${new Date(p.web_tracking_override_until as string).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} — web Clock In / Start works again until then.`
+                                        : "Grants 24h of web Clock In / Start on Windows, for when the desktop app is broken."}
+                                    </span>
+                                  </span>
+                                </label>
+                              );
+                            })()}
                           </div>
                           {/* Payment Accounts */}
                           <div className="mt-4 pt-4 border-t border-sand/50">

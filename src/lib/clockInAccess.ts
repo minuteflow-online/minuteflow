@@ -34,3 +34,42 @@ export function clockInBlockedReason(profile: ClockInProfile | null | undefined)
 export function canClockIn(profile: ClockInProfile | null | undefined): boolean {
   return clockInBlockedReason(profile) === null;
 }
+
+export type WebTrackingProfile = {
+  web_tracking_override_until?: string | null;
+};
+
+/**
+ * True when the browser itself is running on Windows — the one signal
+ * windowsWebBlockedReason keys off. Lives here rather than a shared
+ * platform-sniffing util since this is its only caller.
+ */
+export function isWindowsBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Windows/i.test(navigator.userAgent || "");
+}
+
+/**
+ * Windows users are expected to track time through the desktop app, not the
+ * browser (Toni's call, 2026-11-11) — blocks web Clock In and Start Task
+ * when running on Windows. Blocking those two blocks web screenshot capture
+ * too for free, since that only ever runs while one of them is active.
+ *
+ * An admin-granted exception (web_tracking_override_until set to a future
+ * time) lets a specific person through regardless — the "my desktop app is
+ * broken right now" escape hatch. It expires on its own; nothing has to turn
+ * it back off.
+ *
+ * Desktop, Mac, iOS, and every other OS never see this at all — isWindows is
+ * passed in by the caller (isWindowsBrowser(), web only), and desktop has its
+ * own separate copy of clockInBlockedReason that never calls this.
+ */
+export function windowsWebBlockedReason(
+  profile: WebTrackingProfile | null | undefined,
+  isWindows: boolean
+): string | null {
+  if (!isWindows) return null;
+  const until = profile?.web_tracking_override_until;
+  if (until && new Date(until).getTime() > Date.now()) return null;
+  return "Please use the MinuteFlow desktop app to clock in and track time on Windows. If it's broken, message Toni for a temporary exception.";
+}

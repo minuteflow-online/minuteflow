@@ -41,7 +41,7 @@ import type {
   VAAssignedTask,
 } from "@/types/database";
 import { normalizePosition } from "@/types/database";
-import { clockInBlockedReason } from "@/lib/clockInAccess";
+import { clockInBlockedReason, isWindowsBrowser, windowsWebBlockedReason } from "@/lib/clockInAccess";
 import { cappedCloseTime } from "@/lib/cappedCloseTime";
 
 type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
@@ -1286,6 +1286,13 @@ export default function DashboardPage() {
     const blocked = clockInBlockedReason(profile);
     if (blocked) {
       alert(blocked);
+      return;
+    }
+    // Windows is expected to track time through the desktop app — Toni's
+    // call, 2026-11-11. See windowsWebBlockedReason's own comment.
+    const windowsBlocked = windowsWebBlockedReason(profile, isWindowsBrowser());
+    if (windowsBlocked) {
+      alert(windowsBlocked);
       return;
     }
     // Check ref synchronously — state check alone has an async race that allows
@@ -2581,6 +2588,16 @@ export default function DashboardPage() {
             }).then(() => setWidgetRefetchCount((c) => c + 1));
           }
           return; // No timer, no active task, no screenshots
+        }
+
+        // Windows is expected to track time through the desktop app — Toni's
+        // call, 2026-11-11. The Fixed Task Log branch above is exempt (it's
+        // an instant log entry, no running timer, no screenshots — not what
+        // this blocks); only the real timer path below is gated.
+        const windowsBlocked = windowsWebBlockedReason(profile, isWindowsBrowser());
+        if (windowsBlocked) {
+          alert(windowsBlocked);
+          return;
         }
 
         // Capture end screenshot for the previous task before stopping it
