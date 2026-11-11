@@ -126,15 +126,20 @@ export async function GET(request: Request) {
     });
   }
 
-  // 3. Attachments tied to those submissions.
+  // 3. Attachments tied to those submissions. Screenshots excluded — Assets,
+  // Docs & Files is for what the VA actually turned in, not evidence shots
+  // (Toni's call, 2026-11-11). A null kind is legacy data from before the
+  // screenshot/file split existed, always a deliberate upload back then, so
+  // it counts as filable same as "file".
   const subIds = Array.from(subById.keys());
   if (subIds.length > 0) {
     const { data: atts, error: aErr } = await supabase
       .from("assigned_task_attachments")
-      .select("id, submission_id, filename, uploaded_at, uploaded_by, storage_path, mime_type")
+      .select("id, submission_id, filename, uploaded_at, uploaded_by, storage_path, mime_type, kind")
       .in("submission_id", subIds);
     if (aErr) return Response.json({ error: aErr.message }, { status: 500 });
     for (const a of atts ?? []) {
+      if (a.kind === "screenshot") continue;
       const sub = subById.get(a.submission_id as number);
       const task = sub ? taskById.get(sub.task_id) : undefined;
       if (!sub || !task) continue;

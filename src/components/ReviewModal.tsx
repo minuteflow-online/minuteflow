@@ -58,6 +58,7 @@ export default function ReviewModal({
   busy,
   onReview,
   onClose,
+  initialFileToProject = false,
 }: {
   submission: ReviewableSubmission;
   busy: boolean;
@@ -69,12 +70,11 @@ export default function ReviewModal({
     fileToProject?: boolean
   ) => void;
   onClose: () => void;
+  /** "File to Assets, Docs & Files" — decided on the submission card itself,
+   *  next to SC Data, before this modal ever opens (Toni's call, 2026-11-11).
+   *  No checkbox in here anymore; Approve just carries whatever was ticked. */
+  initialFileToProject?: boolean;
 }) {
-  // Opt-in, unticked by default: only work the reviewer deems worth keeping
-  // goes into the objective/operation's Docs & Files.
-  const [fileToProject, setFileToProject] = useState(false);
-  const hasFilable =
-    Boolean(submission.submission_link?.trim()) || submission.attachments.length > 0;
   const [todos, setTodos] = useState<Todo[] | null>(null);
   const [todosError, setTodosError] = useState("");
 
@@ -555,25 +555,13 @@ export default function ReviewModal({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() =>
-                      onReview("approval", undefined, undefined, undefined, hasFilable && fileToProject)
+                      onReview("approval", undefined, undefined, undefined, initialFileToProject)
                     }
                     disabled={busy}
                     className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
                   >
                     Approve
                   </button>
-                  {hasFilable && (
-                    <label className="flex items-center gap-1.5 text-[10px] text-walnut cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={fileToProject}
-                        onChange={(e) => setFileToProject(e.target.checked)}
-                        disabled={busy}
-                        className="accent-sage"
-                      />
-                      File to Assets, Docs, &amp; Files
-                    </label>
-                  )}
                   <button
                     onClick={() => setQualityMode("revision")}
                     disabled={busy}
