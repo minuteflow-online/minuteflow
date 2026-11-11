@@ -867,6 +867,11 @@ export default function ProductivityCalendarPage() {
     [monthYear, monthMonth]
   );
   const weekGrid = useMemo(() => buildWeekGrid(selectedDate), [selectedDate]);
+  // Week view only ever shows past days and today — upcoming days are hidden
+  // from the Time Block/Duration Block/Actual Timeline grids (Toni's call,
+  // 2026-11-11). weekGrid itself stays the full Sun-Sat week: the label,
+  // budget math, and weekDates (used by Day/Compare) all still need every day.
+  const weekGridVisible = useMemo(() => weekGrid.filter((d) => d <= todayStr), [weekGrid, todayStr]);
   // The days the custom range covers. Falls back to a week from selectedDate
   // until both ends are picked, and is capped at RANGE_MAX_DAYS — past that the
   // columns are too narrow to read and the render cost stops being worth it.
@@ -3438,11 +3443,11 @@ export default function ProductivityCalendarPage() {
           {loadingDay ? (
             <div className="py-8 text-center text-xs text-stone">Loading…</div>
           ) : weekTab === "hours" ? (
-            renderDurationList(weekGrid, "Week total")
+            renderDurationList(weekGridVisible, "Week total")
           ) : weekTab === "actual" ? (
-            renderActualTimeline(weekGrid)
+            renderActualTimeline(weekGridVisible)
           ) : (
-            renderTimeGrid(weekGrid)
+            renderTimeGrid(weekGridVisible)
           )}
         </div>
       )}
