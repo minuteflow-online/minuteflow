@@ -2,8 +2,9 @@
 
 // Personal Board View for the Dashboard — shows the signed-in user's own
 // assigned tasks (plus collaborative ones, same as AssignedTasksWidget) as a
-// Kanban board, with a toggle for Objective / Operations / Both, and Ad Hoc
-// tasks (no project) always shown as their own separate, never-mixed board.
+// Kanban board, with a toggle for Objective / Operations / Both / Adhoc
+// (Toni's call, 2026-11-11 — Adhoc used to be its own always-shown board
+// below this one regardless of the toggle; it's just a 4th toggle choice now).
 //
 // Reuses the same board machinery as the Objective/Operations pages
 // (SubtaskBoardView + BOARD_COLUMNS) rather than inventing a second one.
@@ -117,10 +118,11 @@ function toSubtaskRow(row: RawAssigneeRow): { sub: SubtaskRow; bucket: Bucket } 
   return { sub, bucket };
 }
 
-const TOGGLE_OPTIONS: { value: "objective" | "operation" | "both"; label: string }[] = [
+const TOGGLE_OPTIONS: { value: "objective" | "operation" | "both" | "adhoc"; label: string }[] = [
   { value: "objective", label: "Objective" },
   { value: "operation", label: "Operations" },
   { value: "both", label: "Both" },
+  { value: "adhoc", label: "Adhoc" },
 ];
 
 interface DashboardBoardViewProps {
@@ -136,12 +138,12 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
     operation: [],
     adhoc: [],
   });
-  const [toggle, setToggle] = useState<"objective" | "operation" | "both">("both");
+  const [toggle, setToggle] = useState<"objective" | "operation" | "both" | "adhoc">("both");
   const [editingSubId, setEditingSubId] = useState<number | null>(null);
   const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
-  const [expandedSection, setExpandedSection] = useState<"main" | "adhoc" | null>(null);
+  const [expandedSection, setExpandedSection] = useState<"main" | null>(null);
   // Collapsed state is purely visual — the board keeps fetching/polling
   // underneath, same as the Subtasks reference list's own ▶/▼ toggle this
   // mirrors, so expanding it again never shows stale data.
@@ -175,7 +177,13 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
   }, [fetchBoard]);
 
   const scopedSubtasks =
-    toggle === "objective" ? buckets.objective : toggle === "operation" ? buckets.operation : [...buckets.objective, ...buckets.operation];
+    toggle === "objective"
+      ? buckets.objective
+      : toggle === "operation"
+        ? buckets.operation
+        : toggle === "adhoc"
+          ? buckets.adhoc
+          : [...buckets.objective, ...buckets.operation];
 
   const openEdit = (sub: SubtaskRow) => {
     setEditingSubId(sub.id);
@@ -231,7 +239,6 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
   if (allSubtasks.length === 0) return null;
 
   const editingSub = editingSubId != null ? allSubtasks.find((s) => s.id === editingSubId) : null;
-  const editingInAdHoc = editingSubId != null && buckets.adhoc.some((s) => s.id === editingSubId);
 
   const renderEditPanel = (expanded: boolean) => {
     if (!editingSub) return null;
@@ -289,7 +296,6 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
   };
 
   const mainExpanded = expandedSection === "main";
-  const adHocExpanded = expandedSection === "adhoc";
 
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-4">
@@ -321,50 +327,24 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
       </div>
 
       {!collapsed && (
-        <>
-          <div className={mainExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
-            <div className={mainExpanded ? "flex-1 min-w-0 overflow-auto" : "flex-1 min-w-0"}>
-              <SubtaskBoardView
-                subtasks={scopedSubtasks}
-                editingSubId={editingInAdHoc ? null : editingSubId}
-                onOpenEdit={openEdit}
-                formatDate={formatDate}
-                StatusBadge={StatusBadge}
-                activeProfiles={teamMembers}
-                onMoveStatus={handleMoveStatus}
-                currentUserId={userId}
-                canSetSitewide={false}
-                expanded={mainExpanded}
-                onToggleExpanded={() => setExpandedSection((v) => (v === "main" ? null : "main"))}
-              />
-            </div>
-            {!editingInAdHoc && renderEditPanel(mainExpanded)}
+        <div className={mainExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
+          <div className={mainExpanded ? "flex-1 min-w-0 overflow-auto" : "flex-1 min-w-0"}>
+            <SubtaskBoardView
+              subtasks={scopedSubtasks}
+              editingSubId={editingSubId}
+              onOpenEdit={openEdit}
+              formatDate={formatDate}
+              StatusBadge={StatusBadge}
+              activeProfiles={teamMembers}
+              onMoveStatus={handleMoveStatus}
+              currentUserId={userId}
+              canSetSitewide={false}
+              expanded={mainExpanded}
+              onToggleExpanded={() => setExpandedSection((v) => (v === "main" ? null : "main"))}
+            />
           </div>
-
-          {buckets.adhoc.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Ad Hoc Tasks</p>
-              <div className={adHocExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
-                <div className={adHocExpanded ? "flex-1 min-w-0 overflow-auto" : "flex-1 min-w-0"}>
-                  <SubtaskBoardView
-                    subtasks={buckets.adhoc}
-                    editingSubId={editingInAdHoc ? editingSubId : null}
-                    onOpenEdit={openEdit}
-                    formatDate={formatDate}
-                    StatusBadge={StatusBadge}
-                    activeProfiles={teamMembers}
-                    onMoveStatus={handleMoveStatus}
-                    currentUserId={userId}
-                    canSetSitewide={false}
-                    expanded={adHocExpanded}
-                    onToggleExpanded={() => setExpandedSection((v) => (v === "adhoc" ? null : "adhoc"))}
-                  />
-                </div>
-                {editingInAdHoc && renderEditPanel(adHocExpanded)}
-              </div>
-            </div>
-          )}
-        </>
+          {renderEditPanel(mainExpanded)}
+        </div>
       )}
     </div>
   );
