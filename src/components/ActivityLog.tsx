@@ -192,9 +192,11 @@ export default function ActivityLog({
   const [statusFilter, setStatusFilter] = useState<string>(""); // "in_progress" | "completed" | "on_hold" | ""
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  // Both collapsed by default (Toni's call, 2026-11-11) — Activity Log itself
+  // and its "Completed from Previous Days" section open to a shorter page.
+  const [collapsed, setCollapsed] = useState(true);
   const [page, setPage] = useState(0);
-  const [pastCollapsed, setPastCollapsed] = useState(false);
+  const [pastCollapsed, setPastCollapsed] = useState(true);
   const [pastPage, setPastPage] = useState(0);
 
   // Edit/create modal
