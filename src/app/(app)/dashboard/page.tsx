@@ -41,7 +41,7 @@ import type {
   VAAssignedTask,
 } from "@/types/database";
 import { normalizePosition } from "@/types/database";
-import { clockInBlockedReason } from "@/lib/clockInAccess";
+import { clockInBlockedReason, isWindowsBrowser, windowsWebBlockedReason } from "@/lib/clockInAccess";
 import { cappedCloseTime } from "@/lib/cappedCloseTime";
 
 type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
@@ -1288,6 +1288,10 @@ export default function DashboardPage() {
       alert(blocked);
       return;
     }
+    // Clocking in/out itself stays open on Windows web — only starting a
+    // tracked task is gated (see startTask, resumePreBreakTask,
+    // resumeOnHoldTask). Toni's call, 2026-11-11: attendance marking isn't
+    // what needs to move to the desktop app, running the timer is.
     // Check ref synchronously — state check alone has an async race that allows
     // double-clicks to both pass before either setState has landed.
     if (!userId || !profile || sessionActionPendingRef.current) return;
@@ -1845,6 +1849,13 @@ export default function DashboardPage() {
     // another action's own insert. Shares the same ref every other
     // session-mutating action in this file checks.
     if (!preBreakTask || !userId || !profile || sessionActionPendingRef.current) return;
+    // Resuming is still "running a task" — the same Windows-web gate
+    // startTask() checks. See windowsWebBlockedReason's own comment.
+    const windowsBlocked = windowsWebBlockedReason(profile, isWindowsBrowser());
+    if (windowsBlocked) {
+      alert(windowsBlocked);
+      return;
+    }
     setSessionActionPending(true);
     try {
     const now = new Date().toISOString();
@@ -2110,6 +2121,13 @@ export default function DashboardPage() {
     // Also had no guard at all before — same shared ref as every other
     // session-mutating action in this file.
     if (!userId || !profile || sessionActionPendingRef.current) return;
+    // Resuming is still "running a task" — the same Windows-web gate
+    // startTask() checks. See windowsWebBlockedReason's own comment.
+    const windowsBlocked = windowsWebBlockedReason(profile, isWindowsBrowser());
+    if (windowsBlocked) {
+      alert(windowsBlocked);
+      return;
+    }
     setSessionActionPending(true);
     try {
     const now = new Date().toISOString();
@@ -2581,6 +2599,16 @@ export default function DashboardPage() {
             }).then(() => setWidgetRefetchCount((c) => c + 1));
           }
           return; // No timer, no active task, no screenshots
+        }
+
+        // Windows is expected to track time through the desktop app — Toni's
+        // call, 2026-11-11. The Fixed Task Log branch above is exempt (it's
+        // an instant log entry, no running timer, no screenshots — not what
+        // this blocks); only the real timer path below is gated.
+        const windowsBlocked = windowsWebBlockedReason(profile, isWindowsBrowser());
+        if (windowsBlocked) {
+          alert(windowsBlocked);
+          return;
         }
 
         // Capture end screenshot for the previous task before stopping it

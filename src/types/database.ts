@@ -109,6 +109,13 @@ export interface Profile {
   // relational system is still used elsewhere, e.g. ProjectsTasksTab, for
   // real task-claim eligibility).
   assignments_label: string | null;
+  // Temporary exception to the Windows-web tracking block (clock in / start
+  // task / web screenshot capture) — set by an admin when the desktop app is
+  // broken for this person. Null = no exception, blocked as normal on
+  // Windows web; a future timestamp lets it through until then, after which
+  // it expires on its own with no separate toggle-off step. See
+  // lib/clockInAccess.ts.
+  web_tracking_override_until: string | null;
 }
 
 export interface BudgetRequest {
