@@ -2165,6 +2165,7 @@ function SubmissionEntry({
   timezone,
   canCancel,
   onCancelReversal,
+  fileToAssets,
 }: {
   item: FeedItem;
   index: number;
@@ -2178,6 +2179,10 @@ function SubmissionEntry({
   timezone: string;
   canCancel: boolean;
   onCancelReversal: (item: FeedItem) => void;
+  /** "File to Assets, Docs & Files" — only passed for the latest submission
+   *  while it's still awaiting review; undefined everywhere else, including
+   *  resubmission history rows, which already have their own outcome. */
+  fileToAssets?: { checked: boolean; onChange: (checked: boolean) => void };
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const [scOpen, setScOpen] = useState(false);
@@ -2312,6 +2317,17 @@ function SubmissionEntry({
         )}
         {/* Far right of the label line; the report opens just under it. */}
         {hasScData && <ScDataPill open={scOpen} onToggle={() => setScOpen((v) => !v)} />}
+        {fileToAssets && (
+          <label className="flex shrink-0 items-center gap-1 text-[10px] text-walnut cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={fileToAssets.checked}
+              onChange={(e) => fileToAssets.onChange(e.target.checked)}
+              className="accent-sage"
+            />
+            File to Assets
+          </label>
+        )}
       </div>
 
       {hasScData && scOpen && <ScDataPanel shots={item.sc_shots!} logs={scLogs} timezone={timezone} />}
@@ -2825,6 +2841,17 @@ function ThreadCard({
   const laterSubmissions = submissions.filter((s) => firstDayOf(s) > viewDay);
   const newestSubmission = submissions[submissions.length - 1];
 
+  // "File to Assets, Docs & Files" — moved here next to SC Data/the
+  // submission line so it's decided before Approve is ever clicked, instead
+  // of being buried in the review modal's Quality step (Toni's call,
+  // 2026-11-11). Opt-in, unticked by default. Only a VA's own uploaded files
+  // or a pasted link count — screenshots never do, even if attached to the
+  // same submission.
+  const [fileToAssets, setFileToAssets] = useState(false);
+  const hasFilable =
+    Boolean(latest.submission_link?.trim()) ||
+    latest.attachments.some((a) => a.kind !== "screenshot");
+
   const [expanded, setExpanded] = useState(autoExpand);
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -3180,9 +3207,17 @@ function ThreadCard({
                 since there's nothing here for a reviewer to judge. */}
             {latest.task?.review_required === false ? (
               <button
-                onClick={() =>
-                  onReview(latest, "approval", "Auto approved — this task does not require review")
-                }
+                onClick={() => {
+                  onReview(
+                    latest,
+                    "approval",
+                    "Auto approved — this task does not require review",
+                    undefined,
+                    undefined,
+                    hasFilable && fileToAssets
+                  );
+                  setFileToAssets(false);
+                }}
                 disabled={busy}
                 className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
               >
@@ -3357,6 +3392,11 @@ function ThreadCard({
                 timezone={timezone}
                 canCancel={canReview}
                 onCancelReversal={onCancelReversal}
+                fileToAssets={
+                  canReview && awaitingReview && hasFilable && item.id === latest.id
+                    ? { checked: fileToAssets, onChange: setFileToAssets }
+                    : undefined
+                }
               />
             );
           })}
@@ -3505,9 +3545,11 @@ function ThreadCard({
         <ReviewModal
           submission={latest}
           busy={busy}
+          initialFileToProject={hasFilable && fileToAssets}
           onReview={(outcome, note, dueAt, attachments, fileToProject) => {
             onReview(latest, outcome, note, dueAt, attachments, fileToProject);
             setReviewOpen(false);
+            setFileToAssets(false);
           }}
           onClose={() => setReviewOpen(false)}
         />
