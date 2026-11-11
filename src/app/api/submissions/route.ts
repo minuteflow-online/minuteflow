@@ -229,6 +229,9 @@ async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
       file_size: null,
       mime_type: "image/png",
       url: `/api/drive-image?id=${s.drive_file_id}`,
+      // Screen captures, never something the VA turned in: the gallery groups
+      // them under Screenshots, and they never count toward File to Assets.
+      kind: "screenshot",
     });
     bySubmission.set(s.submission_id as number, list);
   }
@@ -639,7 +642,7 @@ export async function GET(request: Request) {
     let query = admin
       .from("task_submissions")
       .select(
-        "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, progress_status, review_requested, " +
+        "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, progress_status, review_requested, filed_to_project, " +
           "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
           "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
       )

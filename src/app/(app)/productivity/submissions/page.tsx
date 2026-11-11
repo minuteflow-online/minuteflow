@@ -50,6 +50,8 @@ type FeedItem = {
    *  In Progress / Completed choice (Phase 2, Toni's call, 2026-11-02). */
   progress_status: "in_progress" | "completed" | null;
   review_requested: boolean | null;
+  /** Ticked "File to Assets" — its uploads and link show in Assets, Docs & Files. */
+  filed_to_project?: boolean | null;
   attachments: TaskSubmissionAttachment[];
   /** Every capture linked to this submission, markers included — for SC Data. */
   sc_shots?: ReportShot[];
@@ -2165,7 +2167,7 @@ function SubmissionEntry({
   timezone,
   canCancel,
   onCancelReversal,
-  fileToAssets,
+  canFile,
 }: {
   item: FeedItem;
   index: number;
@@ -2179,13 +2181,42 @@ function SubmissionEntry({
   timezone: string;
   canCancel: boolean;
   onCancelReversal: (item: FeedItem) => void;
-  /** "File to Assets, Docs & Files" — only passed for the latest submission
-   *  while it's still awaiting review; undefined everywhere else, including
-   *  resubmission history rows, which already have their own outcome. */
-  fileToAssets?: { checked: boolean; onChange: (checked: boolean) => void };
+  /** Reviewers can file any submission to Assets, Docs & Files. */
+  canFile?: boolean;
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const [scOpen, setScOpen] = useState(false);
+  // "File to Assets, Docs & Files" — on every submission with something the VA
+  // turned in, past or present, approved or not, and it stays ticked once filed
+  // (Toni's call, 2026-11-11). Ticking files it right away; unticking takes it
+  // back off. Only the VA's own uploads or a pasted link count — screen
+  // captures and process shots never do.
+  const [filed, setFiled] = useState(Boolean(item.filed_to_project));
+  const [filing, setFiling] = useState(false);
+  const filable =
+    item.message_type === "submission" &&
+    item.assigned_task_id != null &&
+    (Boolean(item.submission_link?.trim()) || item.attachments.some((a) => a.kind !== "screenshot"));
+  const toggleFiled = async (next: boolean) => {
+    setFiled(next);
+    setFiling(true);
+    try {
+      const res = await fetch(
+        `/api/assigned-tasks/${item.assigned_task_id}/submissions?submissionId=${item.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filed_to_project: next }),
+        }
+      );
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Couldn't update");
+    } catch (err) {
+      setFiled(!next);
+      alert(err instanceof Error ? err.message : "Couldn't update File to Assets");
+    } finally {
+      setFiling(false);
+    }
+  };
   // When it was handed in, in org time like every other day on this page.
   const time = formatStamp(new Date(item.created_at).getTime(), timezone, true);
 
@@ -2317,15 +2348,19 @@ function SubmissionEntry({
         )}
         {/* Far right of the label line; the report opens just under it. */}
         {hasScData && <ScDataPill open={scOpen} onToggle={() => setScOpen((v) => !v)} />}
-        {fileToAssets && (
-          <label className="flex shrink-0 items-center gap-1 text-[10px] text-walnut cursor-pointer select-none">
+        {canFile && filable && (
+          <label
+            className={`flex shrink-0 cursor-pointer select-none items-center gap-1 text-[10px] text-walnut ${hasScData ? "" : "ml-auto"}`}
+            title={filed ? "Filed to Assets, Docs & Files — untick to take it off" : "File this submission's uploads and link to Assets, Docs & Files"}
+          >
             <input
               type="checkbox"
-              checked={fileToAssets.checked}
-              onChange={(e) => fileToAssets.onChange(e.target.checked)}
-              className="accent-sage"
+              checked={filed}
+              disabled={filing}
+              onChange={(e) => toggleFiled(e.target.checked)}
+              className="accent-sage disabled:opacity-50"
             />
-            File to Assets
+            {filed ? "Filed to Assets" : "File to Assets"}
           </label>
         )}
       </div>
@@ -2841,17 +2876,6 @@ function ThreadCard({
   const laterSubmissions = submissions.filter((s) => firstDayOf(s) > viewDay);
   const newestSubmission = submissions[submissions.length - 1];
 
-  // "File to Assets, Docs & Files" — moved here next to SC Data/the
-  // submission line so it's decided before Approve is ever clicked, instead
-  // of being buried in the review modal's Quality step (Toni's call,
-  // 2026-11-11). Opt-in, unticked by default. Only a VA's own uploaded files
-  // or a pasted link count — screenshots never do, even if attached to the
-  // same submission.
-  const [fileToAssets, setFileToAssets] = useState(false);
-  const hasFilable =
-    Boolean(latest.submission_link?.trim()) ||
-    latest.attachments.some((a) => a.kind !== "screenshot");
-
   const [expanded, setExpanded] = useState(autoExpand);
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -3213,10 +3237,8 @@ function ThreadCard({
                     "approval",
                     "Auto approved — this task does not require review",
                     undefined,
-                    undefined,
-                    hasFilable && fileToAssets
+                    undefined
                   );
-                  setFileToAssets(false);
                 }}
                 disabled={busy}
                 className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
@@ -3392,11 +3414,7 @@ function ThreadCard({
                 timezone={timezone}
                 canCancel={canReview}
                 onCancelReversal={onCancelReversal}
-                fileToAssets={
-                  canReview && awaitingReview && hasFilable && item.id === latest.id
-                    ? { checked: fileToAssets, onChange: setFileToAssets }
-                    : undefined
-                }
+                canFile={canReview}
               />
             );
           })}
@@ -3545,11 +3563,9 @@ function ThreadCard({
         <ReviewModal
           submission={latest}
           busy={busy}
-          initialFileToProject={hasFilable && fileToAssets}
-          onReview={(outcome, note, dueAt, attachments, fileToProject) => {
-            onReview(latest, outcome, note, dueAt, attachments, fileToProject);
+          onReview={(outcome, note, dueAt, attachments) => {
+            onReview(latest, outcome, note, dueAt, attachments);
             setReviewOpen(false);
-            setFileToAssets(false);
           }}
           onClose={() => setReviewOpen(false)}
         />
