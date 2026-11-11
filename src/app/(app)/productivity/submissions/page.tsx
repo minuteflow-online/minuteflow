@@ -30,8 +30,16 @@ import {
   timelinessOf as sharedTimelinessOf,
   type Timeliness,
 } from "@/lib/onTime";
-import { allocateTaskTime, formatStamp, roundDays, workedSpanLabel, type RoundTime, type TaskTime } from "@/lib/submissionTime";
-import { buildShotSessions, formatCaptureTime, type ReportLog, type ReportShot } from "@/lib/screenshotReport";
+import {
+  allocateTaskTime,
+  formatStamp,
+  roundDays,
+  splitAcrossDays,
+  workedSpanLabel,
+  type RoundTime,
+  type TaskTime,
+} from "@/lib/submissionTime";
+import { buildShotSessions, exactCaptureTime, formatCaptureTime, type ReportLog, type ReportShot } from "@/lib/screenshotReport";
 import { CaptureGapPills, CaptureStatePills } from "@/components/ScreenshotReportPills";
 
 type FeedItem = {
@@ -86,6 +94,37 @@ type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
  * done, holding that day's round and the rounds before it — never later ones.
  */
 type DayCard = { key: string; day: string; thread: Thread };
+
+/** Time tracked on a task that has no submission on this page yet. */
+type PotentialTask = {
+  task: {
+    id: number;
+    task_name: string;
+    task_detail: string | null;
+    account: string | null;
+    project_id: string | null;
+    project_kind: string | null;
+    project_name: string | null;
+    category: string | null;
+    assigned_by: string | null;
+    is_output_based: boolean;
+    due_date: string | null;
+  };
+  /** [user_id, start_time, duration_ms] */
+  logs: Array<[string, string, number]>;
+};
+
+/** One day header: counted across every page, not just the one showing. */
+type DayStats = {
+  submissionCount: number;
+  needsReview: number;
+  /** Submitted time worked that day. */
+  submittedMs: number;
+  /** All task time worked that day, submitted or not. */
+  potentialMs: number;
+  /** The hover: one line per task and person. */
+  breakdown: string;
+};
 
 /** A file already uploaded to `task-attachments` via the signed-slot route,
  *  waiting to be hung off the submission row it's posted with. Mirrors what
@@ -525,6 +564,8 @@ function SubmissionsPageInner() {
   // Raw material for each task's time — split into rounds and days below.
   const [taskSubmissions, setTaskSubmissions] = useState<Record<string, Array<{ id: number; created_at: string }>>>({});
   const [taskLogs, setTaskLogs] = useState<Record<string, Array<[string | null, number | null]>>>({});
+  const [potentialTasks, setPotentialTasks] = useState<PotentialTask[]>([]);
+  const [potentialPeople, setPotentialPeople] = useState<Record<string, string>>({});
   // Time logs the SC Data captures ran under, for the report's capture gaps.
   const [scLogs, setScLogs] = useState<Record<number, ReportLog>>({});
   const [reviewState, setReviewState] = useState<Record<string, string>>({});
@@ -709,6 +750,8 @@ function SubmissionsPageInner() {
       setTaskSubmissions(data.taskSubmissions ?? {});
       setTaskLogs(data.taskLogs ?? {});
       setScLogs(data.scLogs ?? {});
+      setPotentialTasks(data.potentialTasks ?? []);
+      setPotentialPeople(data.potentialPeople ?? {});
       setReviewState(data.reviewState ?? {});
       setCanReview(Boolean(data.canReview));
       setCanEmptyTrash(Boolean(data.canEmptyTrash));
@@ -1391,6 +1434,130 @@ This cannot be undone.`
     return map;
   }, [allCards, safePage]);
 
+  // Each day's header numbers, counted across EVERY page — a day whose cards
+  // continue onto the next page still shows its whole total (2026-11-11).
+  //   Submitted: submitted time worked that day, whenever it was handed in.
+  //   Potential: all task time worked that day, submitted or not — including
+  //   tasks that haven't been submitted at all yet (Toni's call, 2026-11-11).
+  // Both follow the filters. Only assigned-task time counts.
+  const dayStats = useMemo(() => {
+    type Line = { label: string; submittedMs: number; potentialMs: number; late: Set<string> };
+    type Acc = { submissionCount: number; needs: Set<number>; lines: Map<string, Line> };
+    const acc = new Map<string, Acc>();
+    const at = (day: string) => {
+      let d = acc.get(day);
+      if (!d) {
+        d = { submissionCount: 0, needs: new Set(), lines: new Map() };
+        acc.set(day, d);
+      }
+      return d;
+    };
+    const line = (day: string, key: string, label: string) => {
+      const d = at(day);
+      let l = d.lines.get(key);
+      if (!l) {
+        l = { label, submittedMs: 0, potentialMs: 0, late: new Set() };
+        d.lines.set(key, l);
+      }
+      return l;
+    };
+
+    for (const card of allCards) {
+      const d = at(card.day);
+      const time = taskTimes.get(card.thread.taskId);
+      d.submissionCount += card.thread.items.filter(
+        (i) => i.message_type === "submission" && itemDays(i, time, orgTimezone).includes(card.day)
+      ).length;
+      // Matches the cards exactly: anything still awaiting a decision counts.
+      const state = reviewState[String(card.thread.taskId)];
+      if (state === undefined || state === "awaiting") d.needs.add(card.thread.taskId);
+    }
+    // Only days that have a card get a header to show numbers on.
+    const days = new Set(acc.keys());
+
+    for (const thread of allThreads) {
+      const time = taskTimes.get(thread.taskId);
+      if (!time) continue;
+      const head = thread.items.find((i) => i.message_type === "submission") ?? thread.items[0];
+      const label = `${head.task?.task_name ?? "Task"} — ${head.profiles?.full_name || head.profiles?.username || "Unknown"}`;
+      const key = `t${thread.taskId}`;
+      const byId = new Map(thread.items.map((i) => [i.id, i]));
+      for (const [sid, round] of Object.entries(time.bySubmission)) {
+        const sub = byId.get(Number(sid));
+        const submittedDay = sub ? localDay(sub.created_at, orgTimezone) : null;
+        for (const [day, ms] of Object.entries(round.byDay)) {
+          if (!days.has(day) || ms <= 0) continue;
+          const l = line(day, key, label);
+          l.submittedMs += ms;
+          l.potentialMs += ms;
+          if (submittedDay && submittedDay > day) l.late.add(submittedDay);
+        }
+      }
+      for (const [day, ms] of Object.entries(time.unsubmittedByDay)) {
+        if (!days.has(day) || ms <= 0) continue;
+        line(day, key, label).potentialMs += ms;
+      }
+    }
+
+    // Tasks with time but nothing submitted yet. The submission-only filters
+    // (status other than In Progress, submission date, unread, flagged) can't
+    // match work that was never handed in, so they leave it out.
+    const clientAccounts = new Set<string>();
+    for (const clientId of clientFilter) for (const name of accountsByClient.get(clientId) ?? []) clientAccounts.add(name);
+    const term = search.trim().toLowerCase();
+    const taskPasses = (t: PotentialTask["task"]) => {
+      if (scopeFilter.size > 0 && !scopeFilter.has(!t.project_id ? "adhoc" : (t.project_kind ?? ""))) return false;
+      if (projectFilter.size > 0 && !(t.project_id && projectFilter.has(t.project_id))) return false;
+      if (ownerMode === "to_me" && t.assigned_by !== currentUserId) return false;
+      if (assignedByFilter.size > 0 && !(t.assigned_by && assignedByFilter.has(t.assigned_by))) return false;
+      if (term && ![t.task_name, t.task_detail, t.account, t.project_name].some((f) => f && f.toLowerCase().includes(term)))
+        return false;
+      if (statusFilter.size > 0 && !statusFilter.has("in_progress")) return false;
+      if (categoryFilter.size > 0 && !categoryFilter.has((t.category ?? "").trim())) return false;
+      if (workTypeFilter.size > 0 && !workTypeFilter.has(t.is_output_based ? "output_based" : "time_based")) return false;
+      if (accountFilter.size > 0 && !(t.account && accountFilter.has(t.account))) return false;
+      if (clientFilter.size > 0 && !(t.account && clientAccounts.has(t.account))) return false;
+      if (taskDateFrom || taskDateTo) {
+        if (!t.due_date) return false;
+        if (taskDateFrom && t.due_date < taskDateFrom) return false;
+        if (taskDateTo && t.due_date > taskDateTo) return false;
+      }
+      if (submissionDateFrom || submissionDateTo || unreadOnly || flaggedOnly) return false;
+      return true;
+    };
+    for (const pt of potentialTasks) {
+      if (!taskPasses(pt.task)) continue;
+      for (const [uid, start, dur] of pt.logs) {
+        if (vaFilter.size > 0 && !vaFilter.has(uid)) continue;
+        if (ownerMode === "mine" && uid !== currentUserId) continue;
+        for (const [day, ms] of Object.entries(splitAcrossDays(Date.parse(start), dur, orgTimezone))) {
+          if (!days.has(day) || ms <= 0) continue;
+          line(day, `p${pt.task.id}-${uid}`, `${pt.task.task_name} — ${potentialPeople[uid] ?? "Unknown"} (not submitted yet)`)
+            .potentialMs += ms;
+        }
+      }
+    }
+
+    const out = new Map<string, DayStats>();
+    for (const [day, d] of acc) {
+      const lines = Array.from(d.lines.values()).sort((a, b) => b.potentialMs - a.potentialMs);
+      out.set(day, {
+        submissionCount: d.submissionCount,
+        needsReview: d.needs.size,
+        submittedMs: lines.reduce((n, l) => n + l.submittedMs, 0),
+        potentialMs: lines.reduce((n, l) => n + l.potentialMs, 0),
+        breakdown: lines
+          .map(
+            (l) =>
+              `${l.label}: ${formatDuration(l.submittedMs)} submitted / ${formatDuration(l.potentialMs)} potential` +
+              (l.late.size > 0 ? ` · submitted ${Array.from(l.late).sort().map(formatDayKey).join(", ")}` : "")
+          )
+          .join("\n"),
+      });
+    }
+    return out;
+  }, [allCards, allThreads, taskTimes, reviewState, orgTimezone, potentialTasks, potentialPeople, scopeFilter, projectFilter, ownerMode, currentUserId, assignedByFilter, search, statusFilter, categoryFilter, workTypeFilter, accountFilter, clientFilter, accountsByClient, taskDateFrom, taskDateTo, submissionDateFrom, submissionDateTo, unreadOnly, flaggedOnly, vaFilter]);
+
   // What "select all" means: every task on the current page — not every task
   // matching the filters across every page, which would let one click quietly
   // stage a batch approval of work nobody has actually looked at yet.
@@ -1823,6 +1990,7 @@ This cannot be undone.`
       {view === "timeline" ? (
         <TimelineView
           byDay={threadsByDay}
+          dayStats={dayStats}
           orgTimezone={orgTimezone}
           canReview={canReview}
           busyId={busyId}
@@ -1868,47 +2036,24 @@ This cannot be undone.`
 function DayGroup({
   day,
   orgTimezone,
-  threads,
-  reviewState,
-  taskTimes,
+  stats,
   children,
 }: {
   day: string;
   orgTimezone: string;
-  threads: Thread[];
-  reviewState: Record<string, string>;
-  taskTimes: Map<number, TaskTime>;
+  /** Counted across every page by the page itself (dayStats). */
+  stats: DayStats | undefined;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
 
-  // Only work done on this day counts toward its total — every submitted
-  // round's time lands on the day it was logged, whenever it was handed in
-  // (Toni's call, 2026-11-09). Time not yet submitted counts nowhere.
-  const perTask = threads.map((t) => {
-    const time = taskTimes.get(t.taskId);
-    return Object.values(time?.bySubmission ?? {}).reduce((sum, r) => sum + (r.byDay[day] ?? 0), 0);
-  });
-  const dayTotalMs = perTask.reduce((a, b) => a + b, 0);
-  const timedCount = perTask.filter((ms) => ms > 0).length;
-
-  // Rounds that belong to this day — not every submission the task ever had.
-  const submissionCount = threads.reduce(
-    (n, t) =>
-      n +
-      t.items.filter(
-        (i) => i.message_type === "submission" && itemDays(i, taskTimes.get(t.taskId), orgTimezone).includes(day)
-      ).length,
-    0
-  );
-  // Matches the cards exactly: anything still awaiting a decision counts.
-  // Auto-approved work is already excluded by its state, so testing
-  // review_required as well used to hide a reversed auto-approval — the card
-  // said Needs review while the day header pretended nothing was waiting.
-  const needsReview = threads.filter((t) => {
-    const state = reviewState[String(t.taskId)];
-    return state === undefined || state === "awaiting";
-  }).length;
+  const submissionCount = stats?.submissionCount ?? 0;
+  // Anything still awaiting a decision. Auto-approved work is already excluded
+  // by its state, so testing review_required as well used to hide a reversed
+  // auto-approval — the card said Needs review while the header didn't.
+  const needsReview = stats?.needsReview ?? 0;
+  const submittedMs = stats?.submittedMs ?? 0;
+  const potentialMs = stats?.potentialMs ?? 0;
 
   return (
     <div className="px-3 py-2">
@@ -1936,12 +2081,21 @@ function DayGroup({
         <span className="text-[10px] text-stone">
           {submissionCount} submission{submissionCount === 1 ? "" : "s"}
         </span>
-        {dayTotalMs > 0 && (
+        {potentialMs > 0 && (
           <span
-            className="text-[11px] font-semibold tabular-nums text-walnut"
-            title={`Submitted work done on this day, across ${timedCount} task${timedCount === 1 ? "" : "s"} — counted on the day the work was logged, whenever it was handed in`}
+            className="flex items-baseline gap-2 tabular-nums"
+            title={
+              "Work done on this day — Potential is all task time, Submitted is what's been handed in. " +
+              "Counted on the day the work was done, whenever it was submitted.\n\n" +
+              (stats?.breakdown ?? "")
+            }
           >
-            {formatDuration(dayTotalMs)} total
+            <span className="text-[11px] text-stone">
+              Potential <span className="font-semibold text-walnut">{formatDuration(potentialMs)}</span>
+            </span>
+            <span className="text-[11px] text-stone">
+              Submitted <span className="font-semibold text-walnut">{formatDuration(submittedMs)}</span>
+            </span>
           </span>
         )}
         {needsReview > 0 && (
@@ -2168,6 +2322,7 @@ function SubmissionEntry({
   canCancel,
   onCancelReversal,
   canFile,
+  viewDay,
 }: {
   item: FeedItem;
   index: number;
@@ -2183,6 +2338,8 @@ function SubmissionEntry({
   onCancelReversal: (item: FeedItem) => void;
   /** Reviewers can file any submission to Assets, Docs & Files. */
   canFile?: boolean;
+  /** The day card this entry sits on: only captures from that day or earlier show. */
+  viewDay?: string;
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const [scOpen, setScOpen] = useState(false);
@@ -2281,7 +2438,18 @@ function SubmissionEntry({
   // old "Submitted Nov 9 · work Nov 8" pill, which said the same thing twice.
   const sessions = round?.sessions ?? [];
   const worked = workedSpanLabel(sessions, timezone);
-  const hasScData = (item.sc_shots?.length ?? 0) > 0;
+  // Screenshots sit on the day they were taken: a day card holds that day's
+  // captures and earlier ones, never a later day's (Toni's call, 2026-11-11).
+  const shownShots = (item.sc_shots ?? []).filter(
+    (s) => !viewDay || localDay(exactCaptureTime(s) ?? s.created_at, timezone) <= viewDay
+  );
+  const hiddenShotIds = new Set(
+    (item.sc_shots ?? []).filter((s) => !shownShots.includes(s)).map((s) => -s.id)
+  );
+  // Gallery screenshots carry the capture id, negated (see the feed route).
+  const galleryAttachments =
+    hiddenShotIds.size > 0 ? item.attachments.filter((a) => !hiddenShotIds.has(a.id)) : item.attachments;
+  const hasScData = shownShots.length > 0;
 
   return (
     <div
@@ -2365,7 +2533,7 @@ function SubmissionEntry({
         )}
       </div>
 
-      {hasScData && scOpen && <ScDataPanel shots={item.sc_shots!} logs={scLogs} timezone={timezone} />}
+      {hasScData && scOpen && <ScDataPanel shots={shownShots} logs={scLogs} timezone={timezone} />}
 
       {/* Capped with its own scroll: a write-up can run to twenty lines, and at
           full height one entry pushes every other submission off the screen. */}
@@ -2391,7 +2559,7 @@ function SubmissionEntry({
         </div>
       )}
 
-      {item.attachments.length > 0 && <AttachmentGallery attachments={item.attachments} />}
+      {galleryAttachments.length > 0 && <AttachmentGallery attachments={galleryAttachments} />}
 
     </div>
   );
@@ -3415,6 +3583,7 @@ function ThreadCard({
                 canCancel={canReview}
                 onCancelReversal={onCancelReversal}
                 canFile={canReview}
+                viewDay={viewDay}
               />
             );
           })}
@@ -3576,6 +3745,7 @@ function ThreadCard({
 
 function TimelineView({
   byDay,
+  dayStats,
   orgTimezone,
   canReview,
   busyId,
@@ -3600,6 +3770,7 @@ function TimelineView({
   highlightTaskId,
 }: {
   byDay: Map<string, DayCard[]>;
+  dayStats: Map<string, DayStats>;
   orgTimezone: string;
   canReview: boolean;
   busyId: number | null;
@@ -3661,9 +3832,7 @@ function TimelineView({
           key={day}
           day={day}
           orgTimezone={orgTimezone}
-          threads={(byDay.get(day) ?? []).map((c) => c.thread)}
-          reviewState={reviewState}
-          taskTimes={taskTimes}
+          stats={dayStats.get(day)}
         >
             {(byDay.get(day) ?? []).map(({ key, thread }) => (
               <ThreadCard

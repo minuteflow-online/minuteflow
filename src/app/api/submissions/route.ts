@@ -3,6 +3,7 @@ import { createClient as createAdminClient, type SupabaseClient } from "@supabas
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canEmptySubmissionTrash, canReviewSubmissions } from "@/lib/submissions";
 import { isUnreadCandidate } from "@/lib/submissionUnread";
+import { placeShotsByWork } from "@/lib/submissionTime";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -162,7 +163,6 @@ async function loadAttachments(
  * them directly from drive_file_id (same route ActivityLog's thumbnails use).
  */
 async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
-  const bySubmission = new Map<number, Array<Record<string, unknown>>>();
   /**
    * Every capture linked to a submission — markers ("Computer idle", "no
    * browser view") included — for the SC Data pill, which runs Admin's
@@ -171,7 +171,7 @@ async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
   const reportBySubmission = new Map<number, Array<Record<string, unknown>>>();
   /** The time logs those captures ran under, for the report's capture gaps. */
   const reportLogs: Record<number, { start_time: string | null; end_time: string | null; category: string | null }> = {};
-  if (submissionIds.length === 0) return { bySubmission, reportBySubmission, reportLogs };
+  if (submissionIds.length === 0) return { reportBySubmission, reportLogs };
 
   const idChunks: number[][] = [];
   for (let i = 0; i < submissionIds.length; i += 100) idChunks.push(submissionIds.slice(i, i + 100));
@@ -192,11 +192,14 @@ async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
     )
   ).flatMap((r) => r.data ?? []) as Array<Record<string, unknown>>;
 
+  // Keyed by the submission each capture is linked to for now; the GET handler
+  // re-places them by the work they were taken during (placeShotsByWork) once
+  // every task's submissions are known.
   for (const s of allRows) {
-    const { submission_id: sid, ...shot } = s;
-    const list = reportBySubmission.get(sid as number) ?? [];
-    list.push(shot);
-    reportBySubmission.set(sid as number, list);
+    const sid = s.submission_id as number;
+    const list = reportBySubmission.get(sid) ?? [];
+    list.push(s);
+    reportBySubmission.set(sid, list);
   }
 
   const logIds = Array.from(
@@ -216,26 +219,139 @@ async function loadScreenshots(admin: AdminClient, submissionIds: number[]) {
     }
   }
 
-  // Only real images ride in the gallery; markers have nothing to show.
-  const rows = allRows.filter((s) => s.drive_file_id != null);
-  for (const s of rows) {
-    const list = bySubmission.get(s.submission_id as number) ?? [];
-    list.push({
-      // Negative, so it can never collide with a real assigned_task_attachments
-      // id when both ride in the same array (that table's ids only ever go up).
-      id: -(s.id as number),
-      filename: s.filename || "screenshot.png",
-      storage_path: "",
-      file_size: null,
-      mime_type: "image/png",
-      url: `/api/drive-image?id=${s.drive_file_id}`,
-      // Screen captures, never something the VA turned in: the gallery groups
-      // them under Screenshots, and they never count toward File to Assets.
-      kind: "screenshot",
-    });
-    bySubmission.set(s.submission_id as number, list);
+  return { reportBySubmission, reportLogs };
+}
+
+/**
+ * A capture as a gallery attachment. Only real images ride in the gallery;
+ * markers have nothing to show.
+ */
+function shotAttachment(s: Record<string, unknown>) {
+  return {
+    // Negative, so it can never collide with a real assigned_task_attachments
+    // id when both ride in the same array (that table's ids only ever go up).
+    // The page maps it back to the capture (-id) to place it by day.
+    id: -(s.id as number),
+    filename: (s.filename as string) || "screenshot.png",
+    storage_path: "",
+    file_size: null,
+    mime_type: "image/png",
+    url: `/api/drive-image?id=${s.drive_file_id}`,
+    // Screen captures, never something the VA turned in: the gallery groups
+    // them under Screenshots, and they never count toward File to Assets.
+    kind: "screenshot",
+  };
+}
+
+/**
+ * Time tracked on tasks that have no submission on this page yet — the part of
+ * a day's Potential the feed itself can't see (Toni's call, 2026-11-11). Only
+ * assigned-task time: breaks, sorting and other non-task time stay out. Same
+ * visibility as the feed: a non-admin sees their own time and time on tasks
+ * they assigned or are on.
+ */
+async function loadPotentialTasks(
+  admin: AdminClient,
+  opts: {
+    since: string;
+    excludeTaskIds: Set<number>;
+    isAdminEquivalent: boolean;
+    userId: string;
+    myTaskIds: Set<number>;
+    va: string | null;
+    scope: string | null;
+    projectId: string | null;
   }
-  return { bySubmission, reportBySubmission, reportLogs };
+) {
+  const potentialTasks: Array<{
+    task: Record<string, unknown>;
+    logs: Array<[string, string, number]>;
+  }> = [];
+  const potentialPeople: Record<string, string> = {};
+
+  const { data: logData } = await fetchAllPages((from, to) =>
+    admin
+      .from("time_logs")
+      .select("assigned_task_id, user_id, start_time, duration_ms")
+      .not("assigned_task_id", "is", null)
+      .gte("start_time", opts.since)
+      .gt("duration_ms", 0)
+      .order("id")
+      .range(from, to)
+  );
+  let logs = ((logData ?? []) as Array<{
+    assigned_task_id: number;
+    user_id: string;
+    start_time: string;
+    duration_ms: number;
+  }>).filter((l) => !opts.excludeTaskIds.has(l.assigned_task_id));
+  if (opts.isAdminEquivalent && opts.va && opts.va !== "all") logs = logs.filter((l) => l.user_id === opts.va);
+  if (logs.length === 0) return { potentialTasks, potentialPeople };
+
+  const taskIds = Array.from(new Set(logs.map((l) => l.assigned_task_id)));
+  const tasks = new Map<number, Record<string, unknown> & { projects?: { kind: string; name: string } | null }>();
+  for (let i = 0; i < taskIds.length; i += 200) {
+    const { data } = await admin
+      .from("assigned_tasks")
+      .select(
+        "id, task_name, task_detail, account, project, project_id, category, assigned_by, fixed_pay_task_id, due_date, projects(name, kind)"
+      )
+      .in("id", taskIds.slice(i, i + 200));
+    for (const t of (data ?? []) as unknown as Array<Record<string, unknown> & { projects?: { kind: string; name: string } | null }>) {
+      tasks.set(t.id as number, t);
+    }
+  }
+
+  const byTask = new Map<number, Array<[string, string, number]>>();
+  for (const l of logs) {
+    const task = tasks.get(l.assigned_task_id);
+    if (!task) continue;
+    if (
+      !opts.isAdminEquivalent &&
+      l.user_id !== opts.userId &&
+      task.assigned_by !== opts.userId &&
+      !opts.myTaskIds.has(l.assigned_task_id)
+    )
+      continue;
+    if (opts.projectId && opts.projectId !== "all") {
+      if (task.project_id !== opts.projectId) continue;
+    } else if (opts.scope === "adhoc") {
+      if (task.project_id) continue;
+    } else if (opts.scope === "objective" || opts.scope === "operation") {
+      if (task.projects?.kind !== opts.scope) continue;
+    }
+    const list = byTask.get(l.assigned_task_id) ?? [];
+    list.push([l.user_id, l.start_time, l.duration_ms]);
+    byTask.set(l.assigned_task_id, list);
+  }
+
+  const userIds = Array.from(new Set(Array.from(byTask.values()).flatMap((list) => list.map(([u]) => u))));
+  for (let i = 0; i < userIds.length; i += 200) {
+    const { data } = await admin.from("profiles").select("id, full_name, username").in("id", userIds.slice(i, i + 200));
+    for (const p of data ?? []) potentialPeople[p.id as string] = (p.full_name as string) || (p.username as string) || "Unknown";
+  }
+
+  for (const [taskId, taskLogs] of byTask) {
+    const t = tasks.get(taskId)!;
+    potentialTasks.push({
+      task: {
+        id: t.id,
+        task_name: t.task_name,
+        task_detail: t.task_detail,
+        account: t.account,
+        project: t.project,
+        project_id: t.project_id,
+        project_kind: t.projects?.kind ?? null,
+        project_name: t.projects?.name ?? null,
+        category: t.category,
+        assigned_by: t.assigned_by,
+        is_output_based: t.fixed_pay_task_id != null,
+        due_date: t.due_date,
+      },
+      logs: taskLogs,
+    });
+  }
+  return { potentialTasks, potentialPeople };
 }
 
 /**
@@ -795,15 +911,68 @@ export async function GET(request: Request) {
   // stacking, not any single slow query, was the real source of "submissions
   // takes a while to load": roughly half a dozen sequential Supabase
   // round-trips add up fast even when each one individually is fine.
-  const [filesBySubmission, screenshotData, roundData, expected, unreadByTask] = await Promise.all([
+  // Potential time on tasks with nothing on this page yet. Bounded to a month
+  // before the oldest submission shown — no day earlier than that has a card
+  // to show it on.
+  const oldest = rows.reduce<string | null>(
+    (min, r) => (min == null || (r.created_at as string) < min ? (r.created_at as string) : min),
+    null
+  );
+  const potentialPromise =
+    oldest && !showTrash
+      ? loadPotentialTasks(admin, {
+          since: new Date(new Date(oldest).getTime() - 31 * 86_400_000).toISOString(),
+          excludeTaskIds: new Set(taskIds),
+          isAdminEquivalent,
+          userId: user.id,
+          myTaskIds,
+          va,
+          scope,
+          projectId,
+        })
+      : Promise.resolve({ potentialTasks: [], potentialPeople: {} as Record<string, string> });
+
+  const [filesBySubmission, screenshotData, roundData, expected, unreadByTask, potential] = await Promise.all([
     loadAttachments(admin, submissionIds, rows),
     loadScreenshots(admin, submissionIds),
     loadRoundData(admin, taskIds, completedTasks),
     expectedPromise,
     loadUnreadByTask(admin, rows, user.id),
+    potentialPromise,
   ]);
+  const { potentialTasks, potentialPeople } = potential;
   const { taskSubmissions, taskLogs, reviewState, flaggedTasks } = roundData;
-  const { bySubmission: screenshotsBySubmission, reportBySubmission, reportLogs } = screenshotData;
+  const { reportBySubmission: linkedShots, reportLogs } = screenshotData;
+
+  // Screenshots follow the work, not the submission that happened to pick them
+  // up (Toni's call, 2026-11-11): each capture goes to the round that owns the
+  // time log it was taken during — the same rule the time follows. Done per
+  // task, against all of that task's submissions.
+  const taskOfSubmission = new Map(rows.map((r) => [r.id, r.assigned_tasks?.id ?? null] as const));
+  const shotsByTask = new Map<number, Array<Record<string, unknown>>>();
+  for (const [sid, shots] of linkedShots) {
+    const taskId = taskOfSubmission.get(sid);
+    if (taskId == null) continue;
+    shotsByTask.set(taskId, [...(shotsByTask.get(taskId) ?? []), ...shots]);
+  }
+  const logStartById: Record<number, string | null> = {};
+  for (const [id, l] of Object.entries(reportLogs)) logStartById[Number(id)] = l.start_time;
+  const reportBySubmission = new Map<number, Array<Record<string, unknown>>>();
+  const screenshotsBySubmission = new Map<number, Array<Record<string, unknown>>>();
+  for (const [taskId, shots] of shotsByTask) {
+    const placed = placeShotsByWork(
+      shots as Array<Record<string, unknown> & { submission_id: number | null; log_id: number | null }>,
+      taskSubmissions[taskId] ?? [],
+      logStartById
+    );
+    for (const [sid, list] of placed) {
+      reportBySubmission.set(sid, list);
+      screenshotsBySubmission.set(
+        sid,
+        list.filter((s) => s.drive_file_id != null).map(shotAttachment)
+      );
+    }
+  }
 
   const submissions = rows.map((row) => {
     const task = row.assigned_tasks;
@@ -855,6 +1024,8 @@ export async function GET(request: Request) {
     taskSubmissions,
     taskLogs,
     scLogs: reportLogs,
+    potentialTasks,
+    potentialPeople,
     reviewState,
     flaggedTasks,
     unreadByTask,
