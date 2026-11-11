@@ -8,7 +8,7 @@ import { useState } from "react";
 import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import BudgetWidget from "@/components/BudgetWidget";
-import type { VAAssignedTask } from "@/types/database";
+import type { VAAssignedTask, Profile } from "@/types/database";
 import type { TaskTodo } from "@/lib/taskTodos";
 
 type Tab = "log" | "assigned" | "budget";
@@ -34,6 +34,9 @@ interface TaskWidgetsTabsProps {
   onStartTask: (data: TaskFormData) => void;
   role: string;
   activeTaskClientMemo: string;
+  /** For the admin-only "View as VA" picker on the Assigned Tasks tab
+   *  (Toni's call, 2026-11-11) — same pattern as the Assignment page's own. */
+  teamMembers?: Profile[];
 }
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -62,8 +65,11 @@ export default function TaskWidgetsTabs({
   onStartTask,
   role,
   activeTaskClientMemo,
+  teamMembers = [],
 }: TaskWidgetsTabsProps) {
   const [activeTab, setActiveTab] = useState<Tab>("assigned");
+  // Admin-only "View as VA" on the Assigned Tasks tab — null means "my own".
+  const [viewAsVaId, setViewAsVaId] = useState<string | null>(null);
 
   return (
     <div className="rounded-xl border border-sand bg-white">
@@ -96,22 +102,44 @@ export default function TaskWidgetsTabs({
           />
         )}
         {activeTab === "assigned" && (
-          <AssignedTasksWidget
-            key={`assigned-${assignedKey}`}
-            userId={userId}
-            sessionState={sessionState}
-            hasActiveTask={hasActiveTask}
-            onPlayAssignedTask={onPlayAssignedTask}
-            onPlayTodo={onPlayTodo}
-            onStopActiveTask={onStopActiveTask}
-            onActiveTaskSubmitted={onActiveTaskSubmitted}
-            orgTimezone={orgTimezone}
-            isAdmin={isAdmin}
-            refetchCount={refetchCount}
-            activeAssignedTaskId={activeAssignedTaskId}
-            activeTodoLabel={activeTodoLabel}
-            bare
-          />
+          <>
+            {isAdmin && teamMembers.length > 0 && (
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View as VA:</span>
+                <select
+                  value={viewAsVaId ?? ""}
+                  onChange={(e) => setViewAsVaId(e.target.value || null)}
+                  className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                >
+                  <option value="">My View</option>
+                  {teamMembers
+                    .filter((p) => p.id !== userId)
+                    .slice()
+                    .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""))
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>{p.full_name}</option>
+                    ))}
+                </select>
+              </div>
+            )}
+            <AssignedTasksWidget
+              key={`assigned-${assignedKey}-${viewAsVaId ?? "self"}`}
+              userId={userId}
+              sessionState={sessionState}
+              hasActiveTask={hasActiveTask}
+              onPlayAssignedTask={onPlayAssignedTask}
+              onPlayTodo={onPlayTodo}
+              onStopActiveTask={onStopActiveTask}
+              onActiveTaskSubmitted={onActiveTaskSubmitted}
+              orgTimezone={orgTimezone}
+              isAdmin={isAdmin}
+              refetchCount={refetchCount}
+              activeAssignedTaskId={activeAssignedTaskId}
+              activeTodoLabel={activeTodoLabel}
+              viewAsVaId={viewAsVaId}
+              bare
+            />
+          </>
         )}
         {activeTab === "budget" && <BudgetWidget currentUserId={userId} refreshKey={claimRefreshKey} bare />}
       </div>

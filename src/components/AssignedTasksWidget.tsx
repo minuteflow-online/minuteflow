@@ -39,6 +39,11 @@ interface AssignedTasksWidgetProps {
   activeTodoLabel?: string | null;
   /** Skip the outer card/header/collapse chrome — for embedding inside a shared tabbed container that already provides its own box and tab strip. */
   bare?: boolean;
+  /** Admin-only "View as VA" (Toni's call, 2026-11-11) — when set, shows that
+   *  VA's own list instead of the signed-in user's, read-only: no Start/Stop/
+   *  Submit/Add Memo/Accept/drag, since those act on the viewer's own session,
+   *  not the VA being looked at. */
+  viewAsVaId?: string | null;
 }
 
 function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string; isOverdue: boolean } {
@@ -132,7 +137,9 @@ export default function AssignedTasksWidget({
   activeAssignedTaskId = null,
   activeTodoLabel = null,
   bare = false,
+  viewAsVaId = null,
 }: AssignedTasksWidgetProps) {
+  const readOnly = Boolean(viewAsVaId);
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
@@ -245,7 +252,13 @@ export default function AssignedTasksWidget({
     if (!userId) return;
     setLoading(true);
     try {
-      const res = await fetch(isAdmin ? "/api/assigned-tasks?selfOnly=true" : "/api/assigned-tasks");
+      const res = await fetch(
+        viewAsVaId
+          ? `/api/assigned-tasks?viewAsVa=${viewAsVaId}`
+          : isAdmin
+            ? "/api/assigned-tasks?selfOnly=true"
+            : "/api/assigned-tasks"
+      );
       if (res.ok) {
         const json = await res.json();
         const raw: VAAssignedTask[] = json.tasks || json || [];
@@ -276,7 +289,7 @@ export default function AssignedTasksWidget({
     } finally {
       setLoading(false);
     }
-  }, [userId, isAdmin]);
+  }, [userId, isAdmin, viewAsVaId]);
 
   useEffect(() => {
     fetchTasks();
@@ -733,6 +746,7 @@ export default function AssignedTasksWidget({
                                       {isPlaying && (
                                         <span className="shrink-0 text-[9px] font-semibold text-terracotta">Playing</span>
                                       )}
+                                      {!readOnly && (
                                       <button
                                         onClick={() => {
                                           setOptimisticStatuses((prev) => ({ ...prev, [task.id]: "in_progress" }));
@@ -746,6 +760,7 @@ export default function AssignedTasksWidget({
                                           <polygon points="5,3 19,12 5,21" />
                                         </svg>
                                       </button>
+                                      )}
                                     </div>
                                     );
                                   })}
@@ -763,7 +778,11 @@ export default function AssignedTasksWidget({
                         </>
                       )}
 
-                      {/* Action buttons */}
+                      {/* Action buttons — hidden entirely in read-only "View as
+                          VA" mode (Toni's call, 2026-11-11): these all act on
+                          the viewer's own session/clock, not the VA being
+                          looked at. */}
+                      {!readOnly && (
                       <div className="flex items-center gap-2 mt-0.5 pl-[30px]">
                         {effectiveStatus === "pending" && (
                           <button
@@ -846,6 +865,7 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
                       </div>
+                      )}
                     </div>
 
                     {isExpanded && <div className="h-1" />}

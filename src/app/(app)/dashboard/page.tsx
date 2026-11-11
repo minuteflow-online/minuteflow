@@ -3801,6 +3801,7 @@ export default function DashboardPage() {
                 onStopActiveTask={stopCurrentTask}
                 role={role}
                 activeTaskClientMemo={activeTask?.client_memo || ""}
+                teamMembers={teamMembers.map((m) => m.profile)}
               />
             )}
             {/* Right column: Quick Pick, then the tasks up for grabs, then
