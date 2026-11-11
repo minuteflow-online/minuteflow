@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocateTaskTime, roundDays, workedSpanLabel } from "./submissionTime";
+import { allocateTaskTime, placeShotsByWork, roundDays, splitAcrossDays, workedSpanLabel } from "./submissionTime";
 
 const TZ = "America/New_York";
 const H = 3_600_000;
@@ -108,5 +108,63 @@ describe("round sessions and worked span", () => {
 
   it("is null with nothing logged", () => {
     expect(workedSpanLabel([], TZ)).toBeNull();
+  });
+});
+
+describe("splitAcrossDays", () => {
+  it("splits a session at org-time midnight", () => {
+    // Nov 8, 11:00 PM ET to Nov 9, 1:00 AM ET.
+    expect(splitAcrossDays(Date.parse("2026-11-09T04:00:00Z"), 2 * H, TZ)).toEqual({
+      "2026-11-08": 1 * H,
+      "2026-11-09": 1 * H,
+    });
+  });
+
+  it("keeps a same-day session whole", () => {
+    expect(splitAcrossDays(Date.parse("2026-11-05T14:00:00Z"), 2 * H, TZ)).toEqual({ "2026-11-05": 2 * H });
+  });
+
+  it("splits correctly across a DST change", () => {
+    // Nov 1, 2026 is the US fall-back day (25 hours long). 11 PM Oct 31 EDT -> 2h.
+    expect(splitAcrossDays(Date.parse("2026-11-01T03:00:00Z"), 2 * H, TZ)).toEqual({
+      "2026-10-31": 1 * H,
+      "2026-11-01": 1 * H,
+    });
+  });
+});
+
+describe("allocateTaskTime across midnight", () => {
+  it("puts each side of midnight on its own day, submitted or not", () => {
+    const t = allocateTaskTime(
+      [{ id: 1, created_at: "2026-11-09T07:00:00Z" }],
+      [
+        { start_time: "2026-11-09T04:00:00Z", duration_ms: 2 * H }, // 11 PM–1 AM, submitted
+        { start_time: "2026-11-09T08:00:00Z", duration_ms: 30 * M }, // after the submission
+      ],
+      TZ
+    );
+    expect(t.bySubmission[1].byDay).toEqual({ "2026-11-08": 1 * H, "2026-11-09": 1 * H });
+    expect(t.unsubmittedByDay).toEqual({ "2026-11-09": 30 * M });
+  });
+});
+
+describe("placeShotsByWork", () => {
+  // Charinade's case: captures from an Oct 29 log were linked to the Nov 9
+  // resubmission. They belong to the Oct 31 submission, which reported that work.
+  const subs = [
+    { id: 10, created_at: "2026-10-31T12:31:00Z" },
+    { id: 11, created_at: "2026-11-09T12:25:00Z" },
+  ];
+  const logStart = { 500: "2026-10-30T01:53:00Z" };
+
+  it("moves a capture to the round that owns its time log", () => {
+    const placed = placeShotsByWork([{ id: 1, submission_id: 11, log_id: 500 }], subs, logStart);
+    expect(placed.get(10)?.map((s) => s.id)).toEqual([1]);
+    expect(placed.get(11)).toBeUndefined();
+  });
+
+  it("keeps the linked submission when the log isn't known", () => {
+    const placed = placeShotsByWork([{ id: 2, submission_id: 11, log_id: null }], subs, logStart);
+    expect(placed.get(11)?.map((s) => s.id)).toEqual([2]);
   });
 });
