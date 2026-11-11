@@ -923,12 +923,32 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   const body = await request.json().catch(() => ({}));
   const message = typeof body.message === "string" ? body.message.trim() : undefined;
   const link = typeof body.link === "string" ? body.link.trim() : undefined;
+  const filed = typeof body.filed_to_project === "boolean" ? body.filed_to_project : undefined;
 
-  if (message === undefined && link === undefined) {
+  if (message === undefined && link === undefined && filed === undefined) {
     return Response.json({ error: "Nothing to update" }, { status: 400 });
   }
 
   const admin = adminClient();
+
+  // "File to Assets" on its own — any submission, at any point in its life,
+  // approved or not (Toni's call, 2026-11-11). It isn't a correction of what
+  // the VA wrote, so it doesn't stamp edited_by. Scoped to this task so a
+  // caller can't flag another task's submission.
+  if (filed !== undefined && message === undefined && link === undefined) {
+    const { data, error } = await admin
+      .from("task_submissions")
+      .update({ filed_to_project: filed })
+      .eq("id", submissionId)
+      .eq("assigned_task_id", id)
+      .eq("message_type", "submission")
+      .select("id, filed_to_project")
+      .maybeSingle();
+    if (error) return Response.json({ error: error.message }, { status: 400 });
+    if (!data) return Response.json({ error: "Submission not found" }, { status: 404 });
+    return Response.json({ submission: data });
+  }
+
   const patch: Record<string, unknown> = {};
   if (message !== undefined) {
     patch.submission_comment = message || null;
