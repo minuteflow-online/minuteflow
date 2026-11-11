@@ -4124,9 +4124,9 @@ They will not be able to clock in or start a timer. They can still sign in, work
                                       if (
                                         grant &&
                                         !confirm(
-                                          `Grant ${p.full_name || p.username} 24 hours of web time-tracking on Windows?
+                                          `Grant ${p.full_name || p.username} 24 hours of starting/resuming a task on the website (Windows)?
 
-For when their desktop app is broken — they'll be able to clock in and start a timer on the website again until this expires on its own.`
+For when their desktop app is broken — they'll be able to start or resume a task on the website again until this expires on its own. Clock in/out already works regardless.`
                                         )
                                       ) {
                                         return;
@@ -4149,8 +4149,8 @@ For when their desktop app is broken — they'll be able to clock in and start a
                                     Emergency web tracking (Windows)
                                     <span className="block text-[11px] text-bark">
                                       {overrideActive
-                                        ? `Active until ${new Date(p.web_tracking_override_until as string).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} — web Clock In / Start works again until then.`
-                                        : "Grants 24h of web Clock In / Start on Windows, for when the desktop app is broken."}
+                                        ? `Active until ${new Date(p.web_tracking_override_until as string).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} — starting/resuming a task on web works again until then.`
+                                        : "Grants 24h of starting/resuming a task on web (Windows), for when the desktop app is broken. Clock in/out always works."}
                                     </span>
                                   </span>
                                 </label>

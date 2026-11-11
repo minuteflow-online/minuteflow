@@ -50,10 +50,19 @@ export function isWindowsBrowser(): boolean {
 }
 
 /**
- * Windows users are expected to track time through the desktop app, not the
- * browser (Toni's call, 2026-11-11) — blocks web Clock In and Start Task
- * when running on Windows. Blocking those two blocks web screenshot capture
- * too for free, since that only ever runs while one of them is active.
+ * Windows users are expected to run their task timer through the desktop
+ * app, not the browser (Toni's call, 2026-11-11, refined 2026-11-11 after
+ * walking back the original "block Clock In too" plan — attendance marking
+ * stays on web; it's only running a task that moves to desktop). Blocks
+ * starting/resuming a tracked task on web when running on Windows —
+ * startTask, resumePreBreakTask, resumeOnHoldTask all check this. Blocking
+ * those blocks web screenshot capture too for free, since that only ever
+ * runs while a task is actively running.
+ *
+ * The real goal behind this (per Toni) is forcing the desktop app into daily
+ * use, since that's the one she wants to be the only source of screenshots —
+ * blocking web's own task timer is what makes opening the desktop app
+ * unavoidable, not a goal in itself.
  *
  * An admin-granted exception (web_tracking_override_until set to a future
  * time) lets a specific person through regardless — the "my desktop app is
@@ -71,5 +80,5 @@ export function windowsWebBlockedReason(
   if (!isWindows) return null;
   const until = profile?.web_tracking_override_until;
   if (until && new Date(until).getTime() > Date.now()) return null;
-  return "Please use the MinuteFlow desktop app to clock in and track time on Windows. If it's broken, message Toni for a temporary exception.";
+  return "Please use the MinuteFlow desktop app to start and track tasks on Windows. If it's broken, message Toni for a temporary exception.";
 }
