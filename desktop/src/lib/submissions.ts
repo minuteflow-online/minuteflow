@@ -36,6 +36,11 @@ export interface PendingAttachment {
   filename: string;
   size: number;
   mime_type: string | null;
+  /** Which of the two drop zones this came from — mirrors web's
+   *  SubmitWorkModal (Toni's call, 2026-11-10), so a submission's files show
+   *  as separate groups on the Submissions feed instead of one pile, and so
+   *  screenshots are excluded when a reviewer files work to Assets. */
+  kind: "screenshot" | "file";
 }
 
 /** Claims a signed upload slot for one file, scoped server-side to this
