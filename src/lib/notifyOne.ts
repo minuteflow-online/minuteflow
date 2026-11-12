@@ -18,6 +18,12 @@ export async function notifyOne(
      *  straight back to it instead of leaving the reader to go find it. */
     assignedTaskId?: number;
     submissionId?: number;
+    /** Where the bell's "View →" should go for anything that isn't a task/
+     *  submission (e.g. a broadcast reminder) — a relative path like
+     *  `/portal?tab=memos&broadcast=<id>`, same shape broadcastPortalPath
+     *  returns. Checked before assignedTaskId/submissionId in the bell, so
+     *  only set this when that's actually the better destination. */
+    linkPath?: string | null;
     /** Send the Telegram DM even while they're on a break or personal time. */
     evenOnBreak?: boolean;
   }
@@ -34,6 +40,7 @@ export async function notifyOne(
       read: false,
       assigned_task_id: opts.assignedTaskId ?? null,
       submission_id: opts.submissionId ?? null,
+      link_path: opts.linkPath ?? null,
     });
   } catch { /* ignore */ }
   try {

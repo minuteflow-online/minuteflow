@@ -62,6 +62,8 @@ export async function remindPendingBroadcast(
     ? "Please read it and enter the magic word to acknowledge it."
     : "Please read it and acknowledge it.";
 
+  const linkPath = broadcastPortalPath(broadcast.category, broadcast.id);
+
   for (const m of pending) {
     await notifyOne(admin, {
       targetUserId: m.id,
@@ -69,6 +71,10 @@ export async function remindPendingBroadcast(
       content: `Reminder: please acknowledge “${broadcast.title}”`,
       telegram: `⏰ <b>Reminder: ${esc(broadcast.title)}</b>\n\n${ask}\n${link}`,
       topic: "broadcast",
+      // Lets the bell's "View →" jump straight to this broadcast, scrolled
+      // and highlighted — same destination the email link above already
+      // uses (Toni's call, 2026-11-13).
+      linkPath,
       // Broadcasts reach people on a break too — Toni's call.
       evenOnBreak: true,
     });

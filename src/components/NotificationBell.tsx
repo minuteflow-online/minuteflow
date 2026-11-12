@@ -12,6 +12,9 @@ type Notif = {
   created_at: string;
   assigned_task_id: number | null;
   sender_id: string | null;
+  /** Where "View →" should go for anything that isn't a task/submission —
+   *  a broadcast reminder, say. Checked before the task/memo/DM fallbacks. */
+  link_path: string | null;
 };
 
 /**
@@ -98,7 +101,7 @@ export default function NotificationBell() {
       const load = async () => {
         const { data } = await supabase
           .from("messages")
-          .select("id, content, read, created_at, assigned_task_id, sender_id")
+          .select("id, content, read, created_at, assigned_task_id, sender_id, link_path")
           .eq("target_user_id", user.id)
           .order("created_at", { ascending: false })
           .limit(20);
@@ -127,6 +130,7 @@ export default function NotificationBell() {
    *  own to link to, so it's routed by who sent it — the dashboard resolves
    *  (or starts) that conversation and opens it. */
   const destinationFor = (item: Notif): string | null => {
+    if (item.link_path) return item.link_path;
     if (item.assigned_task_id != null) return `/productivity/submissions?taskId=${item.assigned_task_id}`;
     const bucket = item.sender_id ? classify(item.content)?.bucket : undefined;
     if (item.sender_id && bucket === "memo") return memoChatPath(item.sender_id);
