@@ -50,11 +50,17 @@ export default function BudgetWidget({
   refreshKey = 0,
   bare = false,
   alwaysAllowRequest = false,
+  readOnly = false,
 }: {
   currentUserId: string;
   refreshKey?: number;
   bare?: boolean;
   alwaysAllowRequest?: boolean;
+  /** Admin's "View as VA" (Toni's call, 2026-11-12) — hides the Request
+   *  button/form. A budget-increase request always posts as the signed-in
+   *  caller, never the currentUserId it's showing, so letting it stay
+   *  reachable here would file the request under the wrong person. */
+  readOnly?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [profile, setProfile] = useState<BudgetProfile | null>(null);
@@ -291,7 +297,7 @@ export default function BudgetWidget({
             <p className="rounded-lg bg-amber-soft/60 px-2.5 py-1.5 text-[11px] text-walnut">
               Request for {formatAmount(pendingRequest.amount, pendingRequest.unit, profile?.pay_currency)} more ({pendingRequest.period === "day" ? "today" : pendingRequest.period === "week" ? "this week" : "this month"}) is pending admin approval.
             </p>
-          ) : showRequest ? (
+          ) : readOnly ? null : showRequest ? (
             <div className="space-y-2 rounded-lg border border-sand bg-parchment/30 p-2.5">
               <div>
                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">Increase for</label>

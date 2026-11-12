@@ -141,7 +141,26 @@ export default function TaskWidgetsTabs({
             />
           </>
         )}
-        {activeTab === "budget" && <BudgetWidget currentUserId={userId} refreshKey={claimRefreshKey} bare />}
+        {activeTab === "budget" && (
+          <>
+            {/* Same "View as VA" selection as the Assigned Tasks tab (Toni's
+                call, 2026-11-12) — one shared choice, not a second dropdown
+                to keep in sync. Just a label here so it's clear whose budget
+                this is. */}
+            {viewAsVaId && (
+              <p className="mb-2 text-[11px] font-semibold text-walnut">
+                Viewing: {teamMembers.find((p) => p.id === viewAsVaId)?.full_name ?? "—"}
+              </p>
+            )}
+            <BudgetWidget
+              key={`budget-${viewAsVaId ?? "self"}`}
+              currentUserId={viewAsVaId ?? userId}
+              refreshKey={claimRefreshKey}
+              readOnly={Boolean(viewAsVaId)}
+              bare
+            />
+          </>
+        )}
       </div>
     </div>
   );
