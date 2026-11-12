@@ -1,5 +1,6 @@
 // Ported from src/components/SubmitWorkModal.tsx. Same checklist, word-count
-// bar, and drag/paste/file-picker UX — only the upload plumbing differs (see
+// bar, drag/paste/file-picker UX, and Screenshots/Files split (Toni's call,
+// 2026-11-10, ported 2026-11-12) — only the upload plumbing differs (see
 // src/lib/submissions.ts's comment on why: no @supabase/supabase-js here,
 // bearer auth instead of the cookie session).
 import { useRef, useState } from "react";
@@ -53,11 +54,13 @@ export default function SubmitWorkModal({
   // rather than a handoff (mirrors web's SubmitWorkModal exactly).
   const [progressStatus, setProgressStatus] = useState<"in_progress" | "completed">("completed");
   const [reviewRequested, setReviewRequested] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
+  /** Which of the two drop zones a file came from — shown as separate
+   *  groups on the Submissions feed instead of one undifferentiated pile
+   *  (Toni's call, 2026-11-10). */
+  const [files, setFiles] = useState<Array<{ file: File; kind: "screenshot" | "file" }>>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
   const words = countWords(message);
@@ -67,47 +70,22 @@ export default function SubmitWorkModal({
     : Boolean(message.trim() || link.trim() || files.length > 0);
   const allChecked = !needsEvidence || CHECKLIST.every((c) => checked.has(c.key));
   const canSubmit = hasContent && allChecked;
-  const [dragActive, setDragActive] = useState(false);
-  const dragCounter = useRef(0);
 
-  const appendFiles = (picked: File[]) => {
+  const appendFiles = (picked: File[], kind: "screenshot" | "file") => {
     if (picked.length === 0) return;
-    setFiles((prev) => [...prev, ...picked]);
-  };
-
-  const addFiles = (list: FileList | null) => {
-    if (!list || list.length === 0) return;
-    appendFiles(Array.from(list));
+    setFiles((prev) => [...prev, ...picked.map((file) => ({ file, kind }))]);
   };
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    dragCounter.current += 1;
-    setDragActive(true);
-  };
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    dragCounter.current -= 1;
-    if (dragCounter.current <= 0) {
-      dragCounter.current = 0;
-      setDragActive(false);
-    }
-  };
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    dragCounter.current = 0;
-    setDragActive(false);
-    if (saving) return;
-    appendFiles(Array.from(e.dataTransfer.files ?? []));
-  };
-
+  // Pasted files (a screenshot copied to the clipboard, most often — the
+  // modal has no way to know which zone the VA "meant", so a paste always
+  // lands in Screenshots; a deliberate file goes through the Files zone's
+  // own picker or drop target instead). Only intercepted when the clipboard
+  // actually carries a file — a plain text paste into the message or link
+  // box is left alone.
   const handlePaste = (e: React.ClipboardEvent) => {
     if (saving) return;
     const fromFiles = Array.from(e.clipboardData?.files ?? []);
@@ -118,8 +96,15 @@ export default function SubmitWorkModal({
     const picked = fromFiles.length > 0 ? fromFiles : fromItems;
     if (picked.length === 0) return;
     e.preventDefault();
-    appendFiles(picked);
+    appendFiles(picked, "screenshot");
   };
+
+  const screenshotEntries = files
+    .map((f, i) => ({ ...f, i }))
+    .filter((f) => f.kind === "screenshot");
+  const fileEntries = files
+    .map((f, i) => ({ ...f, i }))
+    .filter((f) => f.kind === "file");
 
   const handleSubmit = async () => {
     if (!canSubmit || saving) return;
@@ -128,7 +113,8 @@ export default function SubmitWorkModal({
 
     const attachments: PendingAttachment[] = [];
 
-    for (const [index, file] of files.entries()) {
+    for (const [index, entry] of files.entries()) {
+      const file = entry.file;
       setProgress(`Uploading ${index + 1} of ${files.length}...`);
 
       const slot = await requestUploadSlot(taskId, file.name, file.size);
@@ -152,6 +138,7 @@ export default function SubmitWorkModal({
         filename: file.name,
         size: file.size,
         mime_type: file.type || null,
+        kind: entry.kind,
       });
     }
 
@@ -186,20 +173,9 @@ export default function SubmitWorkModal({
       }}
     >
       <div
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
         onPaste={handlePaste}
-        className={`relative mx-4 max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border bg-white shadow-xl transition-colors ${
-          dragActive ? "border-terracotta" : "border-sand"
-        }`}
+        className="relative mx-4 max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-sand bg-white shadow-xl"
       >
-        {dragActive && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-terracotta bg-terracotta-soft/40">
-            <p className="text-[12px] font-semibold text-terracotta">Drop to attach</p>
-          </div>
-        )}
         <div className="flex items-start justify-between border-b border-sand px-4 py-3">
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wide text-espresso">Submit Work</h3>
@@ -265,38 +241,23 @@ export default function SubmitWorkModal({
             )}
           </div>
 
-          <div>
-            <label className={labelClass}>Attachment</label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={(e) => {
-                addFiles(e.target.files);
-                e.target.value = "";
-              }}
-              className="block w-full text-[11px] text-stone file:mr-2 file:rounded-lg file:border-0 file:bg-parchment file:px-3 file:py-1 file:text-[11px] file:font-semibold file:text-espresso hover:file:bg-sand file:cursor-pointer"
+          <div className="space-y-2">
+            <AttachZone
+              label="Screenshots"
+              hint="Process shots — paste (Ctrl/Cmd+V) or drag onto this box"
+              entries={screenshotEntries}
+              onAdd={(picked) => appendFiles(picked, "screenshot")}
+              onRemove={removeFile}
+              disabled={saving}
             />
-            <p className="mt-1 text-[10px] text-stone/70">or drag files onto this window, or paste (Ctrl/Cmd+V)</p>
-            {files.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {files.map((file, i) => (
-                  <div
-                    key={`${file.name}-${i}`}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-1"
-                  >
-                    <span className="truncate text-[11px] text-espresso">{file.name}</span>
-                    <button
-                      onClick={() => removeFile(i)}
-                      disabled={saving}
-                      className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline disabled:opacity-50 cursor-pointer"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <AttachZone
+              label="Files"
+              hint="The finished deliverable — drag onto this box or click to attach"
+              entries={fileEntries}
+              onAdd={(picked) => appendFiles(picked, "file")}
+              onRemove={removeFile}
+              disabled={saving}
+            />
           </div>
 
           <div>
@@ -402,6 +363,110 @@ export default function SubmitWorkModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * One of the two attach zones — its own drag target, click-to-browse, and
+ * pending-file list. Drag is scoped per zone (rather than the whole modal)
+ * since which zone a drop lands in is the point. Ported from web's own.
+ */
+function AttachZone({
+  label,
+  hint,
+  entries,
+  onAdd,
+  onRemove,
+  disabled,
+}: {
+  label: string;
+  hint: string;
+  entries: Array<{ file: File; i: number }>;
+  onAdd: (files: File[]) => void;
+  onRemove: (i: number) => void;
+  disabled: boolean;
+}) {
+  const [dragActive, setDragActive] = useState(false);
+  const dragCounter = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Counted enter/leave rather than a plain boolean — dragging over a child
+  // element fires leave-then-enter on the parent, which would otherwise
+  // flicker the highlight off mid-drag.
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current += 1;
+    setDragActive(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragActive(false);
+    }
+  };
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragActive(false);
+    if (disabled) return;
+    onAdd(Array.from(e.dataTransfer.files ?? []));
+  };
+
+  return (
+    <div
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      className={`rounded-lg border p-2 transition-colors ${
+        dragActive ? "border-terracotta bg-terracotta-soft/20" : "border-dashed border-sand"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-walnut">{label}</span>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={disabled}
+          className="shrink-0 rounded-lg bg-parchment px-2 py-0.5 text-[10px] font-semibold text-espresso transition-colors hover:bg-sand disabled:opacity-50 cursor-pointer"
+        >
+          + Add
+        </button>
+      </div>
+      <p className="mt-0.5 text-[10px] text-stone/70">{hint}</p>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        onChange={(e) => {
+          onAdd(Array.from(e.target.files ?? []));
+          e.target.value = "";
+        }}
+        className="hidden"
+      />
+      {entries.length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          {entries.map(({ file, i }) => (
+            <div
+              key={`${file.name}-${i}`}
+              className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-cream/40 px-2 py-1"
+            >
+              <span className="truncate text-[11px] text-espresso">{file.name}</span>
+              <button
+                onClick={() => onRemove(i)}
+                disabled={disabled}
+                className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline disabled:opacity-50 cursor-pointer"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
