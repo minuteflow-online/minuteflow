@@ -135,6 +135,46 @@ export async function fetchAssignedTasks(userId: string): Promise<VAAssignedTask
 }
 
 /**
+ * Admin's "View as VA" (Toni's call, 2026-11-13) — the signed-in admin's own
+ * RLS can't see another VA's rows directly, so unlike fetchAssignedTasks this
+ * goes through /api/assigned-tasks?viewAsVa=, the same admin-gated,
+ * service-role-backed route web's AssignedTasksWidget already uses for the
+ * same picker. Its select string is a superset of VA_SELECT's fields, so the
+ * shape lines up; filtered and sorted the same way fetchAssignedTasks is so
+ * "view as" reads identically to that VA's own list.
+ */
+export async function fetchAssignedTasksForVa(targetVaId: string): Promise<VAAssignedTask[]> {
+  const session = await ensureAuth();
+  if (!session) return [];
+  try {
+    const res = await fetch(`${API_BASE}/api/assigned-tasks?viewAsVa=${targetVaId}`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const rows: VAAssignedTask[] = Array.isArray(data.tasks) ? data.tasks : [];
+    return rows
+      .filter(
+        (t) =>
+          VA_VISIBLE_STATUSES.includes(t.status) &&
+          t.assigned_tasks &&
+          !t.assigned_tasks.archived_at &&
+          !t.assigned_tasks.deleted_at
+      )
+      .map((t) => ({
+        ...t,
+        assigned_tasks: {
+          ...t.assigned_tasks,
+          task_todos: [...(t.assigned_tasks.task_todos ?? [])].sort((a, b) => a.sort_order - b.sort_order),
+        },
+      }))
+      .sort(compareTasks);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Persists a drag-to-reorder. Same endpoint AssignedTasksWidget's
  * persistOrder posts to, scoped server-side to the caller's own rows — see
  * that route's comment. `orderedIds` are assigned_task_assignees.id values
