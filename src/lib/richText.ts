@@ -93,11 +93,26 @@ const DESIGN_PROPS = new Set([
   "border", "border-top", "border-right", "border-bottom", "border-left",
   "border-color", "border-width", "border-style", "border-radius",
   "font-size", "font-weight", "font-style", "text-decoration", "line-height",
-  "width", "max-width",
+  "width", "max-width", "min-width", "height", "min-height", "box-sizing",
+  // Longhands, as an uploaded page's stylesheet is inlined from computed styles.
+  "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+  "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
+  "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
+  "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius",
+  "text-decoration-line", "text-decoration-color", "text-decoration-style",
+  "letter-spacing", "text-transform", "vertical-align",
+  "align-items", "justify-content", "gap", "row-gap", "column-gap", "flex-direction", "flex-wrap",
 ]);
 // Lengths, keywords and colours only — no url(), expression(), var() or escapes.
 const DESIGN_VALUE_RE = /^[#a-z0-9\s.,%()-]+$/i;
 const DESIGN_VALUE_BLOCK_RE = /url|expression|javascript|var\(|image|attr\(/i;
+const DISPLAY_RE = /^(block|inline|inline-block|flex|inline-flex|none)$/i;
+const FONT_FAMILY_RE = /^[a-z0-9\s,"'-]+$/i;
+const GRADIENT_RE = /^(linear|radial)-gradient\([#a-z0-9\s.,%()-]+\)$/i;
+
+function decodeAttrEntities(s: string): string {
+  return s.replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&");
+}
 
 export type SanitizeMode = "design" | "paste";
 
@@ -115,8 +130,15 @@ function safeStyle(style: string, mode: SanitizeMode): string {
       kept.push(`${prop}: ${value}`);
     } else if (prop === "list-style-type" && LIST_STYLE_RE.test(value)) {
       kept.push(`${prop}: ${value}`);
+    } else if (mode !== "design") {
+      continue;
+    } else if (prop === "display") {
+      if (DISPLAY_RE.test(value)) kept.push(`${prop}: ${value}`);
+    } else if (prop === "font-family") {
+      if (value.length <= 120 && FONT_FAMILY_RE.test(value)) kept.push(`${prop}: ${value}`);
+    } else if (prop === "background-image") {
+      if (value.length <= 300 && GRADIENT_RE.test(value) && !DESIGN_VALUE_BLOCK_RE.test(value)) kept.push(`${prop}: ${value}`);
     } else if (
-      mode === "design" &&
       DESIGN_PROPS.has(prop) &&
       value.length <= 80 &&
       DESIGN_VALUE_RE.test(value) &&
@@ -168,7 +190,8 @@ function rebuildTag(tag: string, rawAttrs: string, mode: SanitizeMode): string {
   }
 
   if (tag !== "img" && attrs.style) {
-    const style = safeStyle(attrs.style, mode);
+    // Decode first: a quoted font name arrives as &quot;…&quot;, whose ";" would split the declaration.
+    const style = safeStyle(decodeAttrEntities(attrs.style), mode);
     if (style) out.push(`style="${escapeHtml(style)}"`);
   }
 
@@ -214,32 +237,90 @@ export function injectMagicWordHtml(
   injection: string,
   pick: (slotCount: number) => number
 ): string {
-  const line = `<div><b>${escapeHtml(injection)}</b></div>`;
-
-  // Top-level boundaries: after a top-level <br>, or after a closing tag that returns to depth 0.
-  const boundaries: number[] = [];
-  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
-  let depth = 0;
-  let m: RegExpExecArray | null;
-  while ((m = tagRe.exec(html))) {
-    const tag = m[2].toLowerCase();
-    if (VOID_TAGS.has(tag)) {
-      if (depth === 0 && (tag === "br" || tag === "hr")) boundaries.push(tagRe.lastIndex);
-      continue;
-    }
-    if (m[1]) {
-      depth = Math.max(0, depth - 1);
-      if (depth === 0) boundaries.push(tagRe.lastIndex);
-    } else {
-      depth++;
-    }
-  }
-
+  const line = magicLine(injection);
+  const boundaries = topLevelBoundaries(html);
   const minPos = Math.floor(html.length * 0.6);
   const slots = boundaries.filter((b) => b >= minPos && b < html.length);
   if (slots.length === 0) return html + line;
   const at = slots[Math.min(slots.length - 1, Math.max(0, pick(slots.length)))];
   return html.slice(0, at) + line + html.slice(at);
+}
+
+/**
+ * Several magic words: the body is split into one equal stretch per word and
+ * each word goes at a top-level boundary inside its own stretch, so finding
+ * them all means reading the whole message. A stretch with no free boundary
+ * borrows the next free one after it; past the last boundary, words are appended.
+ * `pick(slotCount, wordIndex)` chooses among a stretch's candidate slots.
+ */
+export function injectMagicWordsHtml(
+  html: string,
+  injections: string[],
+  pick: (slotCount: number, wordIndex: number) => number
+): string {
+  const n = injections.length;
+  if (n === 0) return html;
+  const boundaries = topLevelBoundaries(html).filter((b) => b < html.length);
+  const used = new Set<number>();
+  const placements: { at: number; line: string; order: number }[] = [];
+
+  injections.forEach((injection, i) => {
+    const start = Math.floor((html.length * i) / n);
+    const end = Math.floor((html.length * (i + 1)) / n);
+    let slots = boundaries.filter((b) => b >= start && b < end && !used.has(b));
+    if (slots.length === 0) slots = boundaries.filter((b) => b >= start && !used.has(b)).slice(0, 1);
+    const at = slots.length
+      ? slots[Math.min(slots.length - 1, Math.max(0, pick(slots.length, i)))]
+      : html.length;
+    if (slots.length) used.add(at);
+    placements.push({ at, line: magicLine(injection), order: i });
+  });
+
+  // Insert from the end so earlier positions stay valid; same spot keeps word order.
+  placements.sort((a, b) => b.at - a.at || b.order - a.order);
+  let out = html;
+  for (const p of placements) out = out.slice(0, p.at) + p.line + out.slice(p.at);
+  return out;
+}
+
+function magicLine(injection: string): string {
+  return `<div><b>${escapeHtml(injection)}</b></div>`;
+}
+
+const BLOCK_TAGS = new Set(["p", "div", "ul", "ol", "h1", "h2", "h3", "h4", "blockquote", "table"]);
+
+/**
+ * Where a magic word line can go without landing inside something:
+ * - at the top level, after a <br>/<hr> or any closing tag (the original rule), and
+ * - inside plain wrapper <div>s (no background or border — an uploaded page's
+ *   layout containers; the outermost div may have a background), after a block
+ *   element or <br>/<hr>.
+ * Never inside a coloured/bordered card, a list, a table or a paragraph.
+ */
+function topLevelBoundaries(html: string): number[] {
+  const boundaries: number[] = [];
+  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  // Each open element, and whether a line may be placed directly inside it.
+  const stack: boolean[] = [];
+  const insidePlainWrappers = () => stack.every(Boolean);
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(html))) {
+    const tag = m[2].toLowerCase();
+    if (VOID_TAGS.has(tag)) {
+      if ((tag === "br" || tag === "hr") && insidePlainWrappers()) boundaries.push(tagRe.lastIndex);
+      continue;
+    }
+    if (m[1]) {
+      stack.pop();
+      if (stack.length === 0 || (BLOCK_TAGS.has(tag) && insidePlainWrappers())) boundaries.push(tagRe.lastIndex);
+    } else {
+      // A background or border marks a card or banner (the line could vanish on a
+      // dark header). The outermost div is exempt: on an uploaded page it's the
+      // wrapper carrying the page background.
+      stack.push(tag === "div" && (stack.length === 0 || !/background|border/i.test(m[3])));
+    }
+  }
+  return boundaries;
 }
 
 /** Largest .html file the editor will load (a message, not a website). */

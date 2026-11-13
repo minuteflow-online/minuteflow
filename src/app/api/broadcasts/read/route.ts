@@ -3,6 +3,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { after } from "next/server";
 import { notifyOne } from "@/lib/notifyOne";
 import { esc } from "@/lib/telegram";
+import { magicWordsMatch } from "@/lib/magicWords";
 
 export const dynamic = "force-dynamic";
 
@@ -36,18 +37,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "Broadcast is not published" }, { status: 400 });
   }
 
-  // If magic word is required, validate it server-side
-  if (broadcast.require_word && broadcast.magic_word) {
-    const entered = (word_entered || "").trim().toLowerCase();
-    const expected = broadcast.magic_word.toLowerCase();
-    if (entered !== expected) {
-      return Response.json({ error: "Incorrect magic word" }, { status: 422 });
-    }
+  // If magic words are required, validate server-side: every word must be entered.
+  if (broadcast.require_word && broadcast.magic_word && !magicWordsMatch(broadcast.magic_word, word_entered)) {
+    return Response.json({ error: "Incorrect magic word" }, { status: 422 });
   }
 
-  const confirmed =
-    !broadcast.magic_word ||
-    (word_entered || "").trim().toLowerCase() === (broadcast.magic_word || "").toLowerCase();
+  const confirmed = magicWordsMatch(broadcast.magic_word, word_entered);
 
   // Only the first acknowledgement notifies the author, not a repeat click
   const { data: priorRead } = await supabase

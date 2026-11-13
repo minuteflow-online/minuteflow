@@ -3,6 +3,7 @@ import {
   ensureRichHtml,
   htmlFileToMessage,
   injectMagicWordHtml,
+  injectMagicWordsHtml,
   isRichEmpty,
   renderBroadcastHtml,
   richTextToPlain,
@@ -126,6 +127,39 @@ describe("injectMagicWordHtml", () => {
   });
 });
 
+describe("magic word placement inside an uploaded page", () => {
+  const page =
+    '<div style="background-color: rgb(250, 247, 242); padding: 24px">' +
+    '<div style="background-color: rgb(30, 41, 59)"><h1>Title</h1></div>' +
+    "<p>One</p><p>Two</p><p>Three</p>" +
+    '<div style="background-color: rgb(255, 122, 69); border-top-left-radius: 16px"><p>Card A</p><p>Card B</p></div>' +
+    "<p>Four</p><p>Five</p><p>Six</p></div>";
+
+  it("goes between paragraphs inside the page wrapper, never inside a rounded card", () => {
+    for (let pick = 0; pick < 6; pick++) {
+      const out = injectMagicWordHtml(page, "MW", () => pick);
+      const at = out.indexOf("<div><b>MW</b></div>");
+      expect(at).toBeGreaterThan(0);
+      expect(at).toBeLessThan(out.lastIndexOf("</div>")); // inside the wrapper, not appended
+      const cardStart = out.indexOf("Card A");
+      const cardEnd = out.indexOf("Card B") + "Card B</p>".length;
+      expect(at > cardStart && at < cardEnd).toBe(false);
+    }
+  });
+
+  it("never goes inside a coloured banner such as a dark header", () => {
+    for (let pick = 0; pick < 6; pick++) {
+      const out = injectMagicWordsHtml(page, ["A", "B", "C"], (n, i) => (pick + i) % n);
+      const bannerStart = out.indexOf("rgb(30, 41, 59)");
+      const bannerEnd = out.indexOf("Title</h1></div>") + "Title</h1></div>".length;
+      for (const w of ["A", "B", "C"]) {
+        const at = out.indexOf(`<div><b>${w}</b></div>`);
+        expect(at > bannerStart && at < bannerEnd).toBe(false);
+      }
+    }
+  });
+});
+
 describe("HTML view design styles", () => {
   it("keeps spacing, borders and font size from hand-written HTML", () => {
     expect(
@@ -170,6 +204,29 @@ describe("HTML view design styles", () => {
     expect(htmlFileToMessage("<!doctype html><html><head><title>T</title></head><p>No body tag</p></html>")).toBe(
       "<p>No body tag</p>"
     );
+  });
+
+  it("keeps an uploaded design's inlined fonts, spacing, circles and gradients", () => {
+    const style =
+      'font-family: &quot;Space Grotesk&quot;, sans-serif; letter-spacing: 1.5px; text-transform: uppercase; ' +
+      "display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; " +
+      "border-top-left-radius: 50%; background-image: linear-gradient(rgb(30, 41, 59) 0%, rgb(15, 23, 42) 100%)";
+    expect(sanitizeRichHtml(`<span style="${style}">1</span>`)).toBe(
+      '<span style="font-family: &quot;Space Grotesk&quot;, sans-serif; letter-spacing: 1.5px; text-transform: uppercase; ' +
+        "display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; " +
+        'border-top-left-radius: 50%; background-image: linear-gradient(rgb(30, 41, 59) 0%, rgb(15, 23, 42) 100%)">1</span>'
+    );
+  });
+
+  it("rejects unsafe display, font and background-image values", () => {
+    expect(
+      sanitizeRichHtml('<div style="display: contents; font-family: a{b}; background-image: url(https://x.com/a.png)">x</div>')
+    ).toBe("<div>x</div>");
+  });
+
+  it("re-sanitizing its own output changes nothing", () => {
+    const once = sanitizeRichHtml('<p style="font-family: &quot;Inter&quot;, sans-serif; padding: 4px">x</p>');
+    expect(sanitizeRichHtml(once)).toBe(once);
   });
 
   it("still treats plain-text memos as plain", () => {
