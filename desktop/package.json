@@ -1,6 +1,6 @@
 {
   "name": "minuteflow-desktop",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "MinuteFlow desktop companion — clock in/out, assigned tasks, and full-screen screenshot capture outside the browser.",
   "main": "electron/main.js",
