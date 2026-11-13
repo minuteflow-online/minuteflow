@@ -103,13 +103,13 @@ describe("injectMagicWordHtml", () => {
   it("inserts at a top-level boundary, never inside a tag", () => {
     const html = "<div>one</div><div>two</div><div>three</div><div>four</div><div>five</div>";
     const out = injectMagicWordHtml(html, "Magic word is <x>", () => 0);
-    expect(out).toContain("<div><b>Magic word is &lt;x&gt;</b></div>");
+    expect(out).toContain("<div>Magic word is &lt;x&gt;</div>");
     expect(out.indexOf("Magic word")).toBeGreaterThan(html.indexOf("three"));
-    expect(out.replace("<div><b>Magic word is &lt;x&gt;</b></div>", "")).toBe(html);
+    expect(out.replace("<div>Magic word is &lt;x&gt;</div>", "")).toBe(html);
   });
 
   it("appends when there is no boundary in the latter part", () => {
-    expect(injectMagicWordHtml("<b>short</b>", "MW", () => 0)).toBe("<b>short</b><div><b>MW</b></div>");
+    expect(injectMagicWordHtml("<b>short</b>", "MW", () => 0)).toBe("<b>short</b><div>MW</div>");
   });
 
   it("never lands inside a designed card or table from HTML view", () => {
@@ -120,9 +120,9 @@ describe("injectMagicWordHtml", () => {
     );
     for (let pick = 0; pick < 5; pick++) {
       const out = injectMagicWordHtml(html, "Magic word is pineapple", () => pick);
-      const at = out.indexOf("<div><b>Magic word is pineapple</b></div>");
+      const at = out.indexOf("<div>Magic word is pineapple</div>");
       expect(at).toBeGreaterThan(out.indexOf("</table>"));
-      expect(out.replace("<div><b>Magic word is pineapple</b></div>", "")).toBe(html);
+      expect(out.replace("<div>Magic word is pineapple</div>", "")).toBe(html);
     }
   });
 });
@@ -138,7 +138,7 @@ describe("magic word placement inside an uploaded page", () => {
   it("goes between paragraphs inside the page wrapper, never inside a rounded card", () => {
     for (let pick = 0; pick < 6; pick++) {
       const out = injectMagicWordHtml(page, "MW", () => pick);
-      const at = out.indexOf("<div><b>MW</b></div>");
+      const at = out.indexOf("<div>MW</div>");
       expect(at).toBeGreaterThan(0);
       expect(at).toBeLessThan(out.lastIndexOf("</div>")); // inside the wrapper, not appended
       const cardStart = out.indexOf("Card A");
@@ -153,7 +153,7 @@ describe("magic word placement inside an uploaded page", () => {
       const bannerStart = out.indexOf("rgb(30, 41, 59)");
       const bannerEnd = out.indexOf("Title</h1></div>") + "Title</h1></div>".length;
       for (const w of ["A", "B", "C"]) {
-        const at = out.indexOf(`<div><b>${w}</b></div>`);
+        const at = out.indexOf(`<div>${w}</div>`);
         expect(at > bannerStart && at < bannerEnd).toBe(false);
       }
     }
