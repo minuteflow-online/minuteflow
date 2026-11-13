@@ -72,10 +72,17 @@ function matchesTaskView(
  *   ?status=<status> → filter by own assignee status
  */
 export async function GET(request: Request) {
-  const supabase = await createClient();
+  // The desktop app has no browser cookies to present (it signs in directly
+  // against Supabase Auth — see desktop/src/lib/db.ts), so its "View as VA"
+  // request authenticates via bearer token instead, same pattern as PATCH
+  // /api/assigned-tasks/[id]. A web request never sends this header, so its
+  // cookie-based auth is unaffected. See the createClient() doc comment for
+  // why getUser() also needs the token passed explicitly.
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || undefined;
+  const supabase = await createClient(bearerToken);
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(bearerToken);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data: profile } = await supabase

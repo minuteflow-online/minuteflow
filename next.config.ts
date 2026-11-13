@@ -39,6 +39,8 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // The bare route — desktop's new "View as VA" (?viewAsVa=) GET call.
+      { source: "/api/assigned-tasks", headers: DESKTOP_CORS_HEADERS },
       // /:id matches one path segment, so this covers both
       // /api/assigned-tasks/reorder and /api/assigned-tasks/<real id> without
       // widening CORS to deeper routes desktop doesn't call (grab) — the

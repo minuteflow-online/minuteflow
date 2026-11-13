@@ -45,6 +45,11 @@ interface TasksPanelProps {
    *  which already provides its own box and tab strip. Mirrors web's
    *  AssignedTasksWidget `bare` prop. */
   bare?: boolean;
+  /** Admin's "View as VA" (Toni's call, 2026-11-13) — when set, these are
+   *  someone else's tasks: no Start/Stop/Submit/Add Memo/drag, since those
+   *  act on the viewer's own session, not the VA being looked at. Matches
+   *  web's AssignedTasksWidget viewAsVaId/readOnly. */
+  readOnly?: boolean;
 }
 
 function statusBadge(status: AssignedTaskStatus) {
@@ -80,6 +85,7 @@ export default function TasksPanel({
   onSubmit,
   onReorder,
   bare = false,
+  readOnly = false,
 }: TasksPanelProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
@@ -216,8 +222,9 @@ export default function TasksPanel({
                   {/* Reserves the handle's width even while dragging, so the
                       title text doesn't jump. */}
                   <span
-                    draggable
+                    draggable={!readOnly}
                     onDragStart={(e) => {
+                      if (readOnly) return;
                       setDraggedId(task.id);
                       e.dataTransfer.effectAllowed = "move";
                     }}
@@ -225,8 +232,10 @@ export default function TasksPanel({
                       setDraggedId(null);
                       setDragOverId(null);
                     }}
-                    title="Drag to reorder"
-                    className="mt-[3px] shrink-0 w-[10px] h-[14px] flex items-center justify-center text-bark/40 cursor-grab active:cursor-grabbing hover:text-bark transition-colors"
+                    title={readOnly ? undefined : "Drag to reorder"}
+                    className={`mt-[3px] shrink-0 w-[10px] h-[14px] flex items-center justify-center text-bark/40 transition-colors ${
+                      readOnly ? "" : "cursor-grab active:cursor-grabbing hover:text-bark"
+                    }`}
                   >
                     <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
                       <circle cx="2.5" cy="2" r="1.4" />
@@ -271,7 +280,7 @@ export default function TasksPanel({
                       </button>
                     )}
 
-                    {(task.status === "on_queue" || task.status === "in_progress") && (
+                    {!readOnly && (task.status === "on_queue" || task.status === "in_progress") && (
                       <div className="mt-1.5 flex items-center gap-1.5">
                         {(task.status === "on_queue" ||
                           (task.status === "in_progress" && activeAssignedTaskId !== detail.id)) && (

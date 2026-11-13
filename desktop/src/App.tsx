@@ -8,7 +8,7 @@ import NotificationBell from "./components/NotificationBell";
 import SubmitWorkModal from "./components/SubmitWorkModal";
 import * as auth from "./lib/db";
 import * as clock from "./lib/clock";
-import { fetchAssignedTasks, reorderAssignedTasks, setAssignedTaskStatus, todoLabel, type VAAssignedTask, type AssignedTaskStatus, type TaskTodo } from "./lib/tasks";
+import { fetchAssignedTasks, fetchAssignedTasksForVa, reorderAssignedTasks, setAssignedTaskStatus, todoLabel, type VAAssignedTask, type AssignedTaskStatus, type TaskTodo } from "./lib/tasks";
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 import { startAutoCapture } from "./lib/autoCapture";
@@ -48,6 +48,14 @@ export default function App() {
   const [stoppingId, setStoppingId] = useState<number | null>(null);
   const [playingTodoId, setPlayingTodoId] = useState<number | null>(null);
   const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
+  // Admin's "View as VA" (Toni's call, 2026-11-13), ported from web's
+  // dashboard. Kept entirely separate from `tasks`/loadTasks above — that
+  // flow is wired into every real action handler (Start/Stop/Submit/
+  // reorder), which should always act on the admin's OWN tasks regardless of
+  // who they're currently looking at.
+  const [viewAsVaId, setViewAsVaId] = useState<string | null>(null);
+  const [viewedTasks, setViewedTasks] = useState<VAAssignedTask[]>([]);
+  const [viewedTasksLoading, setViewedTasksLoading] = useState(false);
   // The task that was active right before Break — held in local state the
   // same way the dashboard's preBreakTask is, so End Break can land straight
   // back on it with no prompt (Toni's call). See clock.ts's startBreak/
@@ -172,6 +180,29 @@ export default function App() {
       window.removeEventListener("focus", onFocus);
     };
   }, [userId, loadTasks]);
+
+  // Fetches the selected VA's own tasks whenever the admin's "View as VA"
+  // pick changes — separate from the poll above, since this isn't the
+  // signed-in user's own data. Clearing the pick (back to "My View") just
+  // drops the stale list rather than leaving it to flash on reselect.
+  useEffect(() => {
+    if (!viewAsVaId) {
+      setViewedTasks([]);
+      return;
+    }
+    let cancelled = false;
+    setViewedTasksLoading(true);
+    fetchAssignedTasksForVa(viewAsVaId)
+      .then((rows) => {
+        if (!cancelled) setViewedTasks(rows);
+      })
+      .finally(() => {
+        if (!cancelled) setViewedTasksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewAsVaId]);
 
   const loadTeam = useCallback(async () => {
     setTeamLoading(true);
@@ -670,8 +701,8 @@ export default function App() {
             </div>
           )}
           <TaskWidgetsTabs
-            tasks={tasks}
-            loading={tasksLoading}
+            tasks={viewAsVaId ? viewedTasks : tasks}
+            loading={viewAsVaId ? viewedTasksLoading : tasksLoading}
             selectedId={selectedTask?.id ?? null}
             onSelect={setSelectedTask}
             startingId={startingId}
@@ -685,6 +716,10 @@ export default function App() {
             hasActiveTask={Boolean(sessionRow?.active_task?.logId && !isOnBreak(sessionRow.active_task))}
             actionPending={actionPending}
             onStartAdHoc={handleStartAdHoc}
+            isAdmin={Boolean(profile?.role && profile.role !== "va")}
+            teamMembers={teamMembers}
+            viewAsVaId={viewAsVaId}
+            onViewAsVaChange={setViewAsVaId}
           />
         </div>
 
