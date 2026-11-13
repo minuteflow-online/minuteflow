@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import RichTextEditor from "@/components/RichTextEditor";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
+import { parseMagicWords, serializeMagicWords } from "@/lib/magicWords";
 import {
   ensureRichHtml,
   isRichEmpty,
@@ -255,9 +256,10 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
   const [selectedEmpTypes, setSelectedEmpTypes] = useState<string[]>([]);
   const [selectedIndividuals, setSelectedIndividuals] = useState<string[]>([]);
 
-  // Magic word
+  // Magic words — one box per word; saved comma-separated in magic_word.
   const [addMagicWord, setAddMagicWord] = useState(false);
-  const [magicWord, setMagicWord] = useState("");
+  const [magicWords, setMagicWords] = useState<string[]>([""]);
+  const magicWord = serializeMagicWords(magicWords) ?? "";
 
   // Link, image, sort order
   const [link, setLink] = useState("");
@@ -321,7 +323,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     setSelectedEmpTypes([]);
     setSelectedIndividuals([]);
     setAddMagicWord(false);
-    setMagicWord("");
+    setMagicWords([""]);
     setLink("");
     setImageUrl("");
     setSortOrder(0);
@@ -344,7 +346,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     setSelectedIndividuals(individuals);
 
     setAddMagicWord(!!b.magic_word);
-    setMagicWord(b.magic_word || "");
+    const savedWords = parseMagicWords(b.magic_word);
+    setMagicWords(savedWords.length ? savedWords : [""]);
 
     setLink(b.link || "");
     setImageUrl(b.image_url || "");
@@ -418,8 +421,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
         body: ensureRichHtml(body.trim()),
         category,
         recipients: builtRecipients,
-        magic_word: addMagicWord && magicWord.trim() ? magicWord.trim() : null,
-        require_word: addMagicWord && !!magicWord.trim(),
+        magic_word: addMagicWord && magicWord ? magicWord : null,
+        require_word: addMagicWord && !!magicWord,
         status,
         scheduled_at,
         link: link.trim() || null,
@@ -925,15 +928,43 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
               </label>
               {addMagicWord && (
                 <div className="space-y-2 pl-5">
-                  <input
-                    type="text"
-                    value={magicWord}
-                    onChange={(e) => setMagicWord(e.target.value)}
-                    placeholder="Enter magic word..."
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
+                  {magicWords.map((w, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={w}
+                        // A comma would split one word into two, so it isn't allowed inside a word.
+                        onChange={(e) => {
+                          const next = [...magicWords];
+                          next[i] = e.target.value.replace(/,/g, "");
+                          setMagicWords(next);
+                        }}
+                        placeholder={magicWords.length > 1 ? `Magic word ${i + 1}...` : "Enter magic word..."}
+                        className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                      />
+                      {magicWords.length > 1 && (
+                        <button
+                          type="button"
+                          title="Remove this word"
+                          onClick={() => setMagicWords(magicWords.filter((_, j) => j !== i))}
+                          className="shrink-0 text-[11px] text-terracotta hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setMagicWords([...magicWords, ""])}
+                    className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
+                  >
+                    + Add another word
+                  </button>
                   <p className="text-[11px] text-stone">
-                    VAs must enter this word to acknowledge the broadcast.
+                    {magicWords.length > 1
+                      ? "Each word is placed in a different part of the message. VAs must enter all of them to acknowledge it."
+                      : "VAs must enter this word to acknowledge the broadcast."}
                   </p>
                 </div>
               )}
@@ -1202,7 +1233,9 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
-                        Magic word
+                        {parseMagicWords(b.magic_word).length > 1
+                          ? `${parseMagicWords(b.magic_word).length} magic words`
+                          : "Magic word"}
                       </span>
                     )}
                     <span className="text-[11px] text-stone">{recipientLabel(b.recipients)}</span>

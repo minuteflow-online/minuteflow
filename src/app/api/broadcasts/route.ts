@@ -3,7 +3,8 @@ import { after } from "next/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
-import { injectMagicWordHtml, isRichHtml, plainToHtml, renderBroadcastHtml, sanitizeRichHtml } from "@/lib/richText";
+import { injectMagicWordHtml, injectMagicWordsHtml, isRichHtml, plainToHtml, renderBroadcastHtml, sanitizeRichHtml } from "@/lib/richText";
+import { parseMagicWords } from "@/lib/magicWords";
 import { isAudience, isRecipient, broadcastPortalPath, followUpTitle, type RecipientRow } from "@/lib/broadcasts";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { esc } from "@/lib/telegram";
@@ -89,11 +90,19 @@ function buildEmailHtml(broadcast: {
 }): string {
   // Inject magic word into the displayed body if present.
   // Plain-text bodies use the line-based injection; rich (HTML) bodies inject at a block boundary.
-  const displayBody = !broadcast.magic_word
+  // Several words are spread across the whole body, each in its own stretch.
+  const words = parseMagicWords(broadcast.magic_word);
+  const displayBody = words.length === 0
     ? renderBroadcastHtml(broadcast.body)
+    : words.length > 1
+    ? injectMagicWordsHtml(
+        renderBroadcastHtml(broadcast.body),
+        words.map((w, i) => `Magic word ${i + 1} of ${words.length}: [${w}]`),
+        (n) => Math.floor(Math.random() * n)
+      )
     : isRichHtml(broadcast.body)
-    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), `Magic word: [${broadcast.magic_word}]`, (n) => Math.floor(Math.random() * n))
-    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, broadcast.magic_word)));
+    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), `Magic word: [${words[0]}]`, (n) => Math.floor(Math.random() * n))
+    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, words[0])));
 
   const label = categoryLabel(broadcast.category);
 
@@ -108,8 +117,8 @@ function buildEmailHtml(broadcast: {
         <div style="font-size: 14px; color: #4a3728; line-height: 1.7; margin: 0 0 20px;">${displayBody}</div>
         ${broadcast.require_word ? `
         <div style="background: #fef9ec; border: 1px solid #f5e6b8; border-radius: 8px; padding: 14px 16px; margin-top: 20px;">
-          <p style="font-size: 13px; color: #8a6f2a; font-weight: 600; margin: 0 0 4px;">Magic Word Required</p>
-          <p style="font-size: 12px; color: #8a6f2a; margin: 0;">A magic word is hidden in this message. Enter it in your MinuteFlow portal to confirm you've read this.</p>
+          <p style="font-size: 13px; color: #8a6f2a; font-weight: 600; margin: 0 0 4px;">${words.length > 1 ? "Magic Words Required" : "Magic Word Required"}</p>
+          <p style="font-size: 12px; color: #8a6f2a; margin: 0;">${words.length > 1 ? `${words.length} magic words are hidden in this message. Enter all of them` : "A magic word is hidden in this message. Enter it"} in your MinuteFlow portal to confirm you've read this.</p>
         </div>` : ""}
         <div style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #f0ebe4;">
           <p style="font-size: 13px; color: #4a3728; margin: 0 0 8px;">Log into your MinuteFlow portal to acknowledge this.</p>

@@ -5,8 +5,10 @@ import { useSearchParams } from "next/navigation";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import { broadcastPortalPath } from "@/lib/broadcasts";
 import { memoChatPath } from "@/lib/memoChat";
+import { magicWordLabel, magicWordsMatch, parseMagicWords } from "@/lib/magicWords";
 import {
   injectMagicWordHtml,
+  injectMagicWordsHtml,
   isRichHtml,
   plainToHtml,
   renderBroadcastHtml,
@@ -218,29 +220,43 @@ function BroadcastCard({
     setExpanded(true);
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [linked]);
-  const [wordInput, setWordInput] = useState("");
+  const magicWords = parseMagicWords(broadcast.magic_word);
+  // One box per magic word; a VA must fill in every one (any order).
+  const [wordInputs, setWordInputs] = useState<string[]>(() => magicWords.map(() => ""));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Plain-text bodies keep the original text injection; rich bodies inject at an HTML block boundary.
+  // Several words are spread across the whole message, one per stretch.
   const anchor = broadcast.id.charCodeAt(broadcast.id.length - 1);
-  const displayHtml = !broadcast.magic_word
+  const displayHtml = magicWords.length === 0
     ? renderBroadcastHtml(broadcast.body)
+    : magicWords.length > 1
+    ? injectMagicWordsHtml(
+        renderBroadcastHtml(broadcast.body),
+        magicWords.map((w, i) => magicWordLabel(w, i, magicWords.length)),
+        (n, i) => (anchor + i) % n
+      )
     : isRichHtml(broadcast.body)
-    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), `Magic word is ${broadcast.magic_word}`, (n) => anchor % n)
-    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, broadcast.magic_word, broadcast.id)));
+    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), magicWordLabel(magicWords[0], 0, 1), (n) => anchor % n)
+    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, magicWords[0], broadcast.id)));
 
   const isLong = richTextToPlain(displayHtml).length > 300 || /<img\b/i.test(displayHtml);
 
   const handleAcknowledge = useCallback(async () => {
     setError(null);
 
+    // Commas would split one box into several words, so each box is taken as one word.
+    const entered = wordInputs.map((w) => w.replace(/,/g, " ").trim()).filter(Boolean).join(", ");
+
     // Client-side magic word check
-    if (broadcast.require_word && broadcast.magic_word) {
-      if (wordInput.trim().toLowerCase() !== broadcast.magic_word.toLowerCase()) {
-        setError("Incorrect magic word. Please check the message.");
-        return;
-      }
+    if (broadcast.require_word && broadcast.magic_word && !magicWordsMatch(broadcast.magic_word, entered)) {
+      setError(
+        magicWords.length > 1
+          ? "One or more magic words are incorrect. Please check the message."
+          : "Incorrect magic word. Please check the message."
+      );
+      return;
     }
 
     setSubmitting(true);
@@ -249,7 +265,7 @@ function BroadcastCard({
         broadcast_id: broadcast.id,
       };
       if (broadcast.magic_word) {
-        payload.word_entered = wordInput.trim() || undefined;
+        payload.word_entered = entered || undefined;
       }
 
       const res = await fetch("/api/broadcasts/read", {
@@ -269,11 +285,11 @@ function BroadcastCard({
     } finally {
       setSubmitting(false);
     }
-  }, [broadcast, wordInput, onAcknowledged]);
+  }, [broadcast, magicWords.length, wordInputs, onAcknowledged]);
 
   const acknowledgeDisabled =
     submitting ||
-    (broadcast.require_word && wordInput.trim().length === 0);
+    (broadcast.require_word && wordInputs.some((w) => w.trim().length === 0));
 
   return (
     <div
@@ -381,15 +397,27 @@ function BroadcastCard({
             <>
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                  Enter the magic word here found in the message
+                  {magicWords.length > 1
+                    ? `Enter all ${magicWords.length} magic words found in the message (any order)`
+                    : "Enter the magic word here found in the message"}
                 </label>
-                <input
-                  type="text"
-                  value={wordInput}
-                  onChange={(e) => { setWordInput(e.target.value); setError(null); }}
-                  placeholder="Type the magic word…"
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                />
+                <div className="space-y-2">
+                  {wordInputs.map((w, i) => (
+                    <input
+                      key={i}
+                      type="text"
+                      value={w}
+                      onChange={(e) => {
+                        const next = [...wordInputs];
+                        next[i] = e.target.value;
+                        setWordInputs(next);
+                        setError(null);
+                      }}
+                      placeholder={magicWords.length > 1 ? `Magic word ${i + 1}…` : "Type the magic word…"}
+                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                    />
+                  ))}
+                </div>
               </div>
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button

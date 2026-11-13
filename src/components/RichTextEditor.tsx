@@ -11,6 +11,7 @@ import {
   RICH_TEXT_CLASSES,
   type ImageSize,
 } from "@/lib/richText";
+import { inlineHtmlFileStyles } from "@/lib/inlineHtmlStyles";
 
 // Highlight choices: the palette's soft accent tones (globals.css). Clay-rose-soft is
 // left out — next to terracotta-soft the two read as the same color.
@@ -76,7 +77,9 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
       setHtmlFileError("That file is over 1 MB — too large for a message.");
       return;
     }
-    const content = htmlFileToMessage(await file.text());
+    // A designed page keeps its look in a <style> block / classes; move that onto
+    // each element first, since only inline styles survive the sanitizer.
+    const content = htmlFileToMessage(await inlineHtmlFileStyles(await file.text()));
     if (!content.trim()) {
       setHtmlFileError("That file has no content to show.");
       return;
