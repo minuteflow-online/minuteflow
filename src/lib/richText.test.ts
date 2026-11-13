@@ -66,7 +66,7 @@ describe("sanitizeRichHtml", () => {
   });
 
   it("removes scripts and unknown tags", () => {
-    expect(sanitizeRichHtml("hi<script>alert(1)</script><iframe src=x></iframe><table>t</table>")).toBe("hit");
+    expect(sanitizeRichHtml("hi<script>alert(1)</script><iframe src=x></iframe><form>t</form>")).toBe("hit");
   });
 });
 
@@ -108,5 +108,56 @@ describe("injectMagicWordHtml", () => {
 
   it("appends when there is no boundary in the latter part", () => {
     expect(injectMagicWordHtml("<b>short</b>", "MW", () => 0)).toBe("<b>short</b><div><b>MW</b></div>");
+  });
+
+  it("never lands inside a designed card or table from HTML view", () => {
+    const html = renderBroadcastHtml(
+      '<div style="padding: 12px; border: 1px solid #e8dfd3">Intro card</div>' +
+        "<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>" +
+        "<hr><p>Second to last</p><p>Last paragraph here</p>"
+    );
+    for (let pick = 0; pick < 5; pick++) {
+      const out = injectMagicWordHtml(html, "Magic word is pineapple", () => pick);
+      const at = out.indexOf("<div><b>Magic word is pineapple</b></div>");
+      expect(at).toBeGreaterThan(out.indexOf("</table>"));
+      expect(out.replace("<div><b>Magic word is pineapple</b></div>", "")).toBe(html);
+    }
+  });
+});
+
+describe("HTML view design styles", () => {
+  it("keeps spacing, borders and font size from hand-written HTML", () => {
+    expect(
+      sanitizeRichHtml('<div style="padding: 12px 16px; border: 1px solid #e8dfd3; border-radius: 12px; font-size: 15px">Card</div>')
+    ).toBe('<div style="padding: 12px 16px; border: 1px solid #e8dfd3; border-radius: 12px; font-size: 15px">Card</div>');
+  });
+
+  it("keeps tables, dividers and cell spans", () => {
+    expect(sanitizeRichHtml('<table><tbody><tr><th colspan="2">H</th></tr><tr><td rowspan="x">c</td></tr></tbody></table><hr>')).toBe(
+      '<table><tbody><tr><th colspan="2">H</th></tr><tr><td>c</td></tr></tbody></table><hr>'
+    );
+  });
+
+  it("rejects style values that could load or run anything", () => {
+    expect(sanitizeRichHtml('<div style="border: url(https://x.com/a.png); width: expression(alert(1)); padding: 4px">x</div>')).toBe(
+      '<div style="padding: 4px">x</div>'
+    );
+    expect(sanitizeRichHtml('<div style="margin: 0 \\61 bc">x</div>')).toBe("<div>x</div>");
+  });
+
+  it("drops a pasted page's head, title and style block", () => {
+    expect(
+      sanitizeRichHtml("<html><head><title>Memo</title><style>p{color:red}</style></head><body><p>Hi</p></body></html>")
+    ).toBe("<p>Hi</p>");
+  });
+
+  it("paste mode keeps only colour, highlight, alignment and list style", () => {
+    expect(
+      sanitizeRichHtml('<p style="margin-top: 0pt; font-size: 11pt; color: #3d3229; text-align: center">Doc</p>', "paste")
+    ).toBe('<p style="color: #3d3229; text-align: center">Doc</p>');
+  });
+
+  it("still treats plain-text memos as plain", () => {
+    expect(renderBroadcastHtml("Line one\nLine <two>")).toBe("Line one<br>Line &lt;two&gt;");
   });
 });
