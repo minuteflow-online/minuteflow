@@ -15,7 +15,6 @@ import {
   getMonthBoundsInTimezone,
   getYearBoundsInTimezone,
 } from "@/lib/utils";
-import { computeTransitionMs } from "@/lib/transitionTime";
 import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ProgressBar } from "@/components/VAPerformanceMetrics";
@@ -1018,24 +1017,6 @@ export default function ReportsPage() {
     return filtered;
   }, [filteredLogs, profiles, selectedVA, start, end]);
 
-  /* ── Transition Time ─────────────────────────────────────── */
-  //
-  // The stretch between finishing one entry and starting the next: the wizard
-  // opens, and whatever time is left after the wizard was actually being filled
-  // in is time nobody is tracked against. Measured per VA per session date, so
-  // an overnight boundary never counts as a gap, and the wizard's own
-  // form_fill_ms is subtracted — that part is already reported as Wizard Time.
-
-  const transitionMs = useMemo(() => {
-    // Clock Out markers are zero-duration rows that filteredLogs strips out, so
-    // they are read off the unfiltered logs (keyed by user only — clock-outs
-    // carry no account, so the account/client filters would drop them).
-    const clockOuts = logs.filter(
-      (l) => l.category === "Clock Out" && (selectedVA === "all" || l.user_id === selectedVA)
-    );
-    return computeTransitionMs(filteredLogs, clockOuts);
-  }, [filteredLogs, logs, selectedVA]);
-
   /* ── By person ───────────────────────────────────────────── */
 
   const personHours: PersonHours[] = useMemo(() => {
@@ -1734,12 +1715,6 @@ export default function ReportsPage() {
                   <div className="font-serif text-xl font-bold text-walnut">{formatDuration(reportSummary.wizardMs)}</div>
                   <div className="text-[10px] text-bark mt-0.5">Wizard Time</div>
                 </div>
-                {/* Report-only: deliberately not added to the Activity Log / Time Log
-                    bottom summary, which stays the tracked-time view. */}
-                <div>
-                  <div className="font-serif text-xl font-bold text-amber">{formatDuration(transitionMs)}</div>
-                  <div className="text-[10px] text-bark mt-0.5">Transition Time</div>
-                </div>
               </div>
 
               <div className="mt-4 flex flex-wrap gap-x-6 gap-y-4 border-t border-parchment pt-4">
@@ -1812,27 +1787,7 @@ export default function ReportsPage() {
                     </div>
                   );
                 })}
-                {/* Untracked, unlike every row above it: the stretch after a task is
-                    submitted before the next one starts. Sized against totalMs so the
-                    bar reads on the same scale, though it is not part of that total. */}
-                {transitionMs > 0 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-espresso w-[128px] truncate">From submit to task</span>
-                    <div className="flex-1 h-1.5 rounded bg-parchment overflow-hidden">
-                      <div
-                        className="h-full rounded bg-amber"
-                        style={{
-                          width: `${Math.max(
-                            reportSummary.totalMs > 0 ? (transitionMs / reportSummary.totalMs) * 100 : 0,
-                            2
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                    <span className="text-[11px] font-semibold text-espresso w-[60px] text-right">{formatDuration(transitionMs)}</span>
-                  </div>
-                )}
-                {reportSummary.categories.length === 0 && transitionMs === 0 && (
+                {reportSummary.categories.length === 0 && (
                   <span className="text-[11px] text-bark">No data</span>
                 )}
               </div>
