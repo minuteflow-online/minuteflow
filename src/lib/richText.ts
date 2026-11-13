@@ -229,18 +229,24 @@ export function sanitizeRichHtml(html: string, mode: SanitizeMode = "design"): s
 }
 
 /**
- * Insert a "Magic word" line into rich HTML at a top-level boundary in the
- * latter 40% of the body. `pick` chooses among the candidate slots.
+ * Insert a "Magic word" sentence into rich HTML in the latter 40% of the body.
+ * It's added to the end of an existing paragraph so it reads like the rest of
+ * the text; without a suitable paragraph it goes in as its own line at a
+ * top-level boundary. `pick` chooses among the candidate slots.
  */
 export function injectMagicWordHtml(
   html: string,
   injection: string,
   pick: (slotCount: number) => number
 ): string {
-  const line = magicLine(injection);
-  const boundaries = topLevelBoundaries(html);
   const minPos = Math.floor(html.length * 0.6);
-  const slots = boundaries.filter((b) => b >= minPos && b < html.length);
+  const paragraphs = paragraphEnds(html).filter((p) => p >= minPos);
+  if (paragraphs.length) {
+    const at = paragraphs[Math.min(paragraphs.length - 1, Math.max(0, pick(paragraphs.length)))];
+    return html.slice(0, at) + magicSentence(injection) + html.slice(at);
+  }
+  const line = magicLine(injection);
+  const slots = topLevelBoundaries(html).filter((b) => b >= minPos && b < html.length);
   if (slots.length === 0) return html + line;
   const at = slots[Math.min(slots.length - 1, Math.max(0, pick(slots.length)))];
   return html.slice(0, at) + line + html.slice(at);
@@ -248,9 +254,10 @@ export function injectMagicWordHtml(
 
 /**
  * Several magic words: the body is split into one equal stretch per word and
- * each word goes at a top-level boundary inside its own stretch, so finding
- * them all means reading the whole message. A stretch with no free boundary
- * borrows the next free one after it; past the last boundary, words are appended.
+ * each word goes in its own stretch, so finding them all means reading the
+ * whole message. Each is added to the end of a paragraph (or, in a body with
+ * no paragraphs, as its own line at a top-level boundary). A stretch with no
+ * free spot borrows the next free one after it; past the last, words are appended.
  * `pick(slotCount, wordIndex)` chooses among a stretch's candidate slots.
  */
 export function injectMagicWordsHtml(
@@ -260,31 +267,68 @@ export function injectMagicWordsHtml(
 ): string {
   const n = injections.length;
   if (n === 0) return html;
-  const boundaries = topLevelBoundaries(html).filter((b) => b < html.length);
+  const paragraphs = paragraphEnds(html);
+  const inParagraphs = paragraphs.length > 0;
+  const spots = inParagraphs ? paragraphs : topLevelBoundaries(html).filter((b) => b < html.length);
   const used = new Set<number>();
-  const placements: { at: number; line: string; order: number }[] = [];
+  const placements: { at: number; text: string; order: number }[] = [];
 
   injections.forEach((injection, i) => {
     const start = Math.floor((html.length * i) / n);
     const end = Math.floor((html.length * (i + 1)) / n);
-    let slots = boundaries.filter((b) => b >= start && b < end && !used.has(b));
-    if (slots.length === 0) slots = boundaries.filter((b) => b >= start && !used.has(b)).slice(0, 1);
-    const at = slots.length
-      ? slots[Math.min(slots.length - 1, Math.max(0, pick(slots.length, i)))]
-      : html.length;
-    if (slots.length) used.add(at);
-    placements.push({ at, line: magicLine(injection), order: i });
+    let slots = spots.filter((b) => b >= start && b < end && !used.has(b));
+    if (slots.length === 0) slots = spots.filter((b) => b >= start && !used.has(b)).slice(0, 1);
+    if (slots.length === 0) {
+      placements.push({ at: html.length, text: magicLine(injection), order: i });
+      return;
+    }
+    const at = slots[Math.min(slots.length - 1, Math.max(0, pick(slots.length, i)))];
+    used.add(at);
+    placements.push({ at, text: inParagraphs ? magicSentence(injection) : magicLine(injection), order: i });
   });
 
   // Insert from the end so earlier positions stay valid; same spot keeps word order.
   placements.sort((a, b) => b.at - a.at || b.order - a.order);
   let out = html;
-  for (const p of placements) out = out.slice(0, p.at) + p.line + out.slice(p.at);
+  for (const p of placements) out = out.slice(0, p.at) + p.text + out.slice(p.at);
   return out;
 }
 
+/** Plain text, styled like whatever it lands in, so it blends into the message. */
 function magicLine(injection: string): string {
-  return `<div><b>${escapeHtml(injection)}</b></div>`;
+  return `<div>${escapeHtml(injection)}</div>`;
+}
+
+function magicSentence(injection: string): string {
+  return ` ${escapeHtml(injection)}`;
+}
+
+/** Shortest paragraph (in visible characters) a magic word sentence is added to. */
+const MIN_PARAGRAPH_CHARS = 30;
+
+/**
+ * Positions just before each </p> whose paragraph has real text, outside
+ * tables — the end of a sentence a magic word can be tacked onto.
+ */
+function paragraphEnds(html: string): number[] {
+  const ends: number[] = [];
+  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+  let tableDepth = 0;
+  let pStart = -1;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(html))) {
+    const tag = m[2].toLowerCase();
+    if (tag === "table") tableDepth += m[1] ? -1 : 1;
+    if (tag !== "p") continue;
+    if (!m[1]) {
+      pStart = tagRe.lastIndex;
+    } else if (pStart >= 0) {
+      const text = html.slice(pStart, m.index).replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, " ").trim();
+      if (tableDepth === 0 && text.length >= MIN_PARAGRAPH_CHARS) ends.push(m.index);
+      pStart = -1;
+    }
+  }
+  return ends;
 }
 
 const BLOCK_TAGS = new Set(["p", "div", "ul", "ol", "h1", "h2", "h3", "h4", "blockquote", "table"]);
