@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ensureRichHtml,
+  htmlFileToMessage,
   injectMagicWordHtml,
   isRichEmpty,
   renderBroadcastHtml,
@@ -155,6 +156,20 @@ describe("HTML view design styles", () => {
     expect(
       sanitizeRichHtml('<p style="margin-top: 0pt; font-size: 11pt; color: #3d3229; text-align: center">Doc</p>', "paste")
     ).toBe('<p style="color: #3d3229; text-align: center">Doc</p>');
+  });
+
+  it("takes the body of an uploaded full-page .html file", () => {
+    const page =
+      '<!DOCTYPE html><html><head><title>Memo</title><style>p{color:red}</style></head>' +
+      '<body style="margin:0">\n<div style="padding: 12px">Hello team</div>\n</body></html>';
+    expect(htmlFileToMessage(page)).toBe('<div style="padding: 12px">Hello team</div>');
+  });
+
+  it("uses an uploaded fragment file as-is", () => {
+    expect(htmlFileToMessage('  <p>Just a fragment</p>\n')).toBe("<p>Just a fragment</p>");
+    expect(htmlFileToMessage("<!doctype html><html><head><title>T</title></head><p>No body tag</p></html>")).toBe(
+      "<p>No body tag</p>"
+    );
   });
 
   it("still treats plain-text memos as plain", () => {
