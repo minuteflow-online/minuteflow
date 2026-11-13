@@ -62,6 +62,10 @@ export default function SubmitWorkModal({
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  // Wizard time (Toni's call, 2026-11-13) — mirrors web's SubmitWorkModal:
+  // this modal only appears because someone just clicked Submit, so
+  // "opened" already means "started filling it out."
+  const openedAtRef = useRef(Date.now());
 
   const words = countWords(message);
   const needsEvidence = reviewRequired !== false;
@@ -150,6 +154,7 @@ export default function SubmitWorkModal({
       attachments,
       progressStatus,
       reviewRequested,
+      formFillMs: Date.now() - openedAtRef.current,
     });
 
     if (!result.ok) {

@@ -276,6 +276,10 @@ export async function POST(request: Request, { params }: RouteContext) {
   /** Only meaningful on an in_progress submission — the VA's own escape
    *  hatch asking for Toni's eyes on this one instead of auto-approving. */
   let reviewRequested = false;
+  /** How long the Submit Work modal was open for, ms — folded into the
+   *  task's most recent time log's form_fill_ms (Toni's call, 2026-11-13),
+   *  same "Wizard Time" column the Log an Activity form already writes. */
+  let formFillMs = 0;
   /**
    * On an approval, the reviewer can opt to file the reviewed submission's
    * links and attachments into its objective/operation's Docs & Files. Off
@@ -307,6 +311,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     messageType = (body.message_type ?? "submission") as SubmissionMessageType;
     if (body.progress_status === "in_progress") progressStatus = "in_progress";
     reviewRequested = body.review_requested === true;
+    formFillMs = Number.isFinite(Number(body.form_fill_ms)) ? Math.max(0, Math.floor(Number(body.form_fill_ms))) : 0;
     if (body.file_to_project === true && Number.isInteger(body.file_submission_id)) {
       fileSubmissionId = body.file_submission_id as number;
     }
@@ -422,6 +427,26 @@ export async function POST(request: Request, { params }: RouteContext) {
       { error: insertError?.message ?? "Unable to save submission" },
       { status: 400 }
     );
+  }
+
+  // Submit Work's own wizard time, folded into the task's most recent time
+  // log — additive, since a task-switch wizard may already have put time on
+  // that same row. Best-effort: never blocks the submission itself.
+  if (messageType === "submission" && formFillMs > 0) {
+    const { data: recentLog } = await admin
+      .from("time_logs")
+      .select("id, form_fill_ms")
+      .eq("assigned_task_id", Number(id))
+      .eq("user_id", user.id)
+      .order("start_time", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (recentLog) {
+      await admin
+        .from("time_logs")
+        .update({ form_fill_ms: (recentLog.form_fill_ms ?? 0) + formFillMs })
+        .eq("id", recentLog.id);
+    }
   }
 
   // Upload files last: if any of them fails the whole submission is rolled

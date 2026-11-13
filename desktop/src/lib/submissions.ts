@@ -120,6 +120,9 @@ export async function postSubmission(
      *  2026-11-02) — mirrors web's SubmitWorkModal exactly. */
     progressStatus?: "in_progress" | "completed";
     reviewRequested?: boolean;
+    /** How long the Submit Work modal was open, ms (Toni's call,
+     *  2026-11-13) — folded into "Wizard Time" in Reports. */
+    formFillMs?: number;
   }
 ): Promise<SubmitWorkResult> {
   const session = await ensureAuth();
@@ -138,6 +141,7 @@ export async function postSubmission(
         attachments: params.attachments,
         progress_status: params.progressStatus ?? "completed",
         review_requested: params.progressStatus === "in_progress" && params.reviewRequested === true,
+        form_fill_ms: params.formFillMs ?? 0,
       }),
     });
     const data = await res.json().catch(() => ({}));

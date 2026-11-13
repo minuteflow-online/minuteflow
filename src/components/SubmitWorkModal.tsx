@@ -74,6 +74,10 @@ export default function SubmitWorkModal({
   const [progress, setProgress] = useState("");
   const supabase = useMemo(() => createClient(), []);
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  // Wizard time (Toni's call, 2026-11-13) — this modal only ever appears
+  // because someone just clicked Submit, so "opened" already means "started
+  // filling it out"; no idle phase to filter out like Log an Activity has.
+  const openedAtRef = useRef(Date.now());
 
   const words = countWords(message);
   // A task nobody reviews only needs a submission that isn't empty — the
@@ -191,6 +195,7 @@ export default function SubmitWorkModal({
           attachments,
           progress_status: progressStatus,
           review_requested: progressStatus === "in_progress" && reviewRequested,
+          form_fill_ms: Date.now() - openedAtRef.current,
         }),
       });
 
