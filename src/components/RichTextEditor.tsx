@@ -28,13 +28,30 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
   const [uploading, setUploading] = useState(false);
   const [empty, setEmpty] = useState(() => isRichEmpty(value));
   const [selectedImg, setSelectedImg] = useState<HTMLImageElement | null>(null);
+  // HTML view: edit the message's code directly. The visual editor stays
+  // mounted (hidden) so switching back just reloads it from the code.
+  const [htmlMode, setHtmlMode] = useState(false);
 
   // Load external value (open/edit/reset) without clobbering the caret while typing.
+  // While in HTML view the code isn't pushed into the visual editor on every
+  // keystroke — unsanitized markup there could run (e.g. an <img onerror>).
   useEffect(() => {
     const el = editorRef.current;
-    if (el && el.innerHTML !== value) el.innerHTML = value;
+    if (el && !htmlMode && el.innerHTML !== value) el.innerHTML = value;
     setEmpty(isRichEmpty(value));
-  }, [value]);
+  }, [value, htmlMode]);
+
+  const toggleHtmlMode = () => {
+    if (htmlMode) {
+      // Back to visual: keep only what the portal and email will actually show.
+      onChange(sanitizeRichHtml(value));
+      setHtmlMode(false);
+    } else {
+      selectImage(null);
+      onChange(editorRef.current?.innerHTML ?? value);
+      setHtmlMode(true);
+    }
+  };
 
   const emit = useCallback(() => {
     const html = editorRef.current?.innerHTML ?? "";
@@ -179,7 +196,7 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
     const html = e.clipboardData.getData("text/html");
     e.preventDefault();
     if (html) {
-      document.execCommand("insertHTML", false, sanitizeRichHtml(html));
+      document.execCommand("insertHTML", false, sanitizeRichHtml(html, "paste"));
     } else {
       document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
     }
@@ -205,6 +222,10 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
     <div className="border border-sand rounded-lg bg-white focus-within:border-terracotta">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-0.5 border-b border-sand px-1.5 py-1">
+        {htmlMode ? (
+          <span className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-1">HTML code</span>
+        ) : (
+        <>
         <button type="button" title="Bold" onMouseDown={keep} onClick={() => exec("bold")} className={`${btn} font-bold`}>B</button>
         <button type="button" title="Italic" onMouseDown={keep} onClick={() => exec("italic")} className={`${btn} italic font-serif`}>I</button>
         <button type="button" title="Underline" onMouseDown={keep} onClick={() => exec("underline")} className={`${btn} underline`}>U</button>
@@ -294,6 +315,19 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
         <button type="button" title="Clear formatting" onMouseDown={keep} onClick={() => exec("removeFormat")} className={`${btn} text-stone`}>
           Clear
         </button>
+        </>
+        )}
+        <button
+          type="button"
+          title={htmlMode ? "Back to the visual editor" : "Write or paste HTML code"}
+          onMouseDown={keep}
+          onClick={toggleHtmlMode}
+          className={`ml-auto px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
+            htmlMode ? "bg-sage text-white hover:bg-sage/90" : "bg-stone/10 text-stone hover:bg-stone/20"
+          }`}
+        >
+          {htmlMode ? "Visual" : "</> HTML"}
+        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -308,7 +342,7 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
       </div>
 
       {/* Image size — shown while an image in the message is selected */}
-      {selectedImg && (
+      {selectedImg && !htmlMode && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-sand bg-parchment px-3 py-1.5">
           <span className="text-[10px] font-semibold text-walnut tracking-wide uppercase mr-1">Image size</span>
           {[...(Object.keys(IMAGE_SIZES) as ImageSize[]), null].map((size) => {
@@ -338,8 +372,24 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
         </div>
       )}
 
+      {/* HTML view */}
+      {htmlMode && (
+        <div>
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            spellCheck={false}
+            placeholder="<p>Write or paste HTML here…</p>"
+            className="block w-full min-h-[180px] max-h-[480px] resize-y py-2 px-3 font-mono text-[12px] text-espresso leading-relaxed outline-none bg-white placeholder:text-stone"
+          />
+          <p className="border-t border-sand px-3 py-1.5 text-[10px] text-stone">
+            Click Visual to preview. Scripts, forms and unsupported tags are removed; text, colors, spacing, borders, tables, lists, links and images are kept.
+          </p>
+        </div>
+      )}
+
       {/* Editable area */}
-      <div className="relative">
+      <div className={`relative ${htmlMode ? "hidden" : ""}`}>
         {empty && placeholder && (
           <div className="pointer-events-none absolute left-3 top-2 text-[13px] text-stone">{placeholder}</div>
         )}

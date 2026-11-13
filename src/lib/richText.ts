@@ -10,10 +10,11 @@
 
 const ALLOWED_TAGS = new Set([
   "b", "strong", "i", "em", "u", "s", "strike", "mark", "span", "font",
-  "p", "div", "br", "ul", "ol", "li", "h1", "h2", "h3", "blockquote", "a", "img",
+  "p", "div", "br", "ul", "ol", "li", "h1", "h2", "h3", "h4", "blockquote", "a", "img",
+  "hr", "table", "thead", "tbody", "tr", "th", "td",
 ]);
 
-const VOID_TAGS = new Set(["br", "img"]);
+const VOID_TAGS = new Set(["br", "img", "hr"]);
 
 /** Sizes an inline image can be set to in the editor, as a share of the message width. */
 export const IMAGE_SIZES = {
@@ -25,11 +26,11 @@ export const IMAGE_SIZES = {
 export type ImageSize = keyof typeof IMAGE_SIZES;
 
 const RICH_TAG_RE =
-  /<(p|div|br|b|strong|i|em|u|s|strike|mark|span|font|a|img|ul|ol|li|h[1-3]|blockquote)\b[^>]*>/i;
+  /<(p|div|br|b|strong|i|em|u|s|strike|mark|span|font|a|img|ul|ol|li|h[1-4]|blockquote|hr|table|thead|tbody|tr|th|td)\b[^>]*>/i;
 
 /** Tailwind classes for a container that renders sanitized broadcast HTML. */
 export const RICH_TEXT_CLASSES =
-  "[&_a]:text-terracotta [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-sm [&_h1]:font-bold [&_h2]:text-[13px] [&_h2]:font-bold [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:border-sand [&_blockquote]:pl-3 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-1 [&_img]:inline-block [&_img]:align-middle [&_img[data-selected]]:outline-2 [&_img[data-selected]]:outline-terracotta";
+  "[&_a]:text-terracotta [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-sm [&_h1]:font-bold [&_h2]:text-[13px] [&_h2]:font-bold [&_h3]:font-semibold [&_h4]:font-semibold [&_hr]:border-sand [&_hr]:my-2 [&_table]:border-collapse [&_th]:border [&_th]:border-sand [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-sand [&_td]:px-2 [&_td]:py-1 [&_blockquote]:border-l-2 [&_blockquote]:border-sand [&_blockquote]:pl-3 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:my-1 [&_img]:inline-block [&_img]:align-middle [&_img[data-selected]]:outline-2 [&_img[data-selected]]:outline-terracotta";
 
 export function escapeHtml(s: string): string {
   return s
@@ -59,7 +60,7 @@ export function richTextToPlain(body: string): string {
   if (!isRichHtml(body)) return body;
   return body
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|h[1-3]|blockquote)>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-4]|blockquote|tr)>/gi, "\n")
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&lt;/g, "<")
@@ -83,8 +84,25 @@ const COLOR_VALUE_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|[a-z]+)$/i;
 const TEXT_ALIGN_RE = /^(left|right|center|justify)$/i;
 const LIST_STYLE_RE = /^(decimal|lower-alpha|upper-alpha|lower-roman|upper-roman)$/i;
 
-/** Keep only color / background-color / text-align / list-style-type from an inline style attribute. */
-function safeStyle(style: string): string {
+// Layout/typography properties kept only in "design" mode (HTML view and
+// display), never on paste: pasted Google Docs carry font sizes and margins
+// that would otherwise override the message's own look.
+const DESIGN_PROPS = new Set([
+  "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+  "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+  "border", "border-top", "border-right", "border-bottom", "border-left",
+  "border-color", "border-width", "border-style", "border-radius",
+  "font-size", "font-weight", "font-style", "text-decoration", "line-height",
+  "width", "max-width",
+]);
+// Lengths, keywords and colours only — no url(), expression(), var() or escapes.
+const DESIGN_VALUE_RE = /^[#a-z0-9\s.,%()-]+$/i;
+const DESIGN_VALUE_BLOCK_RE = /url|expression|javascript|var\(|image|attr\(/i;
+
+export type SanitizeMode = "design" | "paste";
+
+/** Keep only safe properties from an inline style attribute. */
+function safeStyle(style: string, mode: SanitizeMode): string {
   const kept: string[] = [];
   for (const decl of style.split(";")) {
     const idx = decl.indexOf(":");
@@ -96,6 +114,14 @@ function safeStyle(style: string): string {
     } else if (prop === "text-align" && TEXT_ALIGN_RE.test(value)) {
       kept.push(`${prop}: ${value}`);
     } else if (prop === "list-style-type" && LIST_STYLE_RE.test(value)) {
+      kept.push(`${prop}: ${value}`);
+    } else if (
+      mode === "design" &&
+      DESIGN_PROPS.has(prop) &&
+      value.length <= 80 &&
+      DESIGN_VALUE_RE.test(value) &&
+      !DESIGN_VALUE_BLOCK_RE.test(value)
+    ) {
       kept.push(`${prop}: ${value}`);
     }
   }
@@ -112,7 +138,7 @@ function parseAttrs(raw: string): Record<string, string> {
   return attrs;
 }
 
-function rebuildTag(tag: string, rawAttrs: string): string {
+function rebuildTag(tag: string, rawAttrs: string, mode: SanitizeMode): string {
   const attrs = parseAttrs(rawAttrs);
   const out: string[] = [];
 
@@ -135,21 +161,30 @@ function rebuildTag(tag: string, rawAttrs: string): string {
   } else if (tag === "font") {
     // Some browsers emit <font> for highlight; keep only its color.
     if (attrs.color && COLOR_VALUE_RE.test(attrs.color)) out.push(`color="${escapeHtml(attrs.color)}"`);
+  } else if (tag === "td" || tag === "th") {
+    for (const span of ["colspan", "rowspan"]) {
+      if (/^\d{1,2}$/.test(attrs[span] ?? "")) out.push(`${span}="${attrs[span]}"`);
+    }
   }
 
   if (tag !== "img" && attrs.style) {
-    const style = safeStyle(attrs.style);
+    const style = safeStyle(attrs.style, mode);
     if (style) out.push(`style="${escapeHtml(style)}"`);
   }
 
   return `<${tag}${out.length ? " " + out.join(" ") : ""}>`;
 }
 
-/** Allowlist sanitizer: unknown tags are dropped (their text kept), attributes filtered. */
-export function sanitizeRichHtml(html: string): string {
+/**
+ * Allowlist sanitizer: unknown tags are dropped (their text kept), attributes filtered.
+ * "design" (default) also keeps layout styles such as padding, borders and font size;
+ * "paste" keeps only colour, highlight, alignment and list style.
+ */
+export function sanitizeRichHtml(html: string, mode: SanitizeMode = "design"): string {
   const cleaned = html
     .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(script|style|iframe|object|embed|template)\b[\s\S]*?<\/\1\s*>/gi, "");
+    // head/title too: a whole pasted HTML page shouldn't show its <title> text.
+    .replace(/<(script|style|iframe|object|embed|template|head|title)\b[\s\S]*?<\/\1\s*>/gi, "");
 
   let result = "";
   const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
@@ -163,7 +198,7 @@ export function sanitizeRichHtml(html: string): string {
     if (m[1]) {
       if (!VOID_TAGS.has(tag)) result += `</${tag}>`;
     } else {
-      result += rebuildTag(tag, m[3]);
+      result += rebuildTag(tag, m[3], mode);
     }
   }
   result += cleaned.slice(last).replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -189,7 +224,7 @@ export function injectMagicWordHtml(
   while ((m = tagRe.exec(html))) {
     const tag = m[2].toLowerCase();
     if (VOID_TAGS.has(tag)) {
-      if (depth === 0 && tag === "br") boundaries.push(tagRe.lastIndex);
+      if (depth === 0 && (tag === "br" || tag === "hr")) boundaries.push(tagRe.lastIndex);
       continue;
     }
     if (m[1]) {
