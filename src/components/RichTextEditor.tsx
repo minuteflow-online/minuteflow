@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { escapeHtml, isRichEmpty, sanitizeRichHtml, IMAGE_SIZES, RICH_TEXT_CLASSES, type ImageSize } from "@/lib/richText";
+import {
+  escapeHtml,
+  htmlFileToMessage,
+  isRichEmpty,
+  sanitizeRichHtml,
+  IMAGE_SIZES,
+  MAX_HTML_FILE_BYTES,
+  RICH_TEXT_CLASSES,
+  type ImageSize,
+} from "@/lib/richText";
 
 // Highlight choices: the palette's soft accent tones (globals.css). Clay-rose-soft is
 // left out — next to terracotta-soft the two read as the same color.
@@ -51,6 +60,34 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
       onChange(editorRef.current?.innerHTML ?? value);
       setHtmlMode(true);
     }
+  };
+
+  // Reads an .html file in the browser (nothing is uploaded anywhere) and
+  // opens its contents in HTML view, exactly as if it had been pasted there.
+  const htmlFileInputRef = useRef<HTMLInputElement>(null);
+  const [htmlFileError, setHtmlFileError] = useState<string | null>(null);
+  const loadHtmlFile = async (file: File) => {
+    setHtmlFileError(null);
+    if (!/\.html?$/i.test(file.name) && file.type !== "text/html") {
+      setHtmlFileError("That isn't an .html file.");
+      return;
+    }
+    if (file.size > MAX_HTML_FILE_BYTES) {
+      setHtmlFileError("That file is over 1 MB — too large for a message.");
+      return;
+    }
+    const content = htmlFileToMessage(await file.text());
+    if (!content.trim()) {
+      setHtmlFileError("That file has no content to show.");
+      return;
+    }
+    if (!isRichEmpty(htmlMode ? value : editorRef.current?.innerHTML ?? value) &&
+        !window.confirm("Replace the current message with this file?")) {
+      return;
+    }
+    selectImage(null);
+    setHtmlMode(true);
+    onChange(content);
   };
 
   const emit = useCallback(() => {
@@ -319,10 +356,19 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
         )}
         <button
           type="button"
+          title="Load an .html file into the message"
+          onMouseDown={keep}
+          onClick={() => htmlFileInputRef.current?.click()}
+          className="ml-auto px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer bg-stone/10 text-stone hover:bg-stone/20"
+        >
+          Upload .html
+        </button>
+        <button
+          type="button"
           title={htmlMode ? "Back to the visual editor" : "Write or paste HTML code"}
           onMouseDown={keep}
           onClick={toggleHtmlMode}
-          className={`ml-auto px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
+          className={`ml-1 px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
             htmlMode ? "bg-sage text-white hover:bg-sage/90" : "bg-stone/10 text-stone hover:bg-stone/20"
           }`}
         >
@@ -339,7 +385,21 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
             e.target.value = "";
           }}
         />
+        <input
+          ref={htmlFileInputRef}
+          type="file"
+          accept=".html,.htm,text/html"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) loadHtmlFile(f);
+            e.target.value = "";
+          }}
+        />
       </div>
+      {htmlFileError && (
+        <p className="border-b border-sand bg-terracotta-soft px-3 py-1.5 text-[11px] text-terracotta">{htmlFileError}</p>
+      )}
 
       {/* Image size — shown while an image in the message is selected */}
       {selectedImg && !htmlMode && (

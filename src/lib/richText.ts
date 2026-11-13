@@ -242,6 +242,25 @@ export function injectMagicWordHtml(
   return html.slice(0, at) + line + html.slice(at);
 }
 
+/** Largest .html file the editor will load (a message, not a website). */
+export const MAX_HTML_FILE_BYTES = 1024 * 1024;
+
+/**
+ * The part of an uploaded .html file that becomes the message: the inside of
+ * <body> when the file is a whole page, otherwise the file as-is. It still goes
+ * through the sanitizer everywhere it's shown.
+ */
+export function htmlFileToMessage(text: string): string {
+  const body = text.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);
+  const inner = body
+    ? body[1]
+    : text
+        .replace(/<!doctype[^>]*>/gi, "")
+        .replace(/<head\b[\s\S]*?<\/head\s*>/gi, "")
+        .replace(/<\/?html\b[^>]*>/gi, "");
+  return inner.trim();
+}
+
 /** The single entry point for displaying a broadcast body as safe HTML. */
 export function renderBroadcastHtml(body: string): string {
   return sanitizeRichHtml(isRichHtml(body) ? body : plainToHtml(body));
