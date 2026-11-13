@@ -3500,7 +3500,7 @@ function ThreadCard({
             className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-semibold transition-colors ${SUBMISSION_TYPE_BADGE.revision} hover:bg-amber-100`}
             title="Every revision request on this task, in one list"
           >
-            Revisions {revisions.length}
+            Rev.Note {revisions.length}
             <svg className={`h-2.5 w-2.5 transition-transform ${revisionsOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
             </svg>
