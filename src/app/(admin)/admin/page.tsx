@@ -68,7 +68,7 @@ import {
 } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
-import { formatPayMoney } from "@/lib/payroll";
+import { formatPayMoney, rateTypeLabel } from "@/lib/payroll";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -3424,6 +3424,7 @@ function TeamManagementTab({
                   <option value="hourly">Hourly</option>
                   <option value="daily">Daily</option>
                   <option value="monthly">Monthly</option>
+                  <option value="per_task">Per Task</option>
                 </select>
               </div>
             </div>
@@ -3795,7 +3796,7 @@ function TeamManagementTab({
                         title="Add New Rate / view rate history"
                         className="cursor-pointer text-bark hover:text-terracotta transition-colors text-[11px]"
                       >
-                        {p.pay_rate_type || "hourly"}
+                        {rateTypeLabel(p.pay_rate_type)}
                       </button>
                     ) : (
                       <span title="Hidden" className="text-stone text-[11px]">🔒</span>
@@ -3969,7 +3970,7 @@ function TeamManagementTab({
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
-                              <p className="mt-0.5 text-espresso font-medium">{isFullAdmin ? `${formatPayMoney(p.pay_rate || 0, p.pay_currency)} / ${p.pay_rate_type || "hourly"}` : "🔒 Hidden"}</p>
+                              <p className="mt-0.5 text-espresso font-medium">{isFullAdmin ? `${formatPayMoney(p.pay_rate || 0, p.pay_currency)} / ${rateTypeLabel(p.pay_rate_type)}` : "🔒 Hidden"}</p>
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
