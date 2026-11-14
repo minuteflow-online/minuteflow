@@ -59,11 +59,11 @@ describe("Activity Log 'today' across the overnight cutoff", () => {
     expect(todayIds(logs, at("2026-10-21T05:30:00.000Z"))).toEqual([0]);
   });
 
-  it("applies no bridge after the cutoff, when new entries are filed under today again", () => {
+  it("keeps bridging later in the day too, since the entry never gets relabeled", () => {
     const logs = [
       log({ user_id: "cha", start_time: "2026-10-21T03:31:00.000Z", end_time: null }),
     ];
-    expect(todayIds(logs, at("2026-10-21T11:30:00.000Z"))).toEqual([]); // 7:30 AM EDT
+    expect(todayIds(logs, at("2026-10-21T11:30:00.000Z"))).toEqual([0]); // 7:30 AM EDT
   });
 
   it("uses the same rule as before in the middle of the day", () => {
@@ -90,9 +90,9 @@ describe("Activity Log 'today' at the exact boundaries", () => {
     expect(todayIds(open, at("2026-10-21T04:00:30.000Z"))).toEqual([0]);
   });
 
-  it("still bridges in the last minute before the cutoff, and stops at 6:00 AM", () => {
+  it("keeps bridging straight through what used to be the 6:00 AM cutoff", () => {
     expect(todayIds(open, at("2026-10-21T09:59:00.000Z"))).toEqual([0]); // 5:59 AM EDT
-    expect(todayIds(open, at("2026-10-21T10:00:00.000Z"))).toEqual([]); // 6:00 AM EDT
+    expect(todayIds(open, at("2026-10-21T10:00:00.000Z"))).toEqual([0]); // 6:00 AM EDT
   });
 
   it("does not bridge just before midnight, when yesterday is still today", () => {
