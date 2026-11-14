@@ -6,7 +6,10 @@ const TZ = "America/New_York";
 // EDT is UTC-4 on these dates, so 01:00 EDT is 05:00Z.
 const at = (iso: string) => new Date(iso);
 
+let nextId = 1;
 const log = (over: Partial<ActivityDayLog> & { user_id: string }): ActivityDayLog => ({
+  id: nextId++,
+  category: "Task",
   session_date: "2026-10-20",
   start_time: "2026-10-20T15:00:00.000Z",
   end_time: "2026-10-20T16:00:00.000Z",
@@ -66,6 +69,18 @@ describe("Activity Log 'today' across the overnight cutoff", () => {
     expect(todayIds(logs, at("2026-10-21T11:30:00.000Z"))).toEqual([0]); // 7:30 AM EDT
   });
 
+  it("does not bridge an already-closed-out shift that merely shares yesterday's date with a later one that does", () => {
+    const logs = [
+      // Shift A: finished and clocked out well before midnight — a closed chapter.
+      log({ user_id: "cha", category: "Task", start_time: "2026-10-20T11:00:00.000Z", end_time: "2026-10-20T12:00:00.000Z" }),
+      log({ user_id: "cha", category: "Clock Out", start_time: "2026-10-20T12:00:00.000Z", end_time: "2026-10-20T12:00:00.000Z" }),
+      // Shift B: a brand new Clock In later that evening, still filed under Oct 20, that does reach into Oct 21.
+      log({ user_id: "cha", category: "Clock In", start_time: "2026-10-21T02:00:00.000Z", end_time: "2026-10-21T02:00:00.000Z" }),
+      log({ user_id: "cha", category: "Task", start_time: "2026-10-21T03:50:00.000Z", end_time: null }),
+    ];
+    expect(todayIds(logs, at("2026-10-21T05:30:00.000Z"))).toEqual([2, 3]); // 1:30 AM EDT
+  });
+
   it("uses the same rule as before in the middle of the day", () => {
     const logs = [
       log({ user_id: "neil", session_date: "2026-10-21", start_time: "2026-10-21T15:00:00.000Z", end_time: null }),
@@ -76,26 +91,27 @@ describe("Activity Log 'today' across the overnight cutoff", () => {
 
   it("falls back to the start time's date when a log has no session_date", () => {
     const logs = [
-      { user_id: "x", session_date: null, start_time: "2026-10-21T15:00:00.000Z", end_time: null },
+      { id: nextId++, category: "Task", user_id: "x", session_date: null, start_time: "2026-10-21T15:00:00.000Z", end_time: null },
     ];
     expect(todayIds(logs, at("2026-10-21T18:00:00.000Z"))).toEqual([0]);
   });
 });
 
 describe("Activity Log 'today' at the exact boundaries", () => {
-  const open = [log({ user_id: "cha", start_time: "2026-10-21T03:31:00.000Z", end_time: null })];
-
   it("bridges at the first minute after midnight Eastern (some engines report hour 24 then)", () => {
+    const open = [log({ user_id: "cha", start_time: "2026-10-21T03:31:00.000Z", end_time: null })];
     expect(todayIds(open, at("2026-10-21T04:00:00.000Z"))).toEqual([0]); // 12:00 AM EDT
     expect(todayIds(open, at("2026-10-21T04:00:30.000Z"))).toEqual([0]);
   });
 
   it("keeps bridging straight through what used to be the 6:00 AM cutoff", () => {
+    const open = [log({ user_id: "cha", start_time: "2026-10-21T03:31:00.000Z", end_time: null })];
     expect(todayIds(open, at("2026-10-21T09:59:00.000Z"))).toEqual([0]); // 5:59 AM EDT
     expect(todayIds(open, at("2026-10-21T10:00:00.000Z"))).toEqual([0]); // 6:00 AM EDT
   });
 
   it("does not bridge just before midnight, when yesterday is still today", () => {
+    const open = [log({ user_id: "cha", start_time: "2026-10-21T03:31:00.000Z", end_time: null })];
     // 11:59 PM EDT on Oct 20: the entries are filed under Oct 20 = today, so they already show.
     expect(todayIds(open, at("2026-10-21T03:59:00.000Z"))).toEqual([0]);
   });
