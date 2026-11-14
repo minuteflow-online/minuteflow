@@ -27,12 +27,18 @@ import { getDayBoundsInTimezone } from "@/lib/utils";
  * entries after the LAST one (or everything, if there's no Clock Out at all)
  * is a candidate to bridge.
  *
- * And only while that shift is still open: the bridge exists so a live
- * overnight task never looks like it vanished, not to keep yesterday's hours
- * mixed into today's total for the rest of the day once the person has
- * actually clocked out. Once a Clock Out shows up anywhere at or after that
- * shift's start (it's usually filed under today itself, once the cutoff has
- * passed), Today settles back to matching Time Log exactly for that shift.
+ * An entry whose own start_time already falls on/after today's midnight is
+ * today no matter what — that's exactly how Time Log buckets it too, so it
+ * always shows. The "pull in the earlier, non-crossing part of the shift
+ * too" grouping (so a Clock In or a task that both start AND end before
+ * midnight still reads as part of the same visible shift) is the part that's
+ * only for show-while-live: it exists so a late-night task doesn't look like
+ * it vanished while someone's still actively working, not to keep
+ * yesterday's hours mixed into today's total for the rest of the day once
+ * they're done. Once a Clock Out shows up anywhere at or after that shift's
+ * start (it's usually filed under today itself, once the cutoff has
+ * passed), that grouping stops and those pre-midnight entries settle back
+ * under yesterday — same as Time Log already files them.
  */
 export interface ActivityDayLog {
   id: number;
@@ -88,15 +94,19 @@ export function activityDayContext(logs: ActivityDayLog[], now: Date, timezone: 
     const alreadyClockedOut = (allByUser.get(userId) ?? []).some(
       (log) => log.category === "Clock Out" && new Date(log.start_time).getTime() >= shiftStartMs
     );
-    if (alreadyClockedOut) continue;
 
-    const qualifies = lastShift.some((log) => {
+    const ownQualifies = (log: ActivityDayLog) => {
       const stillOpen = !log.end_time;
       const crossedMidnight = log.end_time ? new Date(log.end_time).getTime() >= midnightMs : false;
       const startedAfterMidnight = new Date(log.start_time).getTime() >= midnightMs;
       return stillOpen || crossedMidnight || startedAfterMidnight;
-    });
-    if (qualifies) lastShift.forEach((log) => continuing.add(log.id));
+    };
+    if (!lastShift.some(ownQualifies)) continue;
+
+    for (const log of lastShift) {
+      const startedAfterMidnight = new Date(log.start_time).getTime() >= midnightMs;
+      if (startedAfterMidnight || !alreadyClockedOut) continuing.add(log.id);
+    }
   }
 
   return { todayStr, yesterdayStr, continuing };

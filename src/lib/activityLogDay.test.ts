@@ -69,15 +69,20 @@ describe("Activity Log 'today' across the overnight cutoff", () => {
     expect(todayIds(logs, at("2026-10-21T11:30:00.000Z"))).toEqual([0]); // 7:30 AM EDT
   });
 
-  it("stops bridging once the overnight shift has actually clocked out (Charinade, Nov 13)", () => {
+  it("keeps the post-midnight tasks but drops the pre-midnight ones once clocked out (Charinade, Nov 13)", () => {
     const logs = [
       log({ user_id: "cha", category: "Clock In", start_time: "2026-10-21T03:23:00.000Z", end_time: "2026-10-21T03:23:00.000Z" }), // 11:23 PM Oct 20
-      log({ user_id: "cha", category: "Task", start_time: "2026-10-21T03:28:00.000Z", end_time: "2026-10-21T04:12:00.000Z" }), // 11:28 PM-12:12 AM, crosses midnight
-      log({ user_id: "cha", category: "Task", session_date: "2026-10-21", start_time: "2026-10-21T04:12:00.000Z", end_time: "2026-10-21T15:07:00.000Z" }),
+      log({ user_id: "cha", category: "Task", start_time: "2026-10-21T03:28:00.000Z", end_time: "2026-10-21T04:12:00.000Z" }), // 11:28 PM-12:12 AM, crosses midnight — Time Log files this under Oct 20 (its start day)
+      // Still filed under Oct 20 even though it started after midnight — the
+      // cutoff correction hasn't caught up to this insert yet. Time Log
+      // still shows this under Oct 21, by its own start_time.
+      log({ user_id: "cha", category: "Task", start_time: "2026-10-21T04:30:00.000Z", end_time: "2026-10-21T10:00:00.000Z" }), // 12:30-6:00 AM
       // Clocked out later that morning — filed under today once the cutoff passed.
       log({ user_id: "cha", category: "Clock Out", session_date: "2026-10-21", start_time: "2026-10-21T15:07:00.000Z", end_time: "2026-10-21T15:07:00.000Z" }),
     ];
-    // Checked that evening: the finished shift's pre-midnight part no longer bridges in.
+    // Checked that evening: the genuinely-today task still shows, same as Time
+    // Log; the pre-midnight Clock In and the midnight-straddling task (which
+    // Time Log files under yesterday) no longer bridge in now that she's done.
     expect(todayIds(logs, at("2026-10-21T22:00:00.000Z"))).toEqual([2, 3]);
   });
 
