@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { PayRateHistory } from "@/types/database";
-import { formatPayMoney, normalizePayCurrency, PAY_CURRENCIES, type PayCurrency } from "@/lib/payroll";
+import { formatPayMoney, normalizePayCurrency, PAY_CURRENCIES, rateTypeLabel, type PayCurrency } from "@/lib/payroll";
 
 interface AddRateModalProps {
   userId: string;
@@ -154,7 +154,7 @@ export default function AddRateModal({
           <div className="rounded-lg bg-parchment px-3 py-3 flex items-center justify-between">
             <span className="text-[11px] text-bark">Current Rate</span>
             <span className="text-xs font-bold text-espresso">
-              {formatPayMoney(currentRate || 0, currency)} / {currentRateType || "hourly"}
+              {formatPayMoney(currentRate || 0, currency)} / {rateTypeLabel(currentRateType)}
             </span>
           </div>
 
@@ -208,6 +208,7 @@ export default function AddRateModal({
                   <option value="hourly">hourly</option>
                   <option value="daily">daily</option>
                   <option value="monthly">monthly</option>
+                  <option value="per_task">per task</option>
                 </select>
               </div>
               <div>
@@ -256,7 +257,7 @@ export default function AddRateModal({
                   >
                     <div>
                       <span className="text-[12px] font-semibold text-espresso">
-                        {formatPayMoney(Number(h.rate_amount), currency)} / {h.rate_type}
+                        {formatPayMoney(Number(h.rate_amount), currency)} / {rateTypeLabel(h.rate_type)}
                       </span>
                       <div className="text-[10px] text-stone">
                         {formatHistoryDate(h.effective_date)} — {formatHistoryDate(h.end_date)}

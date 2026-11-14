@@ -26,6 +26,16 @@ export function isFixedPeriodRate(rateType?: PayRateType | string | null): boole
   return rateType === "monthly";
 }
 
+/** Per-task pay comes from Output Based Tasks, never from hours logged. */
+export function isPerTaskRate(rateType?: PayRateType | string | null): boolean {
+  return rateType === "per_task";
+}
+
+/** "per_task" → "per task", for showing a rate type to people. */
+export function rateTypeLabel(rateType?: PayRateType | string | null): string {
+  return String(rateType || "hourly").replace(/_/g, " ");
+}
+
 /**
  * Hourly equivalent of a rate, for the paths that genuinely need one (budget
  * estimates, cost-per-hour views). A daily rate assumes an 8-hour day and a
@@ -153,6 +163,10 @@ export function computeHourlyGross(
  * Hours are still counted and reported; they just are not what the pay is
  * derived from here.
  *
+ * A per-task rate earns nothing from hours: per-task staff are paid through
+ * their Output Based Tasks (fixed_pay_tasks), which the paystub adds on its
+ * own. Hours × a per-task price would pay them twice, wrongly.
+ *
  * Everything else falls through to the hours-based calculation unchanged.
  */
 export function computeGrossForRateType(
@@ -163,6 +177,9 @@ export function computeGrossForRateType(
   periodStart: string,
   periodEnd: string
 ): HourlyGrossResult {
+  if (isPerTaskRate(rateType)) {
+    return { grossPay: 0, segments: [], rateByDate: {} };
+  }
   if (!isFixedPeriodRate(rateType)) {
     return computeHourlyGross(byDateMs, history, fallbackRate);
   }

@@ -1083,7 +1083,10 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         // Each day's pay in dollars, at that day's rate (see dayUsdFactor).
         const dayUsd = (date: string, paidMs: number) =>
           msToHours(paidMs) * (rateByDate[date] ?? nativeHourlyRate) * dayUsdFactor(date);
-        const hourlyPay = Object.entries(paidMsByDay).reduce((s, [date, ms]) => s + dayUsd(date, ms), 0);
+        // Per-task staff earn nothing from hours — their pay is the fixed
+        // tasks below, so the rate is never multiplied by time logged.
+        const isPerTask = profile.pay_rate_type === "per_task";
+        const hourlyPay = isPerTask ? 0 : Object.entries(paidMsByDay).reduce((s, [date, ms]) => s + dayUsd(date, ms), 0);
 
         // Fixed tasks come from assignments, not time_logs
         const fixedTasks = assignmentsByVa[userId] ?? [];

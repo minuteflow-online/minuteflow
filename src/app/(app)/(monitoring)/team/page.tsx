@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
 import { isPayrollEligible, sumPayrollMs } from "@/lib/payrollHours";
-import { formatPayMoney, formatPayTotalUsd, formatPayWithUsd, normalizePayCurrency, parsePhpPerUsd } from "@/lib/payroll";
+import { formatPayMoney, formatPayTotalUsd, formatPayWithUsd, normalizePayCurrency, parsePhpPerUsd, rateTypeLabel } from "@/lib/payroll";
 import { computeTransitionMs } from "@/lib/transitionTime";
 import { isBreakLike } from "@/lib/awayCategories";
 import AddRateModal from "@/components/AddRateModal";
@@ -1276,7 +1276,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-bark">
               {profile.pay_rate > 0
-                ? `${formatCurrency(profile.pay_rate, profile.pay_currency)}/${profile.pay_rate_type || "hourly"}`
+                ? `${formatCurrency(profile.pay_rate, profile.pay_currency)}/${rateTypeLabel(profile.pay_rate_type)}`
                 : "No rate set"}
             </span>
             <button
