@@ -2562,7 +2562,7 @@ function SubmissionEntry({
           <button
             type="button"
             onClick={copyLink}
-            className={`shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta ${hasScData ? "" : "ml-auto"}`}
+            className={`shrink-0 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut transition-colors hover:bg-parchment ${hasScData ? "" : "ml-auto"}`}
             title="Copy a link straight to this submission"
           >
             {copied ? "Copied!" : "Copy link"}
