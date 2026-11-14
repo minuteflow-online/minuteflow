@@ -3,7 +3,7 @@ import { after } from "next/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
-import { injectMagicWordHtml, injectMagicWordsHtml, isRichHtml, plainToHtml, renderBroadcastHtml, sanitizeRichHtml } from "@/lib/richText";
+import { broadcastDisplayHtml } from "@/lib/broadcastDisplay";
 import { parseMagicWords } from "@/lib/magicWords";
 import { isAudience, isRecipient, broadcastPortalPath, followUpTitle, type RecipientRow } from "@/lib/broadcasts";
 import { notifyVaPrivately } from "@/lib/vaNotify";
@@ -88,21 +88,18 @@ function buildEmailHtml(broadcast: {
   require_word?: boolean;
   parent_id?: string | null;
 }): string {
-  // Inject magic word into the displayed body if present.
-  // Plain-text bodies use the line-based injection; rich (HTML) bodies inject at a block boundary.
-  // Several words are spread across the whole body, each in its own stretch.
+  // Magic words go where the admin placed them ({{magic word N}}), the rest
+  // automatically — same placement code as the portal, with the email's wording
+  // and random spots.
   const words = parseMagicWords(broadcast.magic_word);
-  const displayBody = words.length === 0
-    ? renderBroadcastHtml(broadcast.body)
-    : words.length > 1
-    ? injectMagicWordsHtml(
-        renderBroadcastHtml(broadcast.body),
-        words.map((w, i) => `Magic word ${i + 1} of ${words.length}: [${w}]`),
-        (n) => Math.floor(Math.random() * n)
-      )
-    : isRichHtml(broadcast.body)
-    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), `Magic word: [${words[0]}]`, (n) => Math.floor(Math.random() * n))
-    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, words[0])));
+  const displayBody = broadcastDisplayHtml(
+    { id: "email", body: broadcast.body, magic_word: broadcast.magic_word },
+    {
+      label: (w, i, total) => (total > 1 ? `Magic word ${i + 1} of ${total}: [${w}]` : `Magic word: [${w}]`),
+      pick: (n) => Math.floor(Math.random() * n),
+      placePlain: (body) => injectMagicWord(body, words[0]),
+    }
+  );
 
   const label = categoryLabel(broadcast.category);
 

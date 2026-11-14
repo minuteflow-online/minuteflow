@@ -3,7 +3,15 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import RichTextEditor from "@/components/RichTextEditor";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
-import { parseMagicWords, serializeMagicWords } from "@/lib/magicWords";
+import { broadcastDisplayHtml } from "@/lib/broadcastDisplay";
+import {
+  hasMagicWordToken,
+  magicWordToken,
+  parseMagicWords,
+  removeMagicWordAndRenumber,
+  removeMagicWordToken,
+  serializeMagicWords,
+} from "@/lib/magicWords";
 import {
   ensureRichHtml,
   isRichEmpty,
@@ -260,6 +268,13 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
   const [addMagicWord, setAddMagicWord] = useState(false);
   const [magicWords, setMagicWords] = useState<string[]>([""]);
   const magicWord = serializeMagicWords(magicWords) ?? "";
+  // "Place here" puts a word's marker where the cursor is in the message editor.
+  const insertAtCursorRef = useRef<((text: string) => boolean) | null>(null);
+  const [placeHint, setPlaceHint] = useState<string | null>(null);
+  const placeMagicWord = (i: number) => {
+    const ok = insertAtCursorRef.current?.(magicWordToken(i)) ?? false;
+    setPlaceHint(ok ? null : "Click in the message where the word should go, then press Place here.");
+  };
 
   // Link, image, sort order
   const [link, setLink] = useState("");
@@ -739,6 +754,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                 onChange={setBody}
                 placeholder="Write your broadcast..."
                 onUploadImage={uploadBroadcastImage}
+                insertAtCursorRef={insertAtCursorRef}
               />
             </div>
 
@@ -942,11 +958,38 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                         placeholder={magicWords.length > 1 ? `Magic word ${i + 1}...` : "Enter magic word..."}
                         className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
                       />
+                      {hasMagicWordToken(body, i) ? (
+                        <span className="shrink-0 flex items-center gap-2">
+                          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-sage-soft text-sage border border-sage/20">
+                            Placed
+                          </span>
+                          <button
+                            type="button"
+                            title="Take this word's marker out of the message (it will be placed automatically)"
+                            onClick={() => setBody(removeMagicWordToken(body, i))}
+                            className="text-[11px] text-stone hover:underline cursor-pointer"
+                          >
+                            Unplace
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          title={`Put {{magic word ${i + 1}}} where the cursor is in the message`}
+                          onClick={() => placeMagicWord(i)}
+                          className="shrink-0 px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
+                        >
+                          Place here
+                        </button>
+                      )}
                       {magicWords.length > 1 && (
                         <button
                           type="button"
                           title="Remove this word"
-                          onClick={() => setMagicWords(magicWords.filter((_, j) => j !== i))}
+                          onClick={() => {
+                            setMagicWords(magicWords.filter((_, j) => j !== i));
+                            setBody(removeMagicWordAndRenumber(body, i));
+                          }}
                           className="shrink-0 text-[11px] text-terracotta hover:underline cursor-pointer"
                         >
                           Remove
@@ -961,10 +1004,12 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                   >
                     + Add another word
                   </button>
+                  {placeHint && <p className="text-[11px] text-terracotta">{placeHint}</p>}
                   <p className="text-[11px] text-stone">
                     {magicWords.length > 1
-                      ? "Each word is placed in a different part of the message. VAs must enter all of them to acknowledge it."
-                      : "VAs must enter this word to acknowledge the broadcast."}
+                      ? "VAs must enter all of the words to acknowledge it."
+                      : "VAs must enter this word to acknowledge the broadcast."}{" "}
+                    To choose where a word goes, click that spot in the message and press Place here. Words you don&apos;t place are put in a regular paragraph automatically.
                   </p>
                 </div>
               )}
@@ -1265,7 +1310,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                 className={`text-xs text-bark leading-relaxed ${RICH_TEXT_CLASSES} ${
                   !expanded[b.id] && isLongBody(b.body) ? "max-h-16 overflow-hidden" : ""
                 }`}
-                dangerouslySetInnerHTML={{ __html: renderBroadcastHtml(b.body) }}
+                dangerouslySetInnerHTML={{ __html: broadcastDisplayHtml(b) }}
               />
               {isLongBody(b.body) && (
                 <button
