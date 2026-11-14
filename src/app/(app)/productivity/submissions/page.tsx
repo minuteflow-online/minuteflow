@@ -94,7 +94,17 @@ type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
  * One task as it appears under one day. A task shows on every day its work was
  * done, holding that day's round and the rounds before it — never later ones.
  */
-type DayCard = { key: string; day: string; thread: Thread };
+type DayCard = {
+  key: string;
+  day: string;
+  thread: Thread;
+  /** Set on a late-submission row: the submission handed in on this day for
+   *  work done on earlier days. Its full card stays on the work days; this row
+   *  is where it's reviewed from (Toni's call, 2026-11-13). */
+  late?: FeedItem;
+  /** The late submission's first work day — where its full card sits. */
+  workDay?: string;
+};
 
 /** Time tracked on a task that has no submission on this page yet. */
 type PotentialTask = {
@@ -1402,6 +1412,23 @@ This cannot be undone.`
       // A thread with no submission at all still needs a home.
       if (days.size === 0) days.add(localDay(thread.latest.created_at, orgTimezone));
       for (const day of days) cards.push({ key: `${day}-${thread.taskId}`, day, thread });
+
+      // A submission handed in after the days its work was done also gets a
+      // row on the day it came in, so scrolling the latest days shows
+      // everything waiting on review (Toni's call, 2026-11-13). Skipped when
+      // the task already has a full card that day — it shows there anyway.
+      const lateByDay = new Map<string, { item: FeedItem; workDay: string }>();
+      for (const item of thread.items) {
+        if (item.message_type !== "submission") continue;
+        const submittedDay = localDay(item.created_at, orgTimezone);
+        const worked = itemDays(item, time, orgTimezone);
+        if (days.has(submittedDay) || worked.every((d) => d >= submittedDay)) continue;
+        const prev = lateByDay.get(submittedDay);
+        if (!prev || prev.item.created_at < item.created_at) lateByDay.set(submittedDay, { item, workDay: worked[0] });
+      }
+      for (const [day, { item, workDay }] of lateByDay) {
+        cards.push({ key: `${day}-${thread.taskId}-late`, day, thread, late: item, workDay });
+      }
     }
     cards.sort(
       (a, b) =>
@@ -1424,7 +1451,8 @@ This cannot be undone.`
   // was done, not the task's newest day.
   const highlightCardKey = useMemo(() => {
     if (highlightTaskId == null) return null;
-    const taskCards = allCards.filter((c) => c.thread.taskId === highlightTaskId);
+    // Full cards only: a link should land on the work, not a late-row pointer.
+    const taskCards = allCards.filter((c) => c.thread.taskId === highlightTaskId && !c.late);
     if (taskCards.length === 0) return null;
     if (highlightSubmissionId != null) {
       const sub = taskCards[0].thread.items.find((i) => i.id === highlightSubmissionId);
@@ -3953,7 +3981,20 @@ function TimelineView({
           orgTimezone={orgTimezone}
           stats={dayStats.get(day)}
         >
-            {(byDay.get(day) ?? []).map(({ key, thread }) => (
+            {(byDay.get(day) ?? []).map(({ key, thread, late, workDay }) =>
+              late ? (
+                <LateSubmissionRow
+                  key={key}
+                  thread={thread}
+                  late={late}
+                  workDay={workDay ?? day}
+                  canReview={canReview}
+                  busy={busyId === thread.latest.id}
+                  onReview={onReview}
+                  state={reviewState[String(thread.taskId)]}
+                  timezone={orgTimezone}
+                />
+              ) : (
               <ThreadCard
                 key={key}
                 thread={thread}
@@ -3981,9 +4022,142 @@ function TimelineView({
                 autoExpand={highlightKey === key}
                 highlightSubmissionId={highlightKey === key ? highlightSubmissionId : null}
               />
-            ))}
+              )
+            )}
         </DayGroup>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A late submission on the day it was handed in (Toni's call, 2026-11-13).
+ * Its full card — time, screenshots, SC Data — stays on the day the work was
+ * done; this row carries the same review status and the Review button, so a
+ * reviewer scrolling the latest days never misses it. Review opens here, with
+ * a link that opens the full card in a new tab; the decision is made here.
+ */
+function LateSubmissionRow({
+  thread,
+  late,
+  workDay,
+  canReview,
+  busy,
+  onReview,
+  state,
+  timezone,
+}: {
+  thread: Thread;
+  late: FeedItem;
+  workDay: string;
+  canReview: boolean;
+  busy: boolean;
+  onReview: (
+    item: FeedItem,
+    outcome: ReviewOutcome,
+    note?: string,
+    dueAt?: string,
+    attachments?: PendingAttachment[],
+    fileToProject?: boolean
+  ) => void;
+  state?: string;
+  timezone: string;
+}) {
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const submissions = thread.items.filter((i) => i.message_type === "submission");
+  const latest = submissions[submissions.length - 1] ?? thread.latest;
+  const index = submissions.findIndex((s) => s.id === late.id);
+  const who = late.profiles?.full_name || late.profiles?.username || "Unknown";
+  // Review decisions apply to the task's newest submission, so only that one's
+  // row offers them; an older late row just points at its card.
+  const isLatest = latest.id === late.id;
+  const awaitingReview = state === undefined || state === "awaiting";
+  const autoApproved = state === "approved" && latest.task?.review_required === false;
+  const pill = autoApproved
+    ? REVIEW_STATE_PILL.auto_approved
+    : state && state !== "awaiting"
+      ? REVIEW_STATE_PILL[state]
+      : undefined;
+  const href = `/productivity/submissions?taskId=${thread.taskId}&submission=${late.id}`;
+  const processedLabel = `Processed ${formatDayKey(workDay)}`;
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-sand bg-white px-3 py-2">
+      <span className="shrink-0 text-[11px] text-bark" aria-hidden>
+        ↪
+      </span>
+      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10px] font-semibold text-amber-600">
+        Late
+      </span>
+      <span className="min-w-0 truncate text-[13px] font-semibold leading-tight text-espresso">
+        {late.task?.task_name ?? "Task"}
+      </span>
+      <RevisionBadge count={Math.max(0, index)} />
+      <span className="shrink-0 text-[10px] text-stone/80">
+        {who} · Submitted {formatStamp(new Date(late.created_at).getTime(), timezone, false)}
+      </span>
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="shrink-0 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut transition-colors hover:bg-parchment"
+        title="Open the full card for the day this work was done, in a new tab"
+      >
+        {processedLabel} ↗
+      </a>
+      {isLatest && late.progress_status === "in_progress" && (
+        <span
+          className="shrink-0 text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-slate-blue text-white"
+          title="In progress — a status update from the VA, not a handoff"
+        >
+          IP
+        </span>
+      )}
+      {isLatest && awaitingReview && (
+        <span className="shrink-0 text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-amber text-white" title="Needs review">
+          NR
+        </span>
+      )}
+      {isLatest && pill && (
+        <span className={`shrink-0 rounded-full border px-2 py-[2px] text-[10px] font-semibold ${pill.className}`}>
+          {pill.label}
+        </span>
+      )}
+
+      {canReview && isLatest && awaitingReview && latest.task && (
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {latest.task.review_required === false ? (
+            <button
+              onClick={() => onReview(latest, "approval", "Auto approved — this task does not require review")}
+              disabled={busy}
+              className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+            >
+              Auto approve
+            </button>
+          ) : (
+            <button
+              onClick={() => setReviewOpen(true)}
+              disabled={busy}
+              className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+            >
+              Review
+            </button>
+          )}
+        </div>
+      )}
+
+      {reviewOpen && latest.task && (
+        <ReviewModal
+          submission={latest}
+          busy={busy}
+          processedLink={{ href, label: processedLabel }}
+          onReview={(outcome, note, dueAt, attachments) => {
+            onReview(latest, outcome, note, dueAt, attachments);
+            setReviewOpen(false);
+          }}
+          onClose={() => setReviewOpen(false)}
+        />
+      )}
     </div>
   );
 }

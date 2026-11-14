@@ -59,6 +59,7 @@ export default function ReviewModal({
   onReview,
   onClose,
   initialFileToProject = false,
+  processedLink,
 }: {
   submission: ReviewableSubmission;
   busy: boolean;
@@ -74,6 +75,8 @@ export default function ReviewModal({
    *  next to SC Data, before this modal ever opens (Toni's call, 2026-11-11).
    *  No checkbox in here anymore; Approve just carries whatever was ticked. */
   initialFileToProject?: boolean;
+  /** Late submission: a link to its card on the day the work was done. */
+  processedLink?: { href: string; label: string };
 }) {
   const [todos, setTodos] = useState<Todo[] | null>(null);
   const [todosError, setTodosError] = useState("");
@@ -281,6 +284,21 @@ export default function ReviewModal({
               {submission.task?.task_name ?? "Task removed"}
             </p>
             <p className="mt-0.5 text-[11px] text-stone">Submitted by {who}</p>
+            {/* A late submission is reviewed from the day it came in, but its
+                card — time, screenshots, SC Data — lives on the day the work
+                was done. This opens that card in a new tab, so the decision
+                is still made here (Toni's call, 2026-11-13). */}
+            {processedLink && (
+              <a
+                href={processedLink.href}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut transition-colors hover:bg-parchment"
+                title="Open the card for the day this work was done, in a new tab"
+              >
+                {processedLink.label} ↗
+              </a>
+            )}
           </div>
           <button
             onClick={onClose}
