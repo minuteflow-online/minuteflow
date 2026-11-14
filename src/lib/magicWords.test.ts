@@ -95,3 +95,38 @@ describe("magic words blend into the memo's own paragraphs", () => {
     expect(out).toBe("<p>Hi</p><p>Short</p><div>MW</div>");
   });
 });
+
+describe("magic words skip big or bold callouts", () => {
+  const body = (t: string) => `<p>${t} — enough regular words here to hide a magic word inside.</p>`;
+  const callout = (t: string) =>
+    `<div style="background-color: rgb(36, 82, 60)"><p style="font-size: 22px; font-weight: 700">${t} is a big bold callout line with plenty of text.</p></div>`;
+  const page =
+    '<div style="font-size: 17px">' +
+    [body("One"), callout("A"), body("Two"), body("Three"), callout("B"), body("Four"), body("Five"), callout("C"), body("Six"), '<p style="font-weight: 700">Remember: the bold sign-off line at the end.</p>'].join("") +
+    "</div>";
+  const words = ["Magic word 1 of 3 is x", "Magic word 2 of 3 is y", "Magic word 3 of 3 is z"];
+
+  it("only uses regular-size, non-bold paragraphs", () => {
+    for (let pick = 0; pick < 6; pick++) {
+      const out = injectMagicWordsHtml(page, words, (n, i) => (pick + i) % n);
+      for (const w of words) {
+        const at = out.indexOf(w);
+        const pOpen = out.lastIndexOf("<p", at);
+        expect(out.slice(pOpen, at)).not.toContain("font-weight");
+        expect(out.slice(pOpen, at)).not.toContain("font-size");
+      }
+    }
+  });
+
+  it("puts the last word at the end of the last regular paragraph", () => {
+    const out = injectMagicWordsHtml(page, words, () => 0);
+    expect(out).toContain("inside. Magic word 3 of 3 is z</p><p style=\"font-weight: 700\">Remember");
+    expect(out.indexOf("Magic word 2 of 3")).toBeLessThan(out.indexOf("Six"));
+  });
+
+  it("a big paragraph without bold is skipped too", () => {
+    const html = '<p style="font-size: 26px">A huge pull quote that is long enough to use here.</p>' + body("One") + body("Two");
+    const out = injectMagicWordHtml(html, "MW", () => 0);
+    expect(out.indexOf("MW")).toBeGreaterThan(out.indexOf("One"));
+  });
+});

@@ -230,9 +230,9 @@ export function sanitizeRichHtml(html: string, mode: SanitizeMode = "design"): s
 
 /**
  * Insert a "Magic word" sentence into rich HTML in the latter 40% of the body.
- * It's added to the end of an existing paragraph so it reads like the rest of
- * the text; without a suitable paragraph it goes in as its own line at a
- * top-level boundary. `pick` chooses among the candidate slots.
+ * It's added to the end of an existing regular paragraph so it reads like the
+ * rest of the text; without one it goes in as its own line at a top-level
+ * boundary. `pick` chooses among the candidate slots.
  */
 export function injectMagicWordHtml(
   html: string,
@@ -240,7 +240,7 @@ export function injectMagicWordHtml(
   pick: (slotCount: number) => number
 ): string {
   const minPos = Math.floor(html.length * 0.6);
-  const paragraphs = paragraphEnds(html).filter((p) => p >= minPos);
+  const paragraphs = paragraphEnds(html).map((p) => p.end).filter((p) => p >= minPos);
   if (paragraphs.length) {
     const at = paragraphs[Math.min(paragraphs.length - 1, Math.max(0, pick(paragraphs.length)))];
     return html.slice(0, at) + magicSentence(injection) + html.slice(at);
@@ -253,12 +253,15 @@ export function injectMagicWordHtml(
 }
 
 /**
- * Several magic words: the body is split into one equal stretch per word and
- * each word goes in its own stretch, so finding them all means reading the
- * whole message. Each is added to the end of a paragraph (or, in a body with
- * no paragraphs, as its own line at a top-level boundary). A stretch with no
- * free spot borrows the next free one after it; past the last, words are appended.
- * `pick(slotCount, wordIndex)` chooses among a stretch's candidate slots.
+ * Several magic words. The last one goes at the end of the last regular
+ * paragraph inside the message's last box (a card or callout with a background
+ * or border), or the last regular paragraph when there's no box. The others are
+ * spread over the text before it, one per equal stretch, so finding them all
+ * means reading the whole message. Words only go at the end of regular-size,
+ * non-bold paragraphs (or, in a body with none, as their own line at a
+ * top-level boundary). A stretch with no free spot borrows the next free one
+ * after it; past the last, words are appended.
+ * `pick(slotCount, wordIndex)` chooses within a stretch.
  */
 export function injectMagicWordsHtml(
   html: string,
@@ -269,23 +272,37 @@ export function injectMagicWordsHtml(
   if (n === 0) return html;
   const paragraphs = paragraphEnds(html);
   const inParagraphs = paragraphs.length > 0;
-  const spots = inParagraphs ? paragraphs : topLevelBoundaries(html).filter((b) => b < html.length);
+  const spots = inParagraphs ? paragraphs.map((p) => p.end) : topLevelBoundaries(html).filter((b) => b < html.length);
   const used = new Set<number>();
   const placements: { at: number; text: string; order: number }[] = [];
+  const wrap = (injection: string) => (inParagraphs ? magicSentence(injection) : magicLine(injection));
 
-  injections.forEach((injection, i) => {
-    const start = Math.floor((html.length * i) / n);
-    const end = Math.floor((html.length * (i + 1)) / n);
+  // The last word ends the last box's last paragraph; the rest share the text before it.
+  let spreadEnd = html.length;
+  let spreadCount = n;
+  if (inParagraphs && n > 1) {
+    const boxed = paragraphs.filter((p) => p.inBox);
+    const pool = boxed.length ? boxed : paragraphs;
+    const last = pool[pool.length - 1].end;
+    used.add(last);
+    placements.push({ at: last, text: wrap(injections[n - 1]), order: n - 1 });
+    spreadEnd = last;
+    spreadCount = n - 1;
+  }
+
+  for (let i = 0; i < spreadCount; i++) {
+    const start = Math.floor((spreadEnd * i) / spreadCount);
+    const end = Math.floor((spreadEnd * (i + 1)) / spreadCount);
     let slots = spots.filter((b) => b >= start && b < end && !used.has(b));
     if (slots.length === 0) slots = spots.filter((b) => b >= start && !used.has(b)).slice(0, 1);
     if (slots.length === 0) {
-      placements.push({ at: html.length, text: magicLine(injection), order: i });
-      return;
+      placements.push({ at: html.length, text: magicLine(injections[i]), order: i });
+      continue;
     }
     const at = slots[Math.min(slots.length - 1, Math.max(0, pick(slots.length, i)))];
     used.add(at);
-    placements.push({ at, text: inParagraphs ? magicSentence(injection) : magicLine(injection), order: i });
-  });
+    placements.push({ at, text: wrap(injections[i]), order: i });
+  }
 
   // Insert from the end so earlier positions stay valid; same spot keeps word order.
   placements.sort((a, b) => b.at - a.at || b.order - a.order);
@@ -306,29 +323,130 @@ function magicSentence(injection: string): string {
 /** Shortest paragraph (in visible characters) a magic word sentence is added to. */
 const MIN_PARAGRAPH_CHARS = 30;
 
+/** How much larger than the regular text a paragraph may be and still count as regular. */
+const REGULAR_SIZE_SLACK_PX = 1.5;
+
+const INLINE_TAGS = new Set(["b", "strong", "i", "em", "u", "s", "strike", "mark", "span", "font", "a", "br", "img"]);
+
+/** font-size in px from a style attribute: undefined if not set, null if not in px/em/rem. */
+function styleFontSize(style: string): number | null | undefined {
+  const m = style.match(/(?:^|;)\s*font-size\s*:\s*([^;]+)/i);
+  if (!m) return undefined;
+  const v = m[1].trim().match(/^([\d.]+)(px|em|rem)$/i);
+  if (!v) return null;
+  return v[2].toLowerCase() === "px" ? parseFloat(v[1]) : parseFloat(v[1]) * 16;
+}
+
+/** Whether a style attribute makes text bold: undefined if it doesn't set a weight. */
+function styleBold(style: string): boolean | undefined {
+  const m = style.match(/(?:^|;)\s*font-weight\s*:\s*([^;]+)/i);
+  if (!m) return undefined;
+  const v = m[1].trim().toLowerCase();
+  return v === "bold" || v === "bolder" || (/^\d+$/.test(v) && parseInt(v, 10) >= 600);
+}
+
 /**
- * Positions just before each </p> whose paragraph has real text, outside
- * tables — the end of a sentence a magic word can be tacked onto.
+ * Whether a style (or a tag's raw attributes) gives an element a background or
+ * a border, i.e. makes it a card, banner or callout. Matches property names, so
+ * `box-sizing: border-box` and `border-radius` alone don't count.
  */
-function paragraphEnds(html: string): number[] {
-  const ends: number[] = [];
-  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
-  let tableDepth = 0;
-  let pStart = -1;
+function isBoxStyle(style: string): boolean {
+  return /(?:^|[;"'\s])(background(?:-color|-image)?|border(?:-(?:top|right|bottom|left))?(?:-(?:width|style|color))?)\s*:/i.test(style);
+}
+
+type ParagraphEnd = { end: number; inBox: boolean };
+type TextContext = { size: number | null | undefined; bold: boolean; inTable: boolean; inBox: boolean };
+
+/**
+ * Where a magic word sentence can be tacked on: the end of each paragraph with
+ * real text — a <p>, or text written straight inside a <div> — outside tables,
+ * not bold, and at about the message's regular text size, so it never lands in
+ * a big bold callout or pull quote. `inBox` marks paragraphs inside a card or
+ * callout (a div with a background or border; the outermost div is the page
+ * wrapper and doesn't count).
+ */
+function paragraphEnds(html: string): ParagraphEnd[] {
+  type Frame = { tag: string; size?: number | null; bold?: boolean; box: boolean };
+  const stack: Frame[] = [];
+  const found: { end: number; size: number | null | undefined; chars: number; inBox: boolean }[] = [];
+  const inherited = <K extends "size" | "bold">(key: K): Frame[K] | undefined => {
+    for (let i = stack.length - 1; i >= 0; i--) if (stack[i][key] !== undefined) return stack[i][key];
+    return undefined;
+  };
+  const nearestBlock = (): Frame | undefined => {
+    for (let i = stack.length - 1; i >= 0; i--) if (!INLINE_TAGS.has(stack[i].tag)) return stack[i];
+    return undefined;
+  };
+  const context = (): TextContext => ({
+    size: inherited("size"),
+    bold: inherited("bold") === true,
+    inTable: stack.some((f) => f.tag === "table"),
+    inBox: stack.some((f) => f.box),
+  });
+  const visible = (s: string) =>
+    s.replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim();
+  const consider = (start: number, end: number, ctx: TextContext) => {
+    const chars = visible(html.slice(start, end)).length;
+    if (!ctx.inTable && !ctx.bold && chars >= MIN_PARAGRAPH_CHARS) {
+      found.push({ end, size: ctx.size, chars, inBox: ctx.inBox });
+    }
+  };
+
+  // A run of text written directly inside a div (not wrapped in <p>).
+  let run: { start: number; ctx: TextContext } | null = null;
+  const flushRun = (at: number) => {
+    if (run) consider(run.start, at, run.ctx);
+    run = null;
+  };
+  const startRun = (at: number) => {
+    if (!run && nearestBlock()?.tag === "div") run = { start: at, ctx: context() };
+  };
+
+  let pOpen: { start: number; ctx: TextContext } | null = null;
+  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  let textFrom = 0;
   let m: RegExpExecArray | null;
   while ((m = tagRe.exec(html))) {
+    if (html.slice(textFrom, m.index).trim()) startRun(textFrom);
+    textFrom = tagRe.lastIndex;
     const tag = m[2].toLowerCase();
-    if (tag === "table") tableDepth += m[1] ? -1 : 1;
-    if (tag !== "p") continue;
+    if (INLINE_TAGS.has(tag)) {
+      if (!m[1]) startRun(m.index);
+    } else {
+      flushRun(m.index);
+    }
+    if (VOID_TAGS.has(tag)) continue;
     if (!m[1]) {
-      pStart = tagRe.lastIndex;
-    } else if (pStart >= 0) {
-      const text = html.slice(pStart, m.index).replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, " ").trim();
-      if (tableDepth === 0 && text.length >= MIN_PARAGRAPH_CHARS) ends.push(m.index);
-      pStart = -1;
+      const style = (m[3].match(/style\s*=\s*"([^"]*)"/i) ?? m[3].match(/style\s*=\s*'([^']*)'/i))?.[1] ?? "";
+      const box = tag === "div" && stack.length > 0 && isBoxStyle(style);
+      stack.push({ tag, size: styleFontSize(style), bold: styleBold(style), box });
+      if (tag === "p") pOpen = { start: tagRe.lastIndex, ctx: context() };
+      continue;
+    }
+    // Closing tag: pop back to the matching open tag.
+    const idx = stack.map((f) => f.tag).lastIndexOf(tag);
+    if (idx >= 0) stack.length = idx;
+    if (tag === "p" && pOpen) {
+      consider(pOpen.start, m.index, pOpen.ctx);
+      pOpen = null;
     }
   }
-  return ends;
+
+  // The regular text size is the one most of the paragraph text is set in.
+  const bySize = new Map<number, number>();
+  for (const p of found) {
+    const key = typeof p.size === "number" ? p.size : -1;
+    bySize.set(key, (bySize.get(key) ?? 0) + p.chars);
+  }
+  let regular = -1;
+  let most = -1;
+  for (const [size, chars] of bySize) if (chars > most) [regular, most] = [size, chars];
+  // With no set size for most text, the app's own size applies; allow ordinary sizes only.
+  const maxSize = regular === -1 ? 16 : regular + REGULAR_SIZE_SLACK_PX;
+  return found
+    .filter((p) => typeof p.size !== "number" || p.size <= maxSize)
+    .sort((a, b) => a.end - b.end)
+    .map(({ end, inBox }) => ({ end, inBox }));
 }
 
 const BLOCK_TAGS = new Set(["p", "div", "ul", "ol", "h1", "h2", "h3", "h4", "blockquote", "table"]);
@@ -361,7 +479,7 @@ function topLevelBoundaries(html: string): number[] {
       // A background or border marks a card or banner (the line could vanish on a
       // dark header). The outermost div is exempt: on an uploaded page it's the
       // wrapper carrying the page background.
-      stack.push(tag === "div" && (stack.length === 0 || !/background|border/i.test(m[3])));
+      stack.push(tag === "div" && (stack.length === 0 || !isBoxStyle(m[3])));
     }
   }
   return boundaries;
