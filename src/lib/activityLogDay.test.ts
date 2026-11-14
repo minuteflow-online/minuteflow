@@ -69,6 +69,26 @@ describe("Activity Log 'today' across the overnight cutoff", () => {
     expect(todayIds(logs, at("2026-10-21T11:30:00.000Z"))).toEqual([0]); // 7:30 AM EDT
   });
 
+  it("stops bridging once the overnight shift has actually clocked out (Charinade, Nov 13)", () => {
+    const logs = [
+      log({ user_id: "cha", category: "Clock In", start_time: "2026-10-21T03:23:00.000Z", end_time: "2026-10-21T03:23:00.000Z" }), // 11:23 PM Oct 20
+      log({ user_id: "cha", category: "Task", start_time: "2026-10-21T03:28:00.000Z", end_time: "2026-10-21T04:12:00.000Z" }), // 11:28 PM-12:12 AM, crosses midnight
+      log({ user_id: "cha", category: "Task", session_date: "2026-10-21", start_time: "2026-10-21T04:12:00.000Z", end_time: "2026-10-21T15:07:00.000Z" }),
+      // Clocked out later that morning — filed under today once the cutoff passed.
+      log({ user_id: "cha", category: "Clock Out", session_date: "2026-10-21", start_time: "2026-10-21T15:07:00.000Z", end_time: "2026-10-21T15:07:00.000Z" }),
+    ];
+    // Checked that evening: the finished shift's pre-midnight part no longer bridges in.
+    expect(todayIds(logs, at("2026-10-21T22:00:00.000Z"))).toEqual([2, 3]);
+  });
+
+  it("still bridges a shift that's still open (no Clock Out yet)", () => {
+    const logs = [
+      log({ user_id: "cha", category: "Clock In", start_time: "2026-10-21T03:23:00.000Z", end_time: "2026-10-21T03:23:00.000Z" }), // 11:23 PM Oct 20
+      log({ user_id: "cha", category: "Task", start_time: "2026-10-21T03:28:00.000Z", end_time: null }), // still running
+    ];
+    expect(todayIds(logs, at("2026-10-21T22:00:00.000Z"))).toEqual([0, 1]);
+  });
+
   it("does not bridge an already-closed-out shift that merely shares yesterday's date with a later one that does", () => {
     const logs = [
       // Shift A: finished and clocked out well before midnight — a closed chapter.
