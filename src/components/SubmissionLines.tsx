@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import type { SubmissionMessageType, TaskSubmission } from "@/lib/submissions";
 import { SUBMISSION_TYPE_BADGE, SUBMISSION_TYPE_LABELS, splitSubmissionLinks } from "@/lib/submissions";
 import { linkifyText } from "@/lib/linkify";
@@ -28,6 +30,34 @@ function byline(submission: TaskSubmission) {
   return submission.edited_at ? `${who} · ${when} · edited` : `${who} · ${when}`;
 }
 
+/**
+ * The same per-submission link the Submissions page's "Copy link" gives
+ * (Toni's call, 2026-11-13): opens that page on the submission, highlighted.
+ */
+function CopyLinkPill({ taskId, submissionId }: { taskId: number; submissionId: number }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const url = `${window.location.origin}/productivity/submissions?taskId=${taskId}&submission=${submissionId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="ml-auto shrink-0 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut transition-colors hover:bg-parchment"
+      title="Copy a link straight to this submission"
+    >
+      {copied ? "Copied!" : "Copy link"}
+    </button>
+  );
+}
+
 export function SubmissionThread({ submissions }: { submissions: TaskSubmission[] }) {
   // The submissions are what the numbering keys off — the first is the
   // original, each one after it a resubmission (R, R2, ...).
@@ -44,7 +74,49 @@ export function SubmissionThread({ submissions }: { submissions: TaskSubmission[
   );
 }
 
+/**
+ * A revision request, collapsed to one line until clicked — the same as on the
+ * Submissions page (Toni's call, 2026-11-13).
+ */
+function RevisionThreadEntry({ item }: { item: TaskSubmission }) {
+  const [open, setOpen] = useState(false);
+  const note = item.submission_comment?.trim() || item.content;
+  return (
+    <div className="pt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left"
+        title={open ? "Collapse this revision request" : "Show the full revision request"}
+      >
+        <span
+          className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-semibold ${SUBMISSION_TYPE_BADGE.revision}`}
+        >
+          {SUBMISSION_TYPE_LABELS.revision}
+          <svg className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+          </svg>
+        </span>
+        {!open && <span className="min-w-0 truncate text-[11px] text-espresso">{note}</span>}
+        <span className="shrink-0 text-[10px] text-stone/80">
+          — {byline(item)}
+          {item.attachments.length > 0 && !open
+            ? ` · ${item.attachments.length} file${item.attachments.length === 1 ? "" : "s"}`
+            : ""}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-1 pl-1">
+          <p className="whitespace-pre-wrap text-[12px] leading-snug text-espresso">{linkifyText(note)}</p>
+          {item.attachments.length > 0 && <SubmissionAttachmentGallery attachments={item.attachments} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SubmissionThreadEntry({ item, index }: { item: TaskSubmission; index: number }) {
+  if (item.message_type === "revision") return <RevisionThreadEntry item={item} />;
   // Reviews and notes are events between rounds, not work turned in — they read
   // as a single line, with any file they carry underneath.
   if (item.message_type !== "submission") {
@@ -88,6 +160,7 @@ function SubmissionThreadEntry({ item, index }: { item: TaskSubmission; index: n
         </span>
         <RevisionBadge count={index} />
         <span className="text-[10px] text-stone/80">{byline(item)}</span>
+        {item.assigned_task_id != null && <CopyLinkPill taskId={item.assigned_task_id} submissionId={item.id} />}
       </div>
 
       {item.submission_comment && (

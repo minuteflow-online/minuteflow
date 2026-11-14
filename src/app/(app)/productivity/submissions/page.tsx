@@ -13,7 +13,7 @@ import {
   type TaskSubmissionAttachment,
 } from "@/lib/submissions";
 import { linkifyText } from "@/lib/linkify";
-import { answeredSubmission, revisionHistory, type RevisionEntry } from "@/lib/submissionThread";
+import { answeredSubmission } from "@/lib/submissionThread";
 import RevisionBadge from "@/components/RevisionBadge";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
@@ -2419,6 +2419,51 @@ function SubmissionEntry({
   };
   // When it was handed in, in org time like every other day on this page.
   const time = formatStamp(new Date(item.created_at).getTime(), timezone, true);
+  // A revision request starts collapsed to one line (Toni's call, 2026-11-13):
+  // the note can run long and push the work itself down. Click to read it.
+  const [revisionOpen, setRevisionOpen] = useState(false);
+
+  if (item.message_type === "revision") {
+    const note = item.submission_comment?.trim() || item.content;
+    return (
+      <div className="pt-1.5">
+        <button
+          type="button"
+          onClick={() => setRevisionOpen((v) => !v)}
+          className="flex w-full min-w-0 items-center gap-1.5 text-left"
+          title={revisionOpen ? "Collapse this revision request" : "Show the full revision request"}
+        >
+          <span
+            className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-semibold ${SUBMISSION_TYPE_BADGE.revision}`}
+          >
+            {SUBMISSION_TYPE_LABELS.revision}
+            <svg className={`h-2.5 w-2.5 transition-transform ${revisionOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+            </svg>
+          </span>
+          {!revisionOpen && <span className="min-w-0 truncate text-[11px] text-espresso">{note}</span>}
+          <span className="shrink-0 text-[10px] text-stone/80">
+            — {who} · {time}
+            {item.attachments.length > 0 && !revisionOpen
+              ? ` · ${item.attachments.length} file${item.attachments.length === 1 ? "" : "s"}`
+              : ""}
+          </span>
+        </button>
+
+        {revisionOpen && (
+          <div className="mt-1 pl-1">
+            <p className="whitespace-pre-wrap text-[12px] leading-snug text-espresso">{linkifyText(note)}</p>
+            {item.due_at && (
+              <p className="mt-0.5 text-[10px] text-amber-600">
+                New due {formatStamp(new Date(item.due_at).getTime(), timezone, true)}
+              </p>
+            )}
+            {item.attachments.length > 0 && <AttachmentGallery attachments={item.attachments} />}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Reviews and notes are events between rounds, not work turned in — they read
   // as a single line so the submissions stay the backbone of the thread. A
@@ -2613,63 +2658,6 @@ function SubmissionEntry({
 
       {galleryAttachments.length > 0 && <AttachmentGallery attachments={galleryAttachments} />}
 
-    </div>
-  );
-}
-
-/**
- * Every revision request on one task, oldest first: who asked, when, what they
- * wrote, any new deadline and files, and which submission it was about (Toni's
- * call, 2026-11-13). Opened from the "Revisions N" pill on the card.
- */
-function RevisionsPanel({
-  entries,
-  timezone,
-}: {
-  entries: RevisionEntry<FeedItem>[];
-  timezone: string;
-}) {
-  return (
-    <div className="mt-1.5 space-y-1.5 rounded-lg border border-sand bg-cream/40 p-2">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
-        Revision requests ({entries.length})
-      </p>
-      {entries.map(({ revision, submission, submissionIndex, undone }, i) => {
-        const who = revision.profiles?.full_name || revision.profiles?.username || "Unknown";
-        const about =
-          submission == null
-            ? null
-            : `${submissionIndex > 0 ? `Resubmission R${submissionIndex}` : "Submission"} of ${formatStamp(
-                new Date(submission.created_at).getTime(),
-                timezone,
-                true
-              )}`;
-        return (
-          <div key={revision.id} className="rounded-lg border border-sand bg-white px-2.5 py-2">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] font-semibold text-walnut">#{i + 1}</span>
-              <span className="text-[10px] text-stone/80">
-                {who} · {formatStamp(new Date(revision.created_at).getTime(), timezone, true)}
-                {about && <> · on {about}</>}
-              </span>
-              {revision.due_at && (
-                <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10px] font-semibold text-amber-600">
-                  New due {formatStamp(new Date(revision.due_at).getTime(), timezone, true)}
-                </span>
-              )}
-              {undone && (
-                <span className="rounded-full border border-terracotta/20 bg-terracotta-soft px-2 py-[2px] text-[10px] font-semibold text-terracotta">
-                  Undone
-                </span>
-              )}
-            </div>
-            <p className="mt-1 whitespace-pre-wrap text-[12px] leading-snug text-espresso">
-              {linkifyText(revision.submission_comment?.trim() || revision.content)}
-            </p>
-            {revision.attachments.length > 0 && <AttachmentGallery attachments={revision.attachments} />}
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -3165,10 +3153,6 @@ function ThreadCard({
 
   const [expanded, setExpanded] = useState(autoExpand);
   const cardRef = useRef<HTMLDivElement>(null);
-  // Every revision request on the task in one list, whatever day is being
-  // viewed — the review history without reading the whole thread for it.
-  const revisions = useMemo(() => revisionHistory(thread.items), [thread.items]);
-  const [revisionsOpen, setRevisionsOpen] = useState(false);
 
   // Landed here from a notification: scroll it into view and clear the
   // unread badge, same as opening the thread by hand would.
@@ -3493,19 +3477,6 @@ function ThreadCard({
           )}
         </button>
 
-        {revisions.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setRevisionsOpen((v) => !v)}
-            className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-semibold transition-colors ${SUBMISSION_TYPE_BADGE.revision} hover:bg-amber-100`}
-            title="Every revision request on this task, in one list"
-          >
-            Rev.Note {revisions.length}
-            <svg className={`h-2.5 w-2.5 transition-transform ${revisionsOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-            </svg>
-          </button>
-        )}
 
         {/* Straight into the real task editor rather than a second copy of it
             embedded here. Outside the collapse button so it isn't a nested. */}
@@ -3687,10 +3658,6 @@ function ThreadCard({
 
       {metaLine && (
         <div className="mt-0.5 pl-[18px] text-[11px] text-stone/80">{metaLine}</div>
-      )}
-
-      {revisionsOpen && revisions.length > 0 && (
-        <RevisionsPanel entries={revisions} timezone={timezone} />
       )}
 
       {/* Rounds after this day aren't shown here — say so, so nobody reviewing
