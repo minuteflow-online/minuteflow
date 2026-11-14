@@ -13,6 +13,7 @@ import {
   type TaskSubmissionAttachment,
 } from "@/lib/submissions";
 import { linkifyText } from "@/lib/linkify";
+import { answeredSubmission, revisionHistory, type RevisionEntry } from "@/lib/submissionThread";
 import RevisionBadge from "@/components/RevisionBadge";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
@@ -660,11 +661,16 @@ function SubmissionsPageInner() {
   // something that should keep overriding filters the person picks after.
   const searchParams = useSearchParams();
   const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
+  // A submission's own link (its "Copy link") adds &submission=<id>: land on
+  // the day card that holds that submission and scroll to the entry itself.
+  const [highlightSubmissionId, setHighlightSubmissionId] = useState<number | null>(null);
   useEffect(() => {
     const raw = searchParams.get("taskId");
     const parsed = raw ? Number(raw) : NaN;
     if (!Number.isFinite(parsed)) return;
     setHighlightTaskId(parsed);
+    const rawSub = Number(searchParams.get("submission") ?? NaN);
+    setHighlightSubmissionId(Number.isFinite(rawSub) ? rawSub : null);
     // Clear every filter that could hide the target thread — a notification
     // has to land you on the thing it's about, not on an empty "no matches".
     setOwnerMode("all");
@@ -1414,14 +1420,31 @@ This cannot be undone.`
   // nothing to expand or scroll to and the link just drops you on page 1.
   // Lands on the task's newest day. Jumps once per link; later paging and
   // reloads are left alone.
-  const jumpedToHighlightRef = useRef<number | null>(null);
+  // A submission link lands on the card for the day that submission's work
+  // was done, not the task's newest day.
+  const highlightCardKey = useMemo(() => {
+    if (highlightTaskId == null) return null;
+    const taskCards = allCards.filter((c) => c.thread.taskId === highlightTaskId);
+    if (taskCards.length === 0) return null;
+    if (highlightSubmissionId != null) {
+      const sub = taskCards[0].thread.items.find((i) => i.id === highlightSubmissionId);
+      if (sub) {
+        const day = itemDays(sub, taskTimes.get(highlightTaskId), orgTimezone)[0];
+        const match = taskCards.find((c) => c.day === day);
+        if (match) return match.key;
+      }
+    }
+    return taskCards[0].key;
+  }, [allCards, highlightTaskId, highlightSubmissionId, taskTimes, orgTimezone]);
+
+  const jumpedToHighlightRef = useRef<string | null>(null);
   useEffect(() => {
-    if (highlightTaskId == null || jumpedToHighlightRef.current === highlightTaskId) return;
-    const index = allCards.findIndex((c) => c.thread.taskId === highlightTaskId);
+    if (highlightCardKey == null || jumpedToHighlightRef.current === highlightCardKey) return;
+    const index = allCards.findIndex((c) => c.key === highlightCardKey);
     if (index === -1) return;
-    jumpedToHighlightRef.current = highlightTaskId;
+    jumpedToHighlightRef.current = highlightCardKey;
     setPage(Math.floor(index / THREADS_PER_PAGE));
-  }, [allCards, highlightTaskId]);
+  }, [allCards, highlightCardKey]);
 
   const threadsByDay = useMemo(() => {
     const start = safePage * THREADS_PER_PAGE;
@@ -2013,6 +2036,8 @@ This cannot be undone.`
           flaggedTasks={flaggedTasks}
           onMarkRead={markThreadRead}
           highlightTaskId={highlightTaskId}
+          highlightCardKey={highlightCardKey}
+          highlightSubmissionId={highlightSubmissionId}
         />
       ) : (
         <CalendarView
@@ -2323,6 +2348,7 @@ function SubmissionEntry({
   onCancelReversal,
   canFile,
   viewDay,
+  highlighted = false,
 }: {
   item: FeedItem;
   index: number;
@@ -2340,9 +2366,26 @@ function SubmissionEntry({
   canFile?: boolean;
   /** The day card this entry sits on: only captures from that day or earlier show. */
   viewDay?: string;
+  /** Opened from this submission's own link. */
+  highlighted?: boolean;
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const [scOpen, setScOpen] = useState(false);
+  // Every submission has its own link, so a VA can hand it over in chat
+  // (Toni's call, 2026-11-13). It opens this page on the card for the day the
+  // work was done, scrolled to this entry.
+  const [copied, setCopied] = useState(false);
+  const copyLink = async () => {
+    if (item.assigned_task_id == null) return;
+    const url = `${window.location.origin}/productivity/submissions?taskId=${item.assigned_task_id}&submission=${item.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  };
   // "File to Assets, Docs & Files" — on every submission with something the VA
   // turned in, past or present, approved or not, and it stays ticked once filed
   // (Toni's call, 2026-11-11). Ticking files it right away; unticking takes it
@@ -2453,11 +2496,10 @@ function SubmissionEntry({
 
   return (
     <div
-      className={
-        isResubmission
-          ? "border-l-2 border-sand pl-3 pt-2"
-          : "pt-1"
-      }
+      id={`submission-${item.id}`}
+      className={`${isResubmission ? "border-l-2 border-sand pl-3 pt-2" : "pt-1"} ${
+        highlighted ? "rounded-lg bg-amber-50/60 ring-1 ring-amber-200" : ""
+      }`}
     >
       <div className="flex items-center gap-1.5">
         {/* Amber for a resubmission so rework is identifiable at a glance
@@ -2516,9 +2558,19 @@ function SubmissionEntry({
         )}
         {/* Far right of the label line; the report opens just under it. */}
         {hasScData && <ScDataPill open={scOpen} onToggle={() => setScOpen((v) => !v)} />}
+        {item.assigned_task_id != null && (
+          <button
+            type="button"
+            onClick={copyLink}
+            className={`shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta ${hasScData ? "" : "ml-auto"}`}
+            title="Copy a link straight to this submission"
+          >
+            {copied ? "Copied!" : "Copy link"}
+          </button>
+        )}
         {canFile && filable && (
           <label
-            className={`flex shrink-0 cursor-pointer select-none items-center gap-1 text-[10px] text-walnut ${hasScData ? "" : "ml-auto"}`}
+            className={`flex shrink-0 cursor-pointer select-none items-center gap-1 text-[10px] text-walnut ${hasScData || item.assigned_task_id != null ? "" : "ml-auto"}`}
             title={filed ? "Filed to Assets, Docs & Files — untick to take it off" : "File this submission's uploads and link to Assets, Docs & Files"}
           >
             <input
@@ -2561,6 +2613,63 @@ function SubmissionEntry({
 
       {galleryAttachments.length > 0 && <AttachmentGallery attachments={galleryAttachments} />}
 
+    </div>
+  );
+}
+
+/**
+ * Every revision request on one task, oldest first: who asked, when, what they
+ * wrote, any new deadline and files, and which submission it was about (Toni's
+ * call, 2026-11-13). Opened from the "Revisions N" pill on the card.
+ */
+function RevisionsPanel({
+  entries,
+  timezone,
+}: {
+  entries: RevisionEntry<FeedItem>[];
+  timezone: string;
+}) {
+  return (
+    <div className="mt-1.5 space-y-1.5 rounded-lg border border-sand bg-cream/40 p-2">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+        Revision requests ({entries.length})
+      </p>
+      {entries.map(({ revision, submission, submissionIndex, undone }, i) => {
+        const who = revision.profiles?.full_name || revision.profiles?.username || "Unknown";
+        const about =
+          submission == null
+            ? null
+            : `${submissionIndex > 0 ? `Resubmission R${submissionIndex}` : "Submission"} of ${formatStamp(
+                new Date(submission.created_at).getTime(),
+                timezone,
+                true
+              )}`;
+        return (
+          <div key={revision.id} className="rounded-lg border border-sand bg-white px-2.5 py-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-walnut">#{i + 1}</span>
+              <span className="text-[10px] text-stone/80">
+                {who} · {formatStamp(new Date(revision.created_at).getTime(), timezone, true)}
+                {about && <> · on {about}</>}
+              </span>
+              {revision.due_at && (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10px] font-semibold text-amber-600">
+                  New due {formatStamp(new Date(revision.due_at).getTime(), timezone, true)}
+                </span>
+              )}
+              {undone && (
+                <span className="rounded-full border border-terracotta/20 bg-terracotta-soft px-2 py-[2px] text-[10px] font-semibold text-terracotta">
+                  Undone
+                </span>
+              )}
+            </div>
+            <p className="mt-1 whitespace-pre-wrap text-[12px] leading-snug text-espresso">
+              {linkifyText(revision.submission_comment?.trim() || revision.content)}
+            </p>
+            {revision.attachments.length > 0 && <AttachmentGallery attachments={revision.attachments} />}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -2979,6 +3088,7 @@ function ThreadCard({
   flagged = false,
   onMarkRead,
   autoExpand = false,
+  highlightSubmissionId = null,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -3023,6 +3133,8 @@ function ThreadCard({
   onMarkRead?: (taskId: number) => void;
   /** Arrived here via a notification link — start expanded and scroll into view. */
   autoExpand?: boolean;
+  /** Arrived via a submission's own link — scroll to that entry. */
+  highlightSubmissionId?: number | null;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -3037,8 +3149,15 @@ function ThreadCard({
   // 2026-11-09). A round sits on the first day its work was logged, so one
   // handed in a day late still stacks where the work happened.
   const firstDayOf = (item: FeedItem) => itemDays(item, taskTime, timezone)[0];
+  // A revision request, approval or note sits with the submission it answers
+  // (Toni's call, 2026-11-13). Placed on the day it was written instead, a
+  // request made days after the work had no card to show on and vanished.
+  const anchorDayOf = (item: FeedItem) => {
+    const answered = answeredSubmission(thread.items, item);
+    return firstDayOf(answered ?? item);
+  };
   const dayItems = thread.items
-    .filter((item) => firstDayOf(item) <= viewDay)
+    .filter((item) => anchorDayOf(item) <= viewDay)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
   // Submissions after this day — not shown here, but worth knowing about.
   const laterSubmissions = submissions.filter((s) => firstDayOf(s) > viewDay);
@@ -3046,12 +3165,19 @@ function ThreadCard({
 
   const [expanded, setExpanded] = useState(autoExpand);
   const cardRef = useRef<HTMLDivElement>(null);
+  // Every revision request on the task in one list, whatever day is being
+  // viewed — the review history without reading the whole thread for it.
+  const revisions = useMemo(() => revisionHistory(thread.items), [thread.items]);
+  const [revisionsOpen, setRevisionsOpen] = useState(false);
 
   // Landed here from a notification: scroll it into view and clear the
   // unread badge, same as opening the thread by hand would.
   useEffect(() => {
     if (!autoExpand) return;
-    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const target =
+      (highlightSubmissionId != null && document.getElementById(`submission-${highlightSubmissionId}`)) ||
+      cardRef.current;
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
     onMarkRead?.(thread.taskId);
     // Runs once for the card this notification pointed at — re-firing on
     // every unrelated re-render would keep re-scrolling the page.
@@ -3367,6 +3493,20 @@ function ThreadCard({
           )}
         </button>
 
+        {revisions.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setRevisionsOpen((v) => !v)}
+            className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-semibold transition-colors ${SUBMISSION_TYPE_BADGE.revision} hover:bg-amber-100`}
+            title="Every revision request on this task, in one list"
+          >
+            Rev.Note {revisions.length}
+            <svg className={`h-2.5 w-2.5 transition-transform ${revisionsOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
+        )}
+
         {/* Straight into the real task editor rather than a second copy of it
             embedded here. Outside the collapse button so it isn't a nested. */}
         {head.task && (
@@ -3549,6 +3689,10 @@ function ThreadCard({
         <div className="mt-0.5 pl-[18px] text-[11px] text-stone/80">{metaLine}</div>
       )}
 
+      {revisionsOpen && revisions.length > 0 && (
+        <RevisionsPanel entries={revisions} timezone={timezone} />
+      )}
+
       {/* Rounds after this day aren't shown here — say so, so nobody reviewing
           an earlier day misses that the task has moved on since. */}
       {laterSubmissions.length > 0 && newestSubmission && (
@@ -3584,6 +3728,7 @@ function ThreadCard({
                 onCancelReversal={onCancelReversal}
                 canFile={canReview}
                 viewDay={viewDay}
+                highlighted={item.id === highlightSubmissionId}
               />
             );
           })}
@@ -3768,6 +3913,8 @@ function TimelineView({
   flaggedTasks,
   onMarkRead,
   highlightTaskId,
+  highlightCardKey = null,
+  highlightSubmissionId = null,
 }: {
   byDay: Map<string, DayCard[]>;
   dayStats: Map<string, DayStats>;
@@ -3808,13 +3955,18 @@ function TimelineView({
   /** The task a notification click pointed at — auto-expanded and scrolled
    *  into view, once. */
   highlightTaskId: number | null;
+  /** The exact card to open (a submission link picks its work day's card). */
+  highlightCardKey?: string | null;
+  /** A submission link's entry — scrolled to and outlined. */
+  highlightSubmissionId?: number | null;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
   // A task can sit on several days; a notification opens only its newest one.
   const highlightKey =
-    highlightTaskId == null
+    highlightCardKey ??
+    (highlightTaskId == null
       ? null
-      : days.flatMap((d) => byDay.get(d) ?? []).find((c) => c.thread.taskId === highlightTaskId)?.key ?? null;
+      : days.flatMap((d) => byDay.get(d) ?? []).find((c) => c.thread.taskId === highlightTaskId)?.key ?? null);
 
   if (loading) return <p className="text-[12px] text-stone">Loading submissions...</p>;
   if (days.length === 0) {
@@ -3860,6 +4012,7 @@ function TimelineView({
                 flagged={flaggedTasks[thread.taskId] === true}
                 onMarkRead={onMarkRead}
                 autoExpand={highlightKey === key}
+                highlightSubmissionId={highlightKey === key ? highlightSubmissionId : null}
               />
             ))}
         </DayGroup>
