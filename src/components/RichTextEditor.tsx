@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type MutableRefObject } from "react";
 import {
   escapeHtml,
   htmlFileToMessage,
@@ -29,9 +29,14 @@ interface RichTextEditorProps {
   placeholder?: string;
   /** Uploads an image and resolves to its public URL (or null on failure). */
   onUploadImage: (file: File) => Promise<string | null>;
+  /**
+   * Filled in by the editor: inserts text where the cursor last was (visual or
+   * HTML view). Returns false when the cursor hasn't been placed in the message yet.
+   */
+  insertAtCursorRef?: MutableRefObject<((text: string) => boolean) | null>;
 }
 
-export default function RichTextEditor({ value, onChange, placeholder, onUploadImage }: RichTextEditorProps) {
+export default function RichTextEditor({ value, onChange, placeholder, onUploadImage, insertAtCursorRef }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const savedRange = useRef<Range | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,6 +103,36 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
     setEmpty(isRichEmpty(html));
     onChange(html);
   }, [onChange]);
+
+  // Where the cursor was in the HTML view's textarea (null until it's been clicked).
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaCursor = useRef<number | null>(null);
+  const saveTextareaCursor = () => {
+    textareaCursor.current = textareaRef.current?.selectionStart ?? null;
+  };
+
+  useEffect(() => {
+    if (!insertAtCursorRef) return;
+    insertAtCursorRef.current = (text: string) => {
+      if (htmlMode) {
+        const pos = textareaCursor.current;
+        if (pos === null || pos > value.length) return false;
+        onChange(value.slice(0, pos) + text + value.slice(pos));
+        textareaCursor.current = pos + text.length;
+        return true;
+      }
+      const range = savedRange.current;
+      if (!range || !editorRef.current?.contains(range.startContainer)) return false;
+      restoreSelection();
+      document.execCommand("insertText", false, text);
+      saveSelection();
+      emit();
+      return true;
+    };
+    return () => {
+      insertAtCursorRef.current = null;
+    };
+  });
 
   const saveSelection = () => {
     const sel = window.getSelection();
@@ -439,8 +474,13 @@ export default function RichTextEditor({ value, onChange, placeholder, onUploadI
       {htmlMode && (
         <div>
           <textarea
+            ref={textareaRef}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => {
+              onChange(e.target.value);
+              textareaCursor.current = e.target.selectionStart;
+            }}
+            onSelect={saveTextareaCursor}
             spellCheck={false}
             placeholder="<p>Write or paste HTML here…</p>"
             className="block w-full min-h-[180px] max-h-[480px] resize-y py-2 px-3 font-mono text-[12px] text-espresso leading-relaxed outline-none bg-white placeholder:text-stone"

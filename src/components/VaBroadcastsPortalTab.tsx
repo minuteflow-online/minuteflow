@@ -5,17 +5,9 @@ import { useSearchParams } from "next/navigation";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import { broadcastPortalPath } from "@/lib/broadcasts";
 import { memoChatPath } from "@/lib/memoChat";
-import { magicWordLabel, magicWordsMatch, parseMagicWords } from "@/lib/magicWords";
-import {
-  injectMagicWordHtml,
-  injectMagicWordsHtml,
-  isRichHtml,
-  plainToHtml,
-  renderBroadcastHtml,
-  richTextToPlain,
-  sanitizeRichHtml,
-  RICH_TEXT_CLASSES,
-} from "@/lib/richText";
+import { broadcastDisplayHtml } from "@/lib/broadcastDisplay";
+import { magicWordsMatch, parseMagicWords } from "@/lib/magicWords";
+import { renderBroadcastHtml, richTextToPlain, RICH_TEXT_CLASSES } from "@/lib/richText";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -65,39 +57,6 @@ function fmtDate(iso: string) {
     day: "numeric",
     year: "numeric",
   });
-}
-
-/**
- * Injects "Magic word is [word]" into the body as a paragraph after the 60%
- * mark. Position is deterministic per broadcast: uses the char code of the
- * last character of the id to pick which paragraph boundary (split on \n\n)
- * to insert after, within the latter 40% of the text.
- */
-function injectMagicWord(body: string, magicWord: string, broadcastId: string): string {
-  const injection = `Magic word is ${magicWord}`;
-  const anchor = broadcastId.charCodeAt(broadcastId.length - 1); // 0–255
-
-  // Try paragraph-aware insertion first
-  const paragraphs = body.split("\n\n");
-  if (paragraphs.length >= 2) {
-    // Pick an insertion point in the latter 40% of paragraphs
-    const minIdx = Math.ceil(paragraphs.length * 0.6);
-    const range = paragraphs.length - minIdx; // how many slots available
-    const offset = range > 0 ? anchor % range : 0;
-    const insertAt = minIdx + offset; // insert AFTER this index
-    const result = [
-      ...paragraphs.slice(0, insertAt),
-      injection,
-      ...paragraphs.slice(insertAt),
-    ];
-    return result.join("\n\n");
-  }
-
-  // Fallback: character-level insertion after the 60% mark
-  const minPos = Math.floor(body.length * 0.6);
-  const range = body.length - minPos;
-  const insertPos = minPos + (range > 0 ? anchor % range : 0);
-  return body.slice(0, insertPos) + "\n\n" + injection + "\n\n" + body.slice(insertPos);
 }
 
 // ─── Category Badge ───────────────────────────────────────────
@@ -226,20 +185,8 @@ function BroadcastCard({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Plain-text bodies keep the original text injection; rich bodies inject at an HTML block boundary.
-  // Several words are spread across the whole message, one per stretch.
-  const anchor = broadcast.id.charCodeAt(broadcast.id.length - 1);
-  const displayHtml = magicWords.length === 0
-    ? renderBroadcastHtml(broadcast.body)
-    : magicWords.length > 1
-    ? injectMagicWordsHtml(
-        renderBroadcastHtml(broadcast.body),
-        magicWords.map((w, i) => magicWordLabel(w, i, magicWords.length)),
-        (n, i) => (anchor + i) % n
-      )
-    : isRichHtml(broadcast.body)
-    ? injectMagicWordHtml(renderBroadcastHtml(broadcast.body), magicWordLabel(magicWords[0], 0, 1), (n) => anchor % n)
-    : sanitizeRichHtml(plainToHtml(injectMagicWord(broadcast.body, magicWords[0], broadcast.id)));
+  // Same placement as the admin list (see broadcastDisplayHtml).
+  const displayHtml = broadcastDisplayHtml(broadcast);
 
   const isLong = richTextToPlain(displayHtml).length > 300 || /<img\b/i.test(displayHtml);
 
