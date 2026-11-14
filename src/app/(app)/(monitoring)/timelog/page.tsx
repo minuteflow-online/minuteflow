@@ -33,7 +33,7 @@ type WeekDay = {
   dayName: string;
   date: number;
   fullDate: Date;
-  totalMs: number;
+  billableMs: number;
   taskCount: number;
   isToday: boolean;
 };
@@ -599,11 +599,19 @@ export default function TimeLogPage() {
           l.start_time &&
           isDateInTz(l.start_time, dStr, orgTimezone)
       );
+      // Same billable rule as computeSummary below: breaks stopped counting
+      // as billable for anyone, regardless of the flag, on/after this date.
+      const BREAK_EXCLUSION_DAY = "2026-07-06";
+      const billableMs = dayLogs.reduce((sum, l) => {
+        const logDate = l.start_time ? l.start_time.slice(0, 10) : "";
+        const breakExcluded = l.category === "Break" && logDate >= BREAK_EXCLUSION_DAY;
+        return l.billable && !breakExcluded ? sum + (l.duration_ms || 0) : sum;
+      }, 0);
       return {
         dayName: name,
         date: dateNum,
         fullDate,
-        totalMs: dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0),
+        billableMs,
         taskCount: dayLogs.length,
         isToday: dStr === todayStr,
       };
@@ -1313,7 +1321,7 @@ export default function TimeLogPage() {
                     {day.date}
                   </div>
                   <div className="text-xs font-semibold text-sage">
-                    {day.totalMs > 0 ? formatDuration(day.totalMs) : "\u2014"}
+                    {day.billableMs > 0 ? formatDuration(day.billableMs) : "\u2014"}
                   </div>
                   <div className="mt-0.5 text-[10px] text-stone">
                     {day.taskCount > 0
