@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatPayMoney, formatPayRate, payCurrencySymbol, parsePhpPerUsd, processingFeePesoNote, toUsd, normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { statusBadgeClasses, statusLabel } from "@/lib/taskSchedule";
 import { computeAttendancePay, type DayDecision } from "@/lib/salaryProration";
+import { formatDuration } from "@/lib/utils";
 
 interface Props {
   profiles: Profile[];
@@ -1397,7 +1398,10 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                         .map(([date, ms]) => (
                           <tr key={date} className="border-b border-linen/50">
                             <td className="py-1.5 text-bark/70">{formatDateLabel(date)}</td>
-                            <td className="py-1.5 text-right text-bark/70">{formatHours(ms)}</td>
+                            <td className="py-1.5 text-right text-bark/70">
+                              {/* h m first, as Team and Time Log show it; decimal is what's multiplied by the rate */}
+                              {formatDuration(ms)} <span className="text-bark/40">· {formatHours(ms)}</span>
+                            </td>
                             <td className="py-1.5 text-right text-bark/70">
                               {preview.isFixedPeriod
                                 ? "—"

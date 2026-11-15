@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { sumPayrollMs } from "@/lib/payrollHours";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import type { TimeLog, Profile, TaskScreenshot } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
@@ -607,14 +608,9 @@ export default function TimeLogPage() {
       const dateNum = parseInt(dStr.split("-")[2], 10); // day-of-month from TZ-aware string
       const fullDate = dateFromDateStr(dStr, orgTimezone); // Date object that maps to this date in TZ
       const dayLogs = logs.filter((l) => l.start_time && logDay(l, orgTimezone) === dStr);
-      // Same billable rule as computeSummary below: breaks stopped counting
-      // as billable for anyone, regardless of the flag, on/after this date.
-      const BREAK_EXCLUSION_DAY = "2026-07-06";
-      const billableMs = dayLogs.reduce((sum, l) => {
-        const logDate = l.start_time ? l.start_time.slice(0, 10) : "";
-        const breakExcluded = l.category === "Break" && logDate >= BREAK_EXCLUSION_DAY;
-        return l.billable && !breakExcluded ? sum + (l.duration_ms || 0) : sum;
-      }, 0);
+      // The day's paid hours by the paystub's own rule (lib/payrollHours),
+      // so this card reads the same as that day's line on the paystub and Team.
+      const billableMs = sumPayrollMs(dayLogs, null);
       return {
         dayName: name,
         date: dateNum,
