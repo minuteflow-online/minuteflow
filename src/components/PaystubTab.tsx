@@ -160,7 +160,10 @@ function OutputTaskRow({
           title={isCompleted ? "Completed items are always paid" : "Include in this paystub"}
         />
       </td>
-      <td className="py-1.5 text-bark/70">
+      {/* wrap-anywhere: titles like Reel_TheyFeltGuilty_5ThingsSmartStudents…
+          have no spaces to wrap at, so they stretched this column and pushed
+          Status, First Submitted and Amount off the card. */}
+      <td className="py-1.5 text-bark/70 wrap-anywhere">
         {item.task_name}
         {item.account && <span className="text-bark/40 ml-1">· {item.account}</span>}
         {item.client_memo && <div className="text-[11px] text-bark/60 whitespace-pre-line">{item.client_memo}</div>}
