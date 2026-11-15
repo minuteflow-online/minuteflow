@@ -25,7 +25,7 @@ import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 
 /* ── Types ────────────────────────────────────────────────── */
 
-type DateRangePreset = "today" | "week" | "month" | "custom";
+type DateRangePreset = "today" | "day" | "week" | "month" | "custom";
 
 /**
  * One submission, dated by the day its work started rather than the day it
@@ -230,6 +230,8 @@ export default function TeamPage() {
   const [datePreset, setDatePreset] = useState<DateRangePreset>("today");
   const [customStart, setCustomStart] = useState<string>(formatDateInput(new Date()));
   const [customEnd, setCustomEnd] = useState<string>(formatDateInput(new Date()));
+  // Single day for the "Pick a Day" preset (YYYY-MM-DD)
+  const [singleDay, setSingleDay] = useState<string>(formatDateInput(new Date()));
   const [showPayPeriodDropdown, setShowPayPeriodDropdown] = useState(false);
   const payPeriodRef = useRef<HTMLDivElement>(null);
 
@@ -306,12 +308,21 @@ export default function TeamPage() {
       const label = s.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: tz });
       return { rangeStart: s, rangeEnd: new Date(end), periodLabel: label };
     }
+    if (datePreset === "day") {
+      // Same day-boundary handling as the custom range, for a single date.
+      const s = new Date(singleDay + "T00:00:00");
+      const e = new Date(singleDay + "T23:59:59.999");
+      const label = new Date(singleDay + "T12:00:00").toLocaleDateString("en-US", {
+        weekday: "short", month: "short", day: "numeric", year: "numeric",
+      });
+      return { rangeStart: s, rangeEnd: e, periodLabel: label };
+    }
     // custom
     const s = new Date(customStart + "T00:00:00");
     const e = new Date(customEnd + "T23:59:59.999");
     const label = `${formatDateShort(s, tz)} \u2013 ${formatDateShort(e, tz)}`;
     return { rangeStart: s, rangeEnd: e, periodLabel: label };
-  }, [datePreset, customStart, customEnd, orgTimezone]);
+  }, [datePreset, customStart, customEnd, singleDay, orgTimezone]);
 
   const isToday = datePreset === "today";
 
@@ -777,9 +788,10 @@ export default function TeamPage() {
 
       {/* Date Range Controls */}
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        {(["today", "week", "month", "custom"] as DateRangePreset[]).map((preset) => {
+        {(["today", "day", "week", "month", "custom"] as DateRangePreset[]).map((preset) => {
           const labels: Record<DateRangePreset, string> = {
             today: "Today",
+            day: "Pick a Day",
             week: "This Week",
             month: "This Month",
             custom: "Custom",
@@ -852,6 +864,41 @@ export default function TeamPage() {
             );
           })()}
         </div>
+
+        {datePreset === "day" && (
+          <div className="flex items-center gap-1 ml-2">
+            <button
+              onClick={() => {
+                const d = new Date(singleDay + "T12:00:00");
+                d.setDate(d.getDate() - 1);
+                setSingleDay(formatDateInput(d));
+              }}
+              aria-label="Previous day"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-sand bg-white text-base font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
+            >
+              &larr;
+            </button>
+            <input
+              type="date"
+              value={singleDay}
+              onChange={(e) => {
+                if (e.target.value) setSingleDay(e.target.value);
+              }}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso"
+            />
+            <button
+              onClick={() => {
+                const d = new Date(singleDay + "T12:00:00");
+                d.setDate(d.getDate() + 1);
+                setSingleDay(formatDateInput(d));
+              }}
+              aria-label="Next day"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-sand bg-white text-base font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
+            >
+              &rarr;
+            </button>
+          </div>
+        )}
 
         {datePreset === "custom" && (
           <div className="flex items-center gap-2 ml-2">
