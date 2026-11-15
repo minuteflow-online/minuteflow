@@ -400,8 +400,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   // prior payment (on its own date) so the paystub shows it as already paid and
   // it lands in the right period in Financials.
   const [advanceAmount, setAdvanceAmount] = useState<string>("");
-  // Carried overpayments. creditOffered is how much of the VA's waiting
-  // credit fits this paystub; creditApplied is that or 0 (the Apply box).
+  // Carried overpayments. creditAvailable is the VA's whole waiting credit;
+  // creditOffered is how much of it fits this paystub; creditApplied is that
+  // or 0 (the Apply box, creditOn).
+  const [creditAvailable, setCreditAvailable] = useState(0);
+  const [creditOn, setCreditOn] = useState(true);
   const [creditOffered, setCreditOffered] = useState(0);
   const [creditApplied, setCreditApplied] = useState(0);
   const [carryOverOn, setCarryOverOn] = useState(false);
@@ -625,6 +628,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       }
       // Credit from an earlier overpayment comes off what's paid now.
       const credit = Math.min(Number(data.carryoverCredit) || 0, Math.max(0, net));
+      setCreditAvailable(Number(data.carryoverCredit) || 0);
+      setCreditOn(true);
       setCreditOffered(credit);
       setCreditApplied(credit);
       net -= credit;
@@ -1129,6 +1134,14 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       (checkedOutputItemsTotal - completedOutputItemsTotal)
     : 0;
   const effectiveFixedTotal = preview ? (preview.fixedTotal ?? 0) + (checkedOutputItemsTotal - completedOutputItemsTotal) : 0;
+
+  // Ticking or unticking output tasks changes what's owed, so the credit that
+  // fits this paystub follows it — up to the VA's whole waiting credit.
+  useEffect(() => {
+    const offered = Math.round(Math.min(creditAvailable, Math.max(0, effectiveTotalGrossPay)) * 100) / 100;
+    setCreditOffered(offered);
+    setCreditApplied(creditOn ? offered : 0);
+  }, [creditAvailable, creditOn, effectiveTotalGrossPay]);
 
   return (
     <div className="space-y-6">
@@ -1871,6 +1884,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           const base = customAmount !== "" ? parseFloat(customAmount) || 0 : effectiveTotalGrossPay;
                           setCustomAmount(Math.max(0, base + creditApplied - next).toFixed(2));
                           setCreditApplied(next);
+                          setCreditOn(e.target.checked);
                         }}
                       />
                       Apply credit from previous overpayment
@@ -1882,7 +1896,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 {/* Paying more than is owed: carry the excess to the next paystub */}
                 {(() => {
                   const paidNow = (customAmount !== "" ? parseFloat(customAmount) || 0 : effectiveTotalGrossPay) + (parseFloat(miscAmount) || 0);
-                  const owed = effectiveTotalGrossPay - creditApplied - preview.previousTotal - (parseFloat(advanceAmount) || 0);
+                  // Same baseline as the Amount to Pay default, so paying that
+                  // default never reads as an overpayment.
+                  const owed = effectiveTotalGrossPay - creditApplied - (parseFloat(advanceAmount) || 0);
                   const excess = Math.round((paidNow - owed) * 100) / 100;
                   if (excess < 0.01 && !carryOverOn) return null;
                   return (
