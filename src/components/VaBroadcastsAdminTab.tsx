@@ -52,6 +52,8 @@ interface Broadcast {
   image_url: string | null;
   sort_order: number;
   tags: string[];
+  /** Who published it, shown on the admin card. */
+  published_by_name?: string | null;
   /** Set on a follow-up: the broadcast it updates. */
   parent_id?: string | null;
 }
@@ -1255,6 +1257,11 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                   <h3 className="text-sm font-semibold text-espresso">{b.title}</h3>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
                     <span className="text-[11px] text-stone">{fmtDate(b.created_at)}</span>
+                    {b.published_by_name && (
+                      <span className="text-[11px] text-stone">
+                        by <span className="font-semibold text-walnut">{b.published_by_name}</span>
+                      </span>
+                    )}
                     <CategoryBadge category={b.category} />
                     <StatusBadge status={b.status} scheduledAt={b.scheduled_at} />
                     {(b.tags ?? []).map((tag) => (
@@ -1321,6 +1328,24 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                 >
                   {expanded[b.id] ? "Show less" : "Read more"}
                 </button>
+              )}
+
+              {/* Link — same button VAs see in the portal */}
+              {b.link && (
+                <div className="mt-3">
+                  <a
+                    href={b.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-parchment px-3 py-1.5 text-[12px] font-medium text-terracotta hover:bg-sand transition-colors"
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+                      <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+                    </svg>
+                    View Link
+                  </a>
+                </div>
               )}
 
               {/* ── Follow-ups ── */}

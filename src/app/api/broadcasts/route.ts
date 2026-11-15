@@ -382,6 +382,8 @@ export async function GET(request: Request) {
         recipients: recipientsByBroadcast[b.id] || [],
         // No "ask the author" button on your own broadcast
         author_name: b.created_by && b.created_by !== user.id ? memberName.get(b.created_by) ?? null : null,
+        // Who published it, including you — shown on the admin card
+        published_by_name: b.created_by ? memberName.get(b.created_by) ?? null : null,
       };
     });
 
