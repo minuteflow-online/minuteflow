@@ -28,6 +28,16 @@ export default async function AppLayout({
     .eq("id", user.id)
     .single();
 
+  // The org timezone decides which day every clock-in and task is filed under.
+  // Resolved here so the client never stamps a date before it has loaded —
+  // until then SessionContext would fall back to UTC and file an evening-
+  // Eastern clock-in under tomorrow.
+  const { data: orgSettings } = await supabase
+    .from("organization_settings")
+    .select("timezone")
+    .limit(1)
+    .single();
+
   const fullName =
     profile?.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
   const role: UserRole = profile?.role || "va";
@@ -37,7 +47,7 @@ export default async function AppLayout({
       <TopNav user={{ id: user.id, full_name: fullName, role, department: profile?.department, admin_permissions: profile?.admin_permissions, avatar_url: profile?.avatar_url }} />
       <ScreenCaptureProvider>
         <SceAlertBanner />
-        <SessionProvider initialUserId={user.id}>
+        <SessionProvider initialUserId={user.id} initialOrgTimezone={orgSettings?.timezone ?? undefined}>
           <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
             {children}
           </main>
