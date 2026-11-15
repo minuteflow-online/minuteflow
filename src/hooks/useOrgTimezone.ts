@@ -17,7 +17,7 @@ import { createClient } from "@/lib/supabase/client";
 let cached: string | null = null;
 let inFlight: Promise<string> | null = null;
 
-async function loadOrgTimezone(): Promise<string> {
+export async function loadOrgTimezone(): Promise<string> {
   if (cached) return cached;
   if (!inFlight) {
     inFlight = (async () => {

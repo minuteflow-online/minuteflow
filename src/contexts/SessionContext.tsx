@@ -48,11 +48,15 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 export function SessionProvider({
   children,
   initialUserId,
+  initialOrgTimezone,
 }: {
   children: React.ReactNode;
   /** User id already resolved server-side (see (app)/layout.tsx). Skips a
    * redundant client-side auth.getUser() round trip on every page load. */
   initialUserId?: string;
+  /** Org timezone already resolved server-side, so dates are never stamped
+   * from the UTC fallback while the client fetch is still in flight. */
+  initialOrgTimezone?: string;
 }) {
   const supabase = createClient();
 
@@ -60,7 +64,7 @@ export function SessionProvider({
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [clockInTime, setClockInTime] = useState<string | null>(null);
   const [breakStartTime, setBreakStartTime] = useState<string | null>(null);
-  const [orgTimezone, setOrgTimezone] = useState("UTC");
+  const [orgTimezone, setOrgTimezone] = useState(initialOrgTimezone || "UTC");
   const [actionPending, setActionPending] = useState(false);
   // Synchronous guard — React state updates are async, so a rapid double-click
   // can pass the `if (actionPending) return` check before either click's

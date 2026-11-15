@@ -55,8 +55,13 @@ function toDateInTz(utcTimestamp: string, tz: string): string {
 }
 
 /** Check if a UTC timestamp falls on a given date (YYYY-MM-DD) in the given timezone */
-function isDateInTz(utcTimestamp: string, dateStr: string, tz: string): boolean {
-  return toDateInTz(utcTimestamp, tz) === dateStr;
+/**
+ * The work day a log counts under: its shift date (session_date), the same day
+ * the paystub, Team and Insights put it on — so a shift that runs past midnight
+ * stays on the day it started everywhere. Falls back to the org-time start date.
+ */
+function logDay(l: { session_date?: string | null; start_time: string | null }, tz: string): string {
+  return l.session_date || (l.start_time ? toDateInTz(l.start_time, tz) : "");
 }
 
 /** Get YYYY-MM-DD for a Date object in a given timezone */
@@ -356,36 +361,43 @@ export default function TimeLogPage() {
     }
   }, [viewMode, anchorDate, customStart, customEnd, orgTimezone]);
 
+  // The same range as work days (YYYY-MM-DD), which is how logs are fetched and
+  // filtered — by shift date, not by when each entry happened to start.
+  const { fromDay, toDay } = useMemo(() => {
+    if (viewMode === "day") {
+      const d = dateToDateStr(anchorDate, orgTimezone);
+      return { fromDay: d, toDay: d };
+    }
+    if (viewMode === "week") {
+      const dayStrs = weekDaysInTz(anchorDate, orgTimezone);
+      return { fromDay: dayStrs[0], toDay: dayStrs[6] };
+    }
+    if (viewMode === "custom") return { fromDay: customStart, toDay: customEnd };
+    return { fromDay: dateToDateStr(rangeStart, orgTimezone), toDay: dateToDateStr(rangeEnd, orgTimezone) };
+  }, [viewMode, anchorDate, customStart, customEnd, rangeStart, rangeEnd, orgTimezone]);
+
   /* ── Fetch data ────────────────────────────────────────── */
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
 
-    // For day view, still fetch the full week for the week overview cards
-    // For custom view, fetch exactly the custom range
-    // Use timezone-aware week boundaries so we don't miss entries near midnight
-    let fetchStart: Date;
-    let fetchEnd: Date;
+    // By shift date, like the paystub. Day view still fetches its whole week
+    // for the week overview cards.
+    let fetchFrom = fromDay;
+    let fetchTo = toDay;
     if (viewMode === "day") {
       const dayStrs = weekDaysInTz(anchorDate, orgTimezone);
-      // Start of Monday in org TZ (use midnight-ish by subtracting 14h buffer)
-      fetchStart = new Date(dayStrs[0] + "T00:00:00Z");
-      fetchStart.setTime(fetchStart.getTime() - 14 * 60 * 60 * 1000);
-      // End of Sunday in org TZ (add 14h buffer past end of day)
-      fetchEnd = new Date(dayStrs[6] + "T23:59:59Z");
-      fetchEnd.setTime(fetchEnd.getTime() + 14 * 60 * 60 * 1000);
-    } else {
-      fetchStart = rangeStart;
-      fetchEnd = rangeEnd;
+      fetchFrom = dayStrs[0];
+      fetchTo = dayStrs[6];
     }
 
     let query = supabase
       .from("time_logs")
       .select("*")
       .is("deleted_at", null)
-      .gte("start_time", fetchStart.toISOString())
-      .lte("start_time", fetchEnd.toISOString())
+      .gte("session_date", fetchFrom)
+      .lte("session_date", fetchTo)
       .order("start_time", { ascending: false });
 
     // VA: show only own entries; Admin/manager: optional VA filter
@@ -453,7 +465,7 @@ export default function TimeLogPage() {
     }
 
     setLoading(false);
-  }, [viewMode, anchorDate, rangeStart, rangeEnd, isAdminOrManager, selectedVA]);
+  }, [viewMode, anchorDate, rangeStart, rangeEnd, fromDay, toDay, isAdminOrManager, selectedVA]);
 
   useEffect(() => {
     fetchLogs();
@@ -594,11 +606,7 @@ export default function TimeLogPage() {
       const dStr = dayStrs[i];
       const dateNum = parseInt(dStr.split("-")[2], 10); // day-of-month from TZ-aware string
       const fullDate = dateFromDateStr(dStr, orgTimezone); // Date object that maps to this date in TZ
-      const dayLogs = logs.filter(
-        (l) =>
-          l.start_time &&
-          isDateInTz(l.start_time, dStr, orgTimezone)
-      );
+      const dayLogs = logs.filter((l) => l.start_time && logDay(l, orgTimezone) === dStr);
       // Same billable rule as computeSummary below: breaks stopped counting
       // as billable for anyone, regardless of the flag, on/after this date.
       const BREAK_EXCLUSION_DAY = "2026-07-06";
@@ -621,21 +629,14 @@ export default function TimeLogPage() {
   /* ── Filtered entries for current view ─────────────────── */
 
   const filteredLogs = useMemo(() => {
-    if (viewMode === "day") {
-      // In day view, filter by the org-timezone date of the anchor
-      const anchorStr = dateToDateStr(anchorDate, orgTimezone);
-      return logs.filter((l) => {
-        if (!l.start_time) return false;
-        return isDateInTz(l.start_time, anchorStr, orgTimezone);
-      });
-    }
-    // For week/month/custom, use the computed range boundaries
+    // Every view filters by shift date, so a day here totals what the paystub
+    // pays for that day.
     return logs.filter((l) => {
       if (!l.start_time) return false;
-      const d = new Date(l.start_time);
-      return d >= rangeStart && d <= rangeEnd;
+      const day = logDay(l, orgTimezone);
+      return day >= fromDay && day <= toDay;
     });
-  }, [logs, rangeStart, rangeEnd, viewMode, anchorDate, orgTimezone]);
+  }, [logs, fromDay, toDay, orgTimezone]);
 
   /* ── Reset column filters when the date range changes ──── */
 
@@ -691,8 +692,7 @@ export default function TimeLogPage() {
       if (!l.start_time) return;
       // Group by session_date (the day the session started) so that cross-midnight
       // entries (e.g. clock-out at 12:51 AM) stay under the clock-in day.
-      const key = (l as TimeLog & { session_date?: string }).session_date
-        || toDateInTz(l.start_time, orgTimezone);
+      const key = logDay(l, orgTimezone);
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(l);
     });

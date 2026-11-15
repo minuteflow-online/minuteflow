@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
+import { loadOrgTimezone } from "@/hooks/useOrgTimezone";
 import type { TimeLog, Profile } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -329,6 +330,30 @@ export default function EditTimeLogModal({
       const isVaSubmission = currentUserRole === "va";
       const manualStatus = isVaSubmission ? "pending" : "approved";
 
+      // Filed under the org-time (Eastern) date it started — the same rule as
+      // a clock-in — not the date as typed in the VA's own timezone, which
+      // put Philippine-morning entries a day later than the rest of the shift.
+      // Before 6 AM it may be the tail of last night's shift (the same cutoff
+      // the dashboard uses), so it joins that shift's day if one was running.
+      const orgTz = await loadOrgTimezone();
+      const startDate = new Date(startIso);
+      let sessionDate = startDate.toLocaleDateString("en-CA", { timeZone: orgTz });
+      const startHour = Number(startDate.toLocaleString("en-US", { timeZone: orgTz, hour: "numeric", hour12: false })) % 24;
+      if (startHour < 6) {
+        const dayBefore = new Date(startDate.getTime() - 24 * 60 * 60 * 1000).toLocaleDateString("en-CA", { timeZone: orgTz });
+        const { data: priorLog } = await supabase
+          .from("time_logs")
+          .select("session_date")
+          .eq("user_id", selectedUserId)
+          .is("deleted_at", null)
+          .lt("start_time", startIso)
+          .gte("start_time", new Date(startDate.getTime() - 12 * 60 * 60 * 1000).toISOString())
+          .order("start_time", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (priorLog?.session_date === dayBefore) sessionDate = dayBefore;
+      }
+
       const { error: insertError } = await supabase.from("time_logs").insert({
         user_id: selectedUserId,
         username: userProfile.username,
@@ -348,7 +373,7 @@ export default function EditTimeLogModal({
         internal_memo: internalMemo || null,
         is_manual: true,
         manual_status: manualStatus,
-        session_date: startTime.slice(0, 10) || null,
+        session_date: sessionDate || null,
       });
 
       if (insertError) {
