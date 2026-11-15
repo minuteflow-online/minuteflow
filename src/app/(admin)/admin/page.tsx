@@ -9508,6 +9508,22 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           : null
       );
     }
+
+    // Same paid-in-full receipt "Record Payment" sends (fire-and-forget). Only
+    // when a balancing payment was actually recorded — an invoice that was
+    // already settled gets no new email.
+    if (remaining > 0 && invoice.to_email) {
+      fetch("/api/invoices/send-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          amountPaid: remaining,
+          newAmountPaid: synced?.amount_paid ?? Number(invoice.amount_paid || 0) + remaining,
+          newStatus: synced?.status ?? "paid",
+        }),
+      }).catch(() => {/* non-fatal */});
+    }
     fetchInvoices();
   };
 
