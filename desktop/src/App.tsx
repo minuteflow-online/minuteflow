@@ -12,6 +12,7 @@ import { fetchAssignedTasks, fetchAssignedTasksForVa, reorderAssignedTasks, setA
 import { startAssignedTask } from "./lib/startTask";
 import { captureAndUploadScreenshot } from "./lib/screenshot";
 import { startAutoCapture } from "./lib/autoCapture";
+import { startDesktopHeartbeat } from "./lib/desktopHeartbeat";
 import { fetchTeamRoster, fetchTeamTimeLogs, type TeamRosterMember, type TeamTimeLog } from "./lib/team";
 import TeamPanel from "./components/TeamPanel";
 import ClockOutModal from "./components/ClockOutModal";
@@ -85,6 +86,15 @@ export default function App() {
   useEffect(() => {
     sessionRowRef.current = sessionRow;
   }, [sessionRow]);
+
+  // Tells the server desktop is open, so the extension/web stand down
+  // instead of capturing alongside it (Toni's call, 2026-11-16 — found
+  // reviewing Admin screenshots that the extension was still covering a VA
+  // who was on desktop). Same lifecycle as autoCapture below.
+  useEffect(() => {
+    if (!userId) return;
+    return startDesktopHeartbeat(userId);
+  }, [userId]);
 
   // Automatic screenshot every 5 minutes while clocked in — desktop's
   // equivalent of the Chrome extension's background capture loop (see
