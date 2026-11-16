@@ -105,3 +105,19 @@ describe("layout containers aren't boxes", () => {
     expect(out).not.toContain("hard work — with enough ordinary words to hold a magic word. W");
   });
 });
+
+describe("collapsible sections from an uploaded page", () => {
+  it("keeps details/summary and turns expand/collapse-all buttons into script-free toggles", () => {
+    const page =
+      `<button type="button" onclick="document.querySelectorAll('details').forEach(d=>d.open=true)">Expand all</button>` +
+      `<button type="button" onclick="document.querySelectorAll('details').forEach(d=>d.open=false)">Collapse all</button>` +
+      `<button onclick="alert(1)">Other</button>` +
+      `<details open><summary><span>Reliability</span></summary><p>People can count on you.</p></details>`;
+    const out = broadcastDisplayHtml({ id: "a", body: page, magic_word: null });
+    expect(out).toContain('<button type="button" data-details="open">Expand all</button>');
+    expect(out).toContain('<button type="button" data-details="close">Collapse all</button>');
+    expect(out).toContain('<button type="button">Other</button>');
+    expect(out).toContain("<details open><summary><span>Reliability</span></summary><p>People can count on you.</p></details>");
+    expect(out).not.toMatch(/onclick|alert/);
+  });
+});

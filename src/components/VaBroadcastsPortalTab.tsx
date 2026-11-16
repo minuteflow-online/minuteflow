@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import { broadcastPortalPath } from "@/lib/broadcasts";
 import { memoChatPath } from "@/lib/memoChat";
-import { broadcastDisplayHtml } from "@/lib/broadcastDisplay";
+import { broadcastDisplayHtml, handleDetailsButtonClick } from "@/lib/broadcastDisplay";
 import { magicWordsMatch, parseMagicWords } from "@/lib/magicWords";
 import { renderBroadcastHtml, richTextToPlain, RICH_TEXT_CLASSES } from "@/lib/richText";
 
@@ -309,6 +309,10 @@ function BroadcastCard({
           !expanded && isLong ? "max-h-20 overflow-hidden" : ""
         }`}
         dangerouslySetInnerHTML={{ __html: displayHtml }}
+        onClick={(e) => {
+          // "Expand all" also opens the card if it's cut off
+          if (handleDetailsButtonClick(e) === "open") setExpanded(true);
+        }}
       />
       {isLong && (
         <button

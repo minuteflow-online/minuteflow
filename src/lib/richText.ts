@@ -12,6 +12,9 @@ const ALLOWED_TAGS = new Set([
   "b", "strong", "i", "em", "u", "s", "strike", "mark", "span", "font",
   "p", "div", "br", "ul", "ol", "li", "h1", "h2", "h3", "h4", "blockquote", "a", "img",
   "hr", "table", "thead", "tbody", "tr", "th", "td",
+  // Collapsible sections (tap to open) work with no script; buttons only ever
+  // get the expand/collapse-all job below, never their own onclick.
+  "details", "summary", "button",
 ]);
 
 const VOID_TAGS = new Set(["br", "img", "hr"]);
@@ -26,7 +29,7 @@ export const IMAGE_SIZES = {
 export type ImageSize = keyof typeof IMAGE_SIZES;
 
 const RICH_TAG_RE =
-  /<(p|div|br|b|strong|i|em|u|s|strike|mark|span|font|a|img|ul|ol|li|h[1-4]|blockquote|hr|table|thead|tbody|tr|th|td)\b[^>]*>/i;
+  /<(p|div|br|b|strong|i|em|u|s|strike|mark|span|font|a|img|ul|ol|li|h[1-4]|blockquote|hr|table|thead|tbody|tr|th|td|details|summary)\b[^>]*>/i;
 
 /** Tailwind classes for a container that renders sanitized broadcast HTML. */
 export const RICH_TEXT_CLASSES =
@@ -160,6 +163,14 @@ function parseAttrs(raw: string): Record<string, string> {
   return attrs;
 }
 
+/** "open" / "close" when a button's onclick opens or closes every <details>. */
+function detailsButtonAction(onclick: string): "open" | "close" | null {
+  if (!/details/i.test(onclick)) return null;
+  if (/\.open\s*=\s*(true|!0|1)\b|setAttribute\(\s*['"]open['"]/i.test(onclick)) return "open";
+  if (/\.open\s*=\s*(false|!1|0)\b|removeAttribute\(\s*['"]open['"]/i.test(onclick)) return "close";
+  return null;
+}
+
 function rebuildTag(tag: string, rawAttrs: string, mode: SanitizeMode): string {
   const attrs = parseAttrs(rawAttrs);
   const out: string[] = [];
@@ -183,6 +194,14 @@ function rebuildTag(tag: string, rawAttrs: string, mode: SanitizeMode): string {
   } else if (tag === "font") {
     // Some browsers emit <font> for highlight; keep only its color.
     if (attrs.color && COLOR_VALUE_RE.test(attrs.color)) out.push(`color="${escapeHtml(attrs.color)}"`);
+  } else if (tag === "details") {
+    if ("open" in attrs) out.push("open");
+  } else if (tag === "button") {
+    // An uploaded page's "Expand all" / "Collapse all" buttons run a script that sets
+    // details.open; scripts never run here, so keep only what that script meant.
+    out.push('type="button"');
+    const action = detailsButtonAction(attrs.onclick ?? "");
+    if (action) out.push(`data-details="${action}"`);
   } else if (tag === "td" || tag === "th") {
     for (const span of ["colspan", "rowspan"]) {
       if (/^\d{1,2}$/.test(attrs[span] ?? "")) out.push(`${span}="${attrs[span]}"`);
@@ -210,7 +229,8 @@ export function sanitizeRichHtml(html: string, mode: SanitizeMode = "design"): s
     .replace(/<(script|style|iframe|object|embed|template|head|title)\b[\s\S]*?<\/\1\s*>/gi, "");
 
   let result = "";
-  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  // Attribute values are skipped whole, so a ">" inside one (e.g. onclick="d=>d.open=true") doesn't end the tag.
+  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = tagRe.exec(cleaned))) {
