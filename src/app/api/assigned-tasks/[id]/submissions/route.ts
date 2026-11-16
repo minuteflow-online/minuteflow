@@ -37,7 +37,7 @@ type CallerProfile = {
 const AUTO_COMPLETE_CATEGORIES = ["Communication", "Planning", "Collaboration"];
 
 const SUBMISSION_SELECT =
-  "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, profiles!task_submissions_user_id_profiles_fkey(id, full_name, username)";
+  "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, no_fault, profiles!task_submissions_user_id_profiles_fkey(id, full_name, username)";
 
 function isAdminEquivalent(profile: CallerProfile) {
   return profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management");
@@ -266,6 +266,9 @@ export async function POST(request: Request, { params }: RouteContext) {
   }> = [];
   /** A revision may carry a new deadline for the rework. */
   let dueAt: string | null = null;
+  /** A revision that isn't the VA's fault — no accuracy points taken, not
+   *  counted toward revision_count (Toni's call, 2026-11-15). */
+  let noFault = false;
   /**
    * The VA's own call on a "submission": still working ("in_progress", stays
    * on the dashboard) or done ("completed", same as every submission before
@@ -306,6 +309,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   } else {
     const body = await request.json().catch(() => ({}));
     dueAt = typeof body.due_at === "string" && body.due_at ? body.due_at : null;
+    noFault = body.no_fault === true;
     message = String(body.message ?? "").trim();
     link = String(body.link ?? "").trim();
     messageType = (body.message_type ?? "submission") as SubmissionMessageType;
@@ -404,6 +408,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       user_id: user.id,
       message_type: messageType,
       due_at: dueAt,
+      ...(messageType === "revision" && noFault ? { no_fault: true } : {}),
       ...(messageType === "submission"
         ? { progress_status: progressStatus, review_requested: progressStatus === "in_progress" && reviewRequested }
         : {}),
@@ -737,8 +742,8 @@ export async function POST(request: Request, { params }: RouteContext) {
       await notifyOne(admin, {
         targetUserId: target,
         senderId: user.id,
-        content: `${reviewer} requested a revision on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
-        telegram: `🔁 <b>${esc(reviewer)}</b> requested a revision on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
+        content: `${reviewer} requested a revision on “${task.task_name ?? "a task"}”${noFault ? " (no fault — won't count against you)" : ""}${snippet ? `: ${snippet}` : ""}`,
+        telegram: `🔁 <b>${esc(reviewer)}</b> requested a revision on <b>${esc(task.task_name ?? "a task")}</b>${noFault ? " (no fault — won't count against you)" : ""}${snippet ? `\n\n${esc(snippet)}` : ""}`,
         topic: "submissions",
         assignedTaskId: Number(id),
         submissionId: submission.id as number,

@@ -67,7 +67,8 @@ export default function ReviewModal({
     note?: string,
     dueAt?: string,
     attachments?: PendingAttachment[],
-    fileToProject?: boolean
+    fileToProject?: boolean,
+    noFault?: boolean
   ) => void;
   onClose: () => void;
   /** "File to Assets, Docs & Files" — decided on the submission card itself,
@@ -89,6 +90,8 @@ export default function ReviewModal({
   const [qualityMode, setQualityMode] = useState<null | "revision" | "rejection">(null);
   const [qualityNote, setQualityNote] = useState("");
   const [revisionDue, setRevisionDue] = useState("");
+  /** A revision that isn't the VA's fault: no accuracy points taken, not counted. */
+  const [noFault, setNoFault] = useState(false);
 
   const taskId = submission.task?.id ?? null;
 
@@ -196,7 +199,9 @@ export default function ReviewModal({
         qualityMode,
         note,
         qualityMode === "revision" && revisionDue ? new Date(revisionDue).toISOString() : undefined,
-        attachments.length > 0 ? attachments : undefined
+        attachments.length > 0 ? attachments : undefined,
+        undefined,
+        qualityMode === "revision" && noFault
       );
     } finally {
       setRevisionProgress("");
@@ -485,6 +490,17 @@ export default function ReviewModal({
                         className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
                       />
                     </div>
+                  )}
+                  {qualityMode === "revision" && (
+                    <label className="mt-1.5 flex cursor-pointer select-none items-center gap-1 text-[10px] text-walnut">
+                      <input
+                        type="checkbox"
+                        checked={noFault}
+                        onChange={(e) => setNoFault(e.target.checked)}
+                        className="accent-sage"
+                      />
+                      No fault — doesn&apos;t count against them
+                    </label>
                   )}
 
                   <div className="mt-1.5">

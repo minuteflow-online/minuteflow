@@ -21,6 +21,9 @@ export interface SetAssignedTaskStatusArgs {
   vaId: string;
   /** `time_logs` id to link when the change is driven by starting a task. */
   logId?: number | null;
+  /** With status "revision_needed": a no-fault revision — the VA keeps their
+   *  accuracy points and it isn't counted toward revision_count. */
+  noFault?: boolean;
 }
 
 /** Returns true when the server accepted the status change. Never throws. */
@@ -29,10 +32,12 @@ export async function setAssignedTaskStatus({
   status,
   vaId,
   logId,
+  noFault,
 }: SetAssignedTaskStatusArgs): Promise<boolean> {
   try {
     const body: Record<string, unknown> = { status, va_id: vaId };
     if (logId != null) body.log_id = logId;
+    if (noFault) body.no_fault = true;
 
     const res = await fetch(`/api/assigned-tasks/${assignedTaskId}`, {
       method: "PATCH",

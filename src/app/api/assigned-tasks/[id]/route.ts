@@ -557,6 +557,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     project_id,
     parent_task_id,
     scope,
+    no_fault,
   } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
@@ -593,6 +594,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     spawned_template_id?: string | null;
     project_id?: string | null;
     parent_task_id?: number | null;
+    /** With status "revision_needed": the revision isn't the VA's fault, so it
+     *  costs no accuracy points and doesn't add to revision_count. */
+    no_fault?: boolean;
   };
 
   // Use the service-role client here so VAs who are the task ASSIGNER (assigned_by)
@@ -614,6 +618,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 
   const isTaskOwner = taskContext?.assigned_by === user.id;
+  // Only a reviewer can waive a revision's penalty.
+  const noFaultRevision = no_fault === true && (isAdminOrManager || isTaskOwner);
 
   const hasCoreMetadataUpdate =
     account !== undefined ||
@@ -1031,7 +1037,17 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return Response.json({ ok: true });
     }
 
-    if (status === "revision_needed") {
+    if (status === "revision_needed" && noFaultRevision) {
+      // No-fault revision: the task goes back for rework, but the VA keeps
+      // their accuracy points and the R count doesn't move.
+      const { error: assigneeStatusError } = await adminSupabase
+        .from("assigned_task_assignees")
+        .update({ status, updated_at: now })
+        .eq("assigned_task_id", id);
+      if (assigneeStatusError) {
+        return Response.json({ error: assigneeStatusError.message }, { status: 500 });
+      }
+    } else if (status === "revision_needed") {
       // The revision is counted the moment it's issued, so the R exists from
       // then on — already showing when the VA moves the task back to on_queue
       // and reworks it.
@@ -1116,8 +1132,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .eq("va_id", targetVaId)
       .maybeSingle();
 
-    if (status === "revision_needed") {
+    if (status === "revision_needed" && !noFaultRevision) {
       // Decrement accuracy_score by 10 on the targeted row, never below zero.
+      // A no-fault revision skips this and the revision_count bump below.
       if (priorAssigneeRow) {
         updatePayload.accuracy_score = Math.max(0, (priorAssigneeRow.accuracy_score as number) - 10);
       }

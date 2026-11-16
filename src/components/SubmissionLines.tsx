@@ -97,6 +97,7 @@ function RevisionThreadEntry({ item }: { item: TaskSubmission }) {
             <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
           </svg>
         </span>
+        {item.no_fault && <span className="shrink-0 rounded-full border border-stone/20 bg-stone/10 px-2 py-[2px] text-[10px] font-semibold text-stone" title="Not the VA's fault — no accuracy points taken, not counted as a revision">No fault</span>}
         {!open && <span className="min-w-0 truncate text-[11px] text-espresso">{note}</span>}
         <span className="shrink-0 text-[10px] text-stone/80">
           — {byline(item)}
