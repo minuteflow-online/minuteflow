@@ -470,6 +470,13 @@ export default function TaskListPage() {
   const [filterStartDateMode, setFilterStartDateMode] = useState<"any" | "has" | "none">("any");
   const [filterCreatedStart, setFilterCreatedStart] = useState("");
   const [filterCreatedEnd, setFilterCreatedEnd] = useState("");
+  const [filterCreatedBy, setFilterCreatedBy] = useState<string[]>([]);
+  // Admin's "Assigned To" column multiselect on Time-based Task's Active tab
+  // (Toni's call, 2026-11-16) — replaces the standalone single-select "View
+  // as VA" control there. Own tasks are always fetched regardless; each id
+  // here merges that VA's own tasks in alongside them. Archived/Trash and
+  // every other view keep the old single-select control untouched.
+  const [assignedToFilterIds, setAssignedToFilterIds] = useState<string[]>([]);
   const [filterAssignedBy, setFilterAssignedBy] = useState<string[]>([]);
   const [filterProjects, setFilterProjects] = useState<string[]>([]);
   const [filterOverdue, setFilterOverdue] = useState(false);
@@ -564,16 +571,27 @@ export default function TaskListPage() {
       setLoading(true);
       setError(null);
       try {
-        const endpoint =
+        // "Assigned To" multiselect, Active tab only — own tasks always
+        // fetched, plus one ?viewAsVa= request per additionally selected VA,
+        // merged below (no multi-id version of that param exists).
+        const mergeVaIds = mode === "my_tasks" && taskView === "active" ? assignedToFilterIds : [];
+        const endpoints =
           mode === "submitted"
-            ? "/api/assigned-tasks?asReviewer=true"
-            : selectedVaId
-            ? `/api/assigned-tasks?viewAsVa=${selectedVaId}&view=${taskView}`
-            : `/api/assigned-tasks?selfOnly=true&view=${taskView}`;
-        const res = await fetch(endpoint, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        const raw = Array.isArray(json) ? json : json.tasks ?? [];
+            ? ["/api/assigned-tasks?asReviewer=true"]
+            : mergeVaIds.length > 0
+              ? [
+                  `/api/assigned-tasks?selfOnly=true&view=${taskView}`,
+                  ...mergeVaIds.map((id) => `/api/assigned-tasks?viewAsVa=${id}&view=${taskView}`),
+                ]
+              : [
+                  selectedVaId
+                    ? `/api/assigned-tasks?viewAsVa=${selectedVaId}&view=${taskView}`
+                    : `/api/assigned-tasks?selfOnly=true&view=${taskView}`,
+                ];
+        const responses = await Promise.all(endpoints.map((url) => fetch(url, { cache: "no-store" })));
+        if (responses.some((r) => !r.ok)) throw new Error("HTTP error");
+        const jsons = await Promise.all(responses.map((r) => r.json()));
+        const raw = jsons.flatMap((json) => (Array.isArray(json) ? json : json.tasks ?? []));
 
         let normalized: VATaskRow[];
         if (mode === "submitted") {
@@ -613,7 +631,7 @@ export default function TaskListPage() {
         setLoading(false);
       }
     },
-    [activeView, taskView, selectedVaId]
+    [activeView, taskView, selectedVaId, assignedToFilterIds]
   );
 
   const fetchHourlyPool = useCallback(async () => {
@@ -1160,6 +1178,38 @@ export default function TaskListPage() {
       ).sort((a, b) => a.localeCompare(b)),
     [tasks]
   );
+  const createdByFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          tasks
+            .map((task) => {
+              const profile = task.assigned_tasks.created_by_profile;
+              return profile?.full_name || profile?.username || "";
+            })
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+  // "Assigned To" multiselect (Time-based Task, Active tab) — sourced from
+  // the full roster, not `tasks`, since picking a VA is what TRIGGERS
+  // fetching their tasks in the first place; there's nothing in `tasks` yet
+  // to derive options from for anyone not already selected.
+  const assignedToFilterOptions = useMemo(
+    () =>
+      assignedByProfiles
+        .filter((p) => p.id !== currentUserId)
+        .map((p) => ({ value: p.id, label: p.full_name || p.username || p.id }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [assignedByProfiles, currentUserId]
+  );
+  const vaNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const p of assignedByProfiles) map[p.id] = p.full_name || p.username || "";
+    if (currentUserProfile) map[currentUserProfile.id] = currentUserProfile.full_name || currentUserProfile.username || "";
+    return map;
+  }, [assignedByProfiles, currentUserProfile]);
   const projectFilterOptions = useMemo(
     () =>
       Array.from(
@@ -1233,6 +1283,10 @@ export default function TaskListPage() {
         const vaName = task.profiles?.full_name || task.profiles?.username || "";
         if (!filterSubmittedBy.includes(vaName)) return false;
       }
+      if (filterCreatedBy.length > 0) {
+        const creatorName = detail.created_by_profile?.full_name || detail.created_by_profile?.username || "";
+        if (!filterCreatedBy.includes(creatorName)) return false;
+      }
       // Whole-row search — many of these tasks carry their real, descriptive
       // title in Client Detail rather than Task Name (task_name is often just
       // the project/category, e.g. "Promo Processing"), so a search that only
@@ -1279,7 +1333,7 @@ export default function TaskListPage() {
       }
       return true;
     });
-  }, [filterAccounts, filterDueEnd, filterDueStart, filterDueDateMode, filterStartStart, filterStartEnd, filterStartDateMode, filterCreatedStart, filterCreatedEnd, filterAssignedBy, filterProjects, filterOverdue, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
+  }, [filterAccounts, filterDueEnd, filterDueStart, filterDueDateMode, filterStartStart, filterStartEnd, filterStartDateMode, filterCreatedStart, filterCreatedEnd, filterCreatedBy, filterAssignedBy, filterProjects, filterOverdue, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
 
   // Pagination over the already-filtered list — everything's fetched into
   // `tasks` up front, so this is just slicing an array already in memory, not
@@ -1510,6 +1564,74 @@ export default function TaskListPage() {
         </div>
         <div className="flex items-center justify-between border-t border-sand pt-2">
           <button type="button" onClick={() => { setFrom(""); setTo(""); setMode?.("any"); }} className="cursor-pointer text-[11px] text-stone hover:underline">
+            Clear
+          </button>
+          <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Created column's filter — the date range it always had, plus who created
+  // it (Toni's call, 2026-11-16: the cell already shows the creator's name
+  // above the date, but there was no way to filter by it).
+  function CreatedColumnFilter({ from, to, setFrom, setTo, options, selected, setSelected, close }: {
+    from: string;
+    to: string;
+    setFrom: (v: string) => void;
+    setTo: (v: string) => void;
+    options: string[];
+    selected: string[];
+    setSelected: (v: string[]) => void;
+    close: () => void;
+  }) {
+    return (
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div className="border-t border-sand pt-2">
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Created by</label>
+          {options.length > 0 ? (
+            <div className="max-h-40 space-y-0.5 overflow-y-auto">
+              {options.map((name) => (
+                <label key={name} className="flex cursor-pointer items-center gap-2 py-1">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(name)}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelected([...selected, name]);
+                      else setSelected(selected.filter((v) => v !== name));
+                    }}
+                    className="accent-terracotta"
+                  />
+                  <span className="text-[13px] text-espresso">{name}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[12px] text-stone">No options found</p>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-sand pt-2">
+          <button type="button" onClick={() => { setFrom(""); setTo(""); setSelected([]); }} className="cursor-pointer text-[11px] text-stone hover:underline">
             Clear
           </button>
           <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
@@ -2385,9 +2507,9 @@ export default function TaskListPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
                 <div className="flex items-center gap-2">
-                  {isAdmin && assignedByProfilesLoaded && activeView === "my_tasks" && viewAsVaControl}
+                  {isAdmin && assignedByProfilesLoaded && activeView === "my_tasks" && taskView !== "active" && viewAsVaControl}
                   <ToolbarFilterDropdown label="Project" options={projectFilterOptions} selected={filterProjects} onChange={setFilterProjects} />
-                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterDueStart || filterDueEnd || filterDueDateMode !== "any" || filterStartStart || filterStartEnd || filterStartDateMode !== "any" || filterCreatedStart || filterCreatedEnd || filterOverdue || taskNameSearch) && (
+                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterAssignedBy.length > 0 || filterCreatedBy.length > 0 || assignedToFilterIds.length > 0 || filterProjects.length > 0 || filterDueStart || filterDueEnd || filterDueDateMode !== "any" || filterStartStart || filterStartEnd || filterStartDateMode !== "any" || filterCreatedStart || filterCreatedEnd || filterOverdue || taskNameSearch) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -2397,6 +2519,8 @@ export default function TaskListPage() {
                         setFilterObjectives([]);
                         setFilterSubmittedBy([]);
                         setFilterAssignedBy([]);
+                        setFilterCreatedBy([]);
+                        setAssignedToFilterIds([]);
                         setFilterProjects([]);
                         setFilterDueStart("");
                         setFilterDueEnd("");
@@ -2602,6 +2726,13 @@ export default function TaskListPage() {
                             label="Assigned To"
                             width={columnWidths.assigned_to}
                             onResize={(w) => setColumnWidth("assigned_to", w)}
+                            {...(isAdmin && activeView === "my_tasks" && taskView === "active"
+                              ? {
+                                  filterOptions: assignedToFilterOptions,
+                                  selected: assignedToFilterIds,
+                                  onFilterChange: setAssignedToFilterIds,
+                                }
+                              : {})}
                           />
                         )}
                         {!hiddenColumns.has("assigned_by") && (
@@ -2675,9 +2806,18 @@ export default function TaskListPage() {
                             label="Created"
                             width={columnWidths.created}
                             onResize={(w) => setColumnWidth("created", w)}
-                            isFiltered={Boolean(filterCreatedStart || filterCreatedEnd)}
+                            isFiltered={Boolean(filterCreatedStart || filterCreatedEnd || filterCreatedBy.length > 0)}
                             customFilter={(close) => (
-                              <DateRangeFilter from={filterCreatedStart} to={filterCreatedEnd} setFrom={setFilterCreatedStart} setTo={setFilterCreatedEnd} close={close} />
+                              <CreatedColumnFilter
+                                from={filterCreatedStart}
+                                to={filterCreatedEnd}
+                                setFrom={setFilterCreatedStart}
+                                setTo={setFilterCreatedEnd}
+                                options={createdByFilterOptions}
+                                selected={filterCreatedBy}
+                                setSelected={setFilterCreatedBy}
+                                close={close}
+                              />
                             )}
                           />
                         )}
@@ -2772,7 +2912,7 @@ export default function TaskListPage() {
 
                             {!hiddenColumns.has("assigned_to") && (
                               <td className="px-3 py-3 text-[13px] text-walnut truncate">
-                                {task.profiles?.full_name ?? task.profiles?.username ?? <span className="text-stone/30">—</span>}
+                                {vaNameById[task.va_id] || task.profiles?.full_name || task.profiles?.username || <span className="text-stone/30">—</span>}
                               </td>
                             )}
 
