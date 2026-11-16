@@ -126,6 +126,16 @@ function buildEmailHtml(broadcast: {
   `;
 }
 
+/** In the audience, and (when skipRows is given) not already in that earlier audience. */
+function isNewAudience(
+  rows: RecipientRow[],
+  p: Profile,
+  authorId: string | null | undefined,
+  skipRows?: RecipientRow[]
+): boolean {
+  return isAudience(rows, p, authorId) && !(skipRows && isAudience(skipRows, p, authorId));
+}
+
 /**
  * Given a broadcast's recipients config and all active profiles + auth users,
  * return the list of email addresses that should receive the email.
@@ -134,11 +144,12 @@ function resolveTargetEmails(
   recipients: RecipientRow[],
   profiles: Profile[],
   authUserMap: Map<string, string>,
-  authorId: string | null | undefined
+  authorId: string | null | undefined,
+  skipRows?: RecipientRow[]
 ): string[] {
   const emails: string[] = [];
   profiles
-    .filter((p) => isAudience(recipients, p, authorId))
+    .filter((p) => isNewAudience(recipients, p, authorId, skipRows))
     .forEach((p) => {
       const email = authUserMap.get(p.id);
       if (email) emails.push(email);
@@ -160,7 +171,8 @@ async function sendBroadcastEmail(
     created_by?: string | null;
     parent_id?: string | null;
   },
-  recipientRows: RecipientRow[]
+  recipientRows: RecipientRow[],
+  skipRows?: RecipientRow[]
 ): Promise<void> {
   if (!RESEND_API_KEY) return;
 
@@ -183,7 +195,7 @@ async function sendBroadcastEmail(
     if (u.email) authUserMap.set(u.id, u.email);
   });
 
-  const emails = resolveTargetEmails(recipientRows, profiles, authUserMap, broadcast.created_by);
+  const emails = resolveTargetEmails(recipientRows, profiles, authUserMap, broadcast.created_by, skipRows);
   if (emails.length === 0) return;
 
   const label = categoryLabel(broadcast.category);
@@ -233,7 +245,8 @@ async function sendBroadcastTelegram(
     created_by?: string | null;
     parent_id?: string | null;
   },
-  recipientRows: RecipientRow[]
+  recipientRows: RecipientRow[],
+  skipRows?: RecipientRow[]
 ): Promise<void> {
   const adminClient = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -258,7 +271,7 @@ async function sendBroadcastTelegram(
     link,
   ].join("\n");
 
-  for (const p of (profiles || []).filter((p) => isAudience(recipientRows, p, broadcast.created_by))) {
+  for (const p of (profiles || []).filter((p) => isNewAudience(recipientRows, p, broadcast.created_by, skipRows))) {
     await notifyVaPrivately({
       chatId: p.telegram_chat_id,
       vaName: p.full_name || p.username || "there",
@@ -268,14 +281,18 @@ async function sendBroadcastTelegram(
   }
 }
 
-/** Email plus Telegram for a newly saved published broadcast. Either failing leaves the other alone. */
+/**
+ * Email plus Telegram for a newly saved published broadcast. Either failing leaves the other alone.
+ * With skipRows, people who were already in that earlier audience are left out.
+ */
 async function sendBroadcastNotices(
   broadcast: Parameters<typeof sendBroadcastEmail>[0],
-  recipientRows: RecipientRow[]
+  recipientRows: RecipientRow[],
+  skipRows?: RecipientRow[]
 ): Promise<void> {
   await Promise.all([
-    sendBroadcastEmail(broadcast, recipientRows).catch(() => {}),
-    sendBroadcastTelegram(broadcast, recipientRows).catch(() => {}),
+    sendBroadcastEmail(broadcast, recipientRows, skipRows).catch(() => {}),
+    sendBroadcastTelegram(broadcast, recipientRows, skipRows).catch(() => {}),
   ]);
 }
 
@@ -679,6 +696,16 @@ export async function PATCH(request: Request) {
   if (body.sort_order !== undefined) fields.sort_order = typeof body.sort_order === "number" ? body.sort_order : 0;
   if (body.tags !== undefined) fields.tags = normalizeTags(body.tags);
 
+  // Who it went to before this edit, so "send only to people just added" can leave them out
+  const wasPublished = current.status === "published";
+  const { data: previousRows } = wasPublished
+    ? await supabase.from("broadcast_recipients").select("recipient_type, recipient_value").eq("broadcast_id", id)
+    : { data: null };
+  const previousRecipients: RecipientRow[] = (previousRows || []).map((r) => ({
+    type: r.recipient_type,
+    value: r.recipient_value,
+  }));
+
   const { data: broadcast, error } = await supabase
     .from("broadcasts")
     .update(fields)
@@ -699,9 +726,12 @@ export async function PATCH(request: Request) {
     await supabase.from("broadcast_recipients").insert(recipientInserts);
   }
 
-  // Every save of a published broadcast emails and Telegrams its recipients, so editing and
-  // re-saving an already-published one sends it again.
-  if (broadcast.status === "published") {
+  // Publishing for the first time always sends. Editing one that was already published
+  // sends again only as the admin chose: "all" (the default, as before), "new" (only people
+  // the edit added), or "none".
+  const resend: "all" | "new" | "none" =
+    !wasPublished || (body.resend !== "new" && body.resend !== "none") ? "all" : body.resend;
+  if (broadcast.status === "published" && resend !== "none") {
     // Fetch recipients for this broadcast (may have just been updated above)
     const { data: recipientRows } = await supabase
       .from("broadcast_recipients")
@@ -713,7 +743,8 @@ export async function PATCH(request: Request) {
       value: r.recipient_value,
     }));
 
-    after(() => sendBroadcastNotices(broadcast, recipients));
+    const skip = resend === "new" ? previousRecipients : undefined;
+    after(() => sendBroadcastNotices(broadcast, recipients, skip));
   }
 
   return Response.json({ broadcast });
