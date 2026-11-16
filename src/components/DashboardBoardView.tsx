@@ -118,12 +118,28 @@ function toSubtaskRow(row: RawAssigneeRow): { sub: SubtaskRow; bucket: Bucket } 
   return { sub, bucket };
 }
 
-const TOGGLE_OPTIONS: { value: "objective" | "operation" | "both" | "adhoc"; label: string }[] = [
+const TOGGLE_OPTIONS: { value: "objective" | "operation" | "both" | "adhoc" | "all"; label: string }[] = [
   { value: "objective", label: "Objective" },
   { value: "operation", label: "Operations" },
   { value: "both", label: "Both" },
   { value: "adhoc", label: "Adhoc" },
+  { value: "all", label: "All" },
 ];
+
+// Admin's "View by VA" (Toni's call, 2026-11-16) — the board otherwise only
+// ever shows the signed-in user's own tasks (even for admins, via
+// selfOnly=true below). Picking one or more VAs here switches it to show
+// theirs instead — one ?viewAsVa=<id> request per selected VA (same
+// admin-gated route desktop's own View as VA already uses, and the same
+// RawAssigneeRow/toSubtaskRow shape as the self-fetch below), merged
+// client-side since there's no multi-id version of that param.
+//
+// Deliberately NOT the unscoped full-org fetch (no vaId/viewAsVa at all):
+// tried that first, but it's ordered by created_at with no explicit limit,
+// which PostgREST caps by default — ordered newest-first, so anyone whose
+// relevant tasks are older than that cutoff silently returns zero, found
+// live when Shem Delgado's selection matched nothing despite having active
+// work. Per-VA requests are naturally scoped and don't hit that cap.
 
 interface DashboardBoardViewProps {
   userId: string;
@@ -138,7 +154,7 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
     operation: [],
     adhoc: [],
   });
-  const [toggle, setToggle] = useState<"objective" | "operation" | "both" | "adhoc">("both");
+  const [toggle, setToggle] = useState<"objective" | "operation" | "both" | "adhoc" | "all">("both");
   const [editingSubId, setEditingSubId] = useState<number | null>(null);
   const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
@@ -148,13 +164,45 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
   // underneath, same as the Subtasks reference list's own ▶/▼ toggle this
   // mirrors, so expanding it again never shows stale data.
   const [collapsed, setCollapsed] = useState(false);
+  // Admin's "View by VA" multiselect — expanded by default, same as the
+  // board itself, but its own collapse so it can be tucked away once set.
+  const [vaFilterCollapsed, setVaFilterCollapsed] = useState(false);
+  const [selectedVaIds, setSelectedVaIds] = useState<Set<string>>(new Set());
   const editTaskEditorRef = useRef<TaskEditorHandle | null>(null);
 
   const allSubtasks = [...buckets.objective, ...buckets.operation, ...buckets.adhoc];
+  const viewingOtherVas = isAdmin && selectedVaIds.size > 0;
+
+  const toggleVaId = (vaId: string) => {
+    setSelectedVaIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(vaId)) next.delete(vaId);
+      else next.add(vaId);
+      return next;
+    });
+  };
 
   const fetchBoard = useCallback(async () => {
     if (!userId) return;
     try {
+      if (viewingOtherVas) {
+        const next = { objective: [] as SubtaskRow[], operation: [] as SubtaskRow[], adhoc: [] as SubtaskRow[] };
+        await Promise.all(
+          Array.from(selectedVaIds).map(async (vaId) => {
+            const res = await fetch(`/api/assigned-tasks?viewAsVa=${vaId}`);
+            if (!res.ok) return;
+            const json = await res.json();
+            const rows: RawAssigneeRow[] = json.tasks || [];
+            for (const row of rows) {
+              const mapped = toSubtaskRow(row);
+              if (mapped) next[mapped.bucket].push(mapped.sub);
+            }
+          })
+        );
+        setBuckets(next);
+        return;
+      }
+
       const res = await fetch(isAdmin ? "/api/assigned-tasks?selfOnly=true" : "/api/assigned-tasks");
       if (!res.ok) return;
       const json = await res.json();
@@ -170,7 +218,7 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
     } finally {
       setLoading(false);
     }
-  }, [userId, isAdmin]);
+  }, [userId, isAdmin, viewingOtherVas, selectedVaIds]);
 
   useEffect(() => {
     void fetchBoard();
@@ -183,7 +231,9 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
         ? buckets.operation
         : toggle === "adhoc"
           ? buckets.adhoc
-          : [...buckets.objective, ...buckets.operation];
+          : toggle === "all"
+            ? [...buckets.objective, ...buckets.operation, ...buckets.adhoc]
+            : [...buckets.objective, ...buckets.operation];
 
   const openEdit = (sub: SubtaskRow) => {
     setEditingSubId(sub.id);
@@ -236,7 +286,10 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
   };
 
   if (loading) return null;
-  if (allSubtasks.length === 0) return null;
+  // Admins keep the board (and its View by VA filter) even with zero
+  // personal tasks of their own — otherwise there'd be no way to reach the
+  // filter at all once their own board is empty.
+  if (!isAdmin && allSubtasks.length === 0) return null;
 
   const editingSub = editingSubId != null ? allSubtasks.find((s) => s.id === editingSubId) : null;
 
@@ -325,6 +378,57 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers }: Das
           </div>
         )}
       </div>
+
+      {!collapsed && isAdmin && teamMembers.length > 0 && (
+        <div className="rounded-lg border border-sand bg-parchment/40">
+          <div className="flex items-center justify-between px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setVaFilterCollapsed((v) => !v)}
+              className="flex items-center gap-1.5 cursor-pointer"
+            >
+              <span className="text-bark text-[9px] w-2 shrink-0">{vaFilterCollapsed ? "▶" : "▼"}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">View by VA</span>
+              {selectedVaIds.size > 0 && (
+                <span className="rounded-full bg-sage-soft px-1.5 py-[1px] text-[9px] font-semibold text-sage">
+                  {selectedVaIds.size}
+                </span>
+              )}
+            </button>
+            {selectedVaIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedVaIds(new Set())}
+                className="text-[10px] font-semibold text-terracotta hover:underline cursor-pointer"
+              >
+                Clear — back to my own
+              </button>
+            )}
+          </div>
+          {!vaFilterCollapsed && (
+            <div className="flex flex-wrap gap-1.5 px-3 pb-2.5">
+              {teamMembers
+                .filter((p) => p.id !== userId)
+                .slice()
+                .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""))
+                .map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => toggleVaId(p.id)}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-medium border transition-all cursor-pointer ${
+                      selectedVaIds.has(p.id)
+                        ? "bg-espresso text-cream border-espresso"
+                        : "border-sand bg-white text-bark hover:border-terracotta hover:text-terracotta"
+                    }`}
+                  >
+                    {p.full_name}
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {!collapsed && (
         <div className={mainExpanded ? "fixed inset-0 z-50 flex gap-4 bg-cream p-6 overflow-auto" : "flex gap-4"}>
