@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import RichTextEditor from "@/components/RichTextEditor";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
-import { broadcastDisplayHtml } from "@/lib/broadcastDisplay";
+import { broadcastDisplayHtml, handleDetailsButtonClick } from "@/lib/broadcastDisplay";
 import {
   hasMagicWordToken,
   magicWordToken,
@@ -1370,6 +1370,9 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                   !expanded[b.id] && isLongBody(b.body) ? "max-h-16 overflow-hidden" : ""
                 }`}
                 dangerouslySetInnerHTML={{ __html: broadcastDisplayHtml(b) }}
+                onClick={(e) => {
+                  if (handleDetailsButtonClick(e) === "open") setExpanded((x) => ({ ...x, [b.id]: true }));
+                }}
               />
               {isLongBody(b.body) && (
                 <button

@@ -71,3 +71,23 @@ export function broadcastDisplayHtml(broadcast: BroadcastBody, options: MagicWor
   const plain = fillMagicWordTokens(broadcast.body, []).text;
   return sanitizeRichHtml(plainToHtml(placePlain(plain, rest[0])));
 }
+
+/**
+ * Click handler for a container showing a broadcast body: makes an uploaded page's
+ * "Expand all" / "Collapse all" buttons (kept as data-details="open|close" by the
+ * sanitizer) open or close every collapsible section in that body. Returns the
+ * action taken, or null when the click wasn't on one of those buttons.
+ */
+export function handleDetailsButtonClick(event: {
+  target: EventTarget | null;
+  currentTarget: HTMLElement;
+}): "open" | "close" | null {
+  const target = event.target as Element | null;
+  const button = target?.closest?.("[data-details]");
+  if (!button || !event.currentTarget.contains(button)) return null;
+  const action = button.getAttribute("data-details") === "open" ? "open" : "close";
+  event.currentTarget.querySelectorAll("details").forEach((d) => {
+    d.open = action === "open";
+  });
+  return action;
+}
