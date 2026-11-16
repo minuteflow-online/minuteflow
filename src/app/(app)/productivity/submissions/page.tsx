@@ -55,6 +55,8 @@ type FeedItem = {
   edited_at: string | null;
   /** Set on a revision entry: the new deadline for the rework. */
   due_at: string | null;
+  /** Revision only: not the VA's fault, so it cost them nothing. */
+  no_fault?: boolean | null;
   /** Only meaningful when message_type is "submission" — the VA's own
    *  In Progress / Completed choice (Phase 2, Toni's call, 2026-11-02). */
   progress_status: "in_progress" | "completed" | null;
@@ -790,7 +792,8 @@ function SubmissionsPageInner() {
       note?: string,
       dueAt?: string,
       attachments?: PendingAttachment[],
-      fileToProject?: boolean
+      fileToProject?: boolean,
+      noFault?: boolean
     ) => {
       if (!item.task) return;
       setBusyId(item.id);
@@ -802,6 +805,7 @@ function SubmissionsPageInner() {
             message_type: outcome,
             message: note?.trim() || REVIEW_DEFAULT_NOTE[outcome],
             due_at: dueAt || null,
+            ...(outcome === "revision" && noFault ? { no_fault: true } : {}),
             attachments,
             // Approval only: file the reviewed submission's links/attachments
             // into its objective/operation's Docs & Files.
@@ -828,6 +832,7 @@ function SubmissionsPageInner() {
           assignedTaskId: item.task.id,
           status: REVIEW_STATUS[outcome],
           vaId: item.user_id,
+          noFault: outcome === "revision" && noFault,
         });
         if (!moved) {
           alert(
@@ -2441,6 +2446,7 @@ function SubmissionEntry({
               <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
             </svg>
           </span>
+          {item.no_fault && <span className="shrink-0 rounded-full border border-stone/20 bg-stone/10 px-2 py-[2px] text-[10px] font-semibold text-stone" title="Not the VA's fault — no accuracy points taken, not counted as a revision">No fault</span>}
           {!revisionOpen && <span className="min-w-0 truncate text-[11px] text-espresso">{note}</span>}
           <span className="shrink-0 text-[10px] text-stone/80">
             — {who} · {time}
@@ -3087,7 +3093,8 @@ function ThreadCard({
     note?: string,
     dueAt?: string,
     attachments?: PendingAttachment[],
-    fileToProject?: boolean
+    fileToProject?: boolean,
+    noFault?: boolean
   ) => void;
   onAddNote: (
     item: FeedItem,
@@ -3844,8 +3851,8 @@ function ThreadCard({
         <ReviewModal
           submission={latest}
           busy={busy}
-          onReview={(outcome, note, dueAt, attachments) => {
-            onReview(latest, outcome, note, dueAt, attachments);
+          onReview={(outcome, note, dueAt, attachments, _fileToProject, noFault) => {
+            onReview(latest, outcome, note, dueAt, attachments, undefined, noFault);
             setReviewOpen(false);
           }}
           onClose={() => setReviewOpen(false)}
@@ -3894,7 +3901,8 @@ function TimelineView({
     note?: string,
     dueAt?: string,
     attachments?: PendingAttachment[],
-    fileToProject?: boolean
+    fileToProject?: boolean,
+    noFault?: boolean
   ) => void;
   onAddNote: (
     item: FeedItem,

@@ -64,6 +64,8 @@ export interface TaskSubmission {
   created_at: string;
   edited_at: string | null;
   edited_by: string | null;
+  /** Revision only: not the VA's fault, so it cost them nothing. */
+  no_fault?: boolean | null;
   attachments: TaskSubmissionAttachment[];
   profiles?: { id: string; full_name: string | null; username: string | null } | null;
 }
