@@ -113,3 +113,44 @@ export async function syncFixedPayTaskPaid(
     // best-effort — the caller's own paid_at write already succeeded
   }
 }
+
+/**
+ * Keeps an Output Based task's wording on fixed_pay_tasks in step with the
+ * linked assigned_tasks row.
+ *
+ * A VA renaming the task from their own task list (or while submitting it)
+ * writes assigned_tasks only, but the paystub and the Output Based Tasks table
+ * read fixed_pay_tasks — so Rhealin's renamed reels kept showing on her stub as
+ * "Reel (" with no title, and older renames made reels look like repeats of
+ * ones already paid.
+ *
+ * Only the fields passed are written. Best-effort and silent, like the status
+ * sync above: the caller's own write has already succeeded.
+ */
+export async function syncFixedPayTaskDetails(
+  admin: Pick<SupabaseClient, "from">,
+  assignedTaskId: number | string,
+  fields: { task_name?: string; task_detail?: string | null; task_notes?: string | null; link?: string | null }
+): Promise<void> {
+  const updates: Record<string, unknown> = {};
+  if (fields.task_name !== undefined) updates.task_name = fields.task_name.trim();
+  if (fields.task_detail !== undefined) updates.task_detail = fields.task_detail;
+  if (fields.task_notes !== undefined) updates.task_notes = fields.task_notes;
+  if (fields.link !== undefined) updates.link = fields.link;
+  if (Object.keys(updates).length === 0) return;
+  try {
+    const { data: row } = await admin
+      .from("assigned_tasks")
+      .select("fixed_pay_task_id")
+      .eq("id", assignedTaskId)
+      .maybeSingle();
+    const fixedPayTaskId = (row as { fixed_pay_task_id: number | null } | null)?.fixed_pay_task_id;
+    if (!fixedPayTaskId) return;
+    await admin
+      .from("fixed_pay_tasks")
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq("id", fixedPayTaskId);
+  } catch {
+    // Best-effort; see above.
+  }
+}
