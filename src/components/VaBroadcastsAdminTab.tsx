@@ -289,6 +289,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
   // Publish
   const [publishMode, setPublishMode] = useState<PublishMode>("immediate");
   const [scheduledAt, setScheduledAt] = useState("");
+  // Editing a memo that's already published: whether to send it out again
+  const [resendMode, setResendMode] = useState<"none" | "new" | "all">("none");
 
   // ── Data fetching ────────────────────────────────────────────────────────────
 
@@ -346,6 +348,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     setSortOrder(0);
     setPublishMode("immediate");
     setScheduledAt("");
+    setResendMode("none");
     setEditing(null);
   };
 
@@ -381,6 +384,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
       setScheduledAt("");
     }
 
+    setResendMode("none");
     setShowForm(true);
   };
 
@@ -446,6 +450,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
         image_url: imageUrl.trim() || null,
         sort_order: sortOrder,
         tags,
+        // Only matters when editing one that's already published
+        ...(editing?.status === "published" ? { resend: resendMode } : {}),
       };
 
       const res = editing
@@ -468,7 +474,9 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
             : resolvedMode === "scheduled"
             ? "Broadcast scheduled!"
             : editing
-            ? "Broadcast updated!"
+            ? editing.status === "published" && resendMode === "none"
+              ? "Broadcast updated — not sent again"
+              : "Broadcast updated and sent!"
             : "Broadcast published!";
         setSaveMsg({ type: "ok", text: successText });
         setTimeout(() => setSaveMsg(null), 4000);
@@ -481,7 +489,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [title, body, category, tags, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder]
+    [title, body, category, tags, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder, resendMode]
   );
 
   const handleDelete = useCallback(
@@ -1178,6 +1186,50 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
               </div>
             </div>
           </div>
+
+          {/* Send again? — only when editing a memo that's already published */}
+          {editing?.status === "published" && publishMode === "immediate" && (
+            <div className="mt-5">
+              <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">
+                Send Again?
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="resendMode"
+                    checked={resendMode === "none"}
+                    onChange={() => setResendMode("none")}
+                    className="accent-terracotta"
+                  />
+                  <span className="text-[13px] text-walnut">Don&apos;t send again — just save the changes</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="resendMode"
+                    checked={resendMode === "new"}
+                    onChange={() => setResendMode("new")}
+                    className="accent-terracotta"
+                  />
+                  <span className="text-[13px] text-walnut">Send only to people I just added</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="resendMode"
+                    checked={resendMode === "all"}
+                    onChange={() => setResendMode("all")}
+                    className="accent-terracotta"
+                  />
+                  <span className="text-[13px] text-walnut">Send to everyone again</span>
+                </label>
+              </div>
+              <p className="mt-1 text-[11px] text-stone">
+                Acknowledgements already given stay as they are.
+              </p>
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="flex items-center gap-3 mt-5 flex-wrap">
