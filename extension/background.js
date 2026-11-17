@@ -412,6 +412,11 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
   // instead of vanishing. A silent gap is indistinguishable from the extension
   // having died, which is the thing that made these timelines untrustworthy.
   if (screenshotType === 'progress') {
+    // Desktop is open and will cover this slot itself — stand down rather
+    // than recording anything, same as a slot desktop finds already covered
+    // leaves nothing behind either.
+    if (await desktopActive(session.user.id)) return;
+
     const idleState = await idleReason();
     if (idleState) {
       await queueMarker(session.user.id, resolvedLogId, idleState);
@@ -491,6 +496,31 @@ async function slotAlreadyCovered(logId) {
     return Array.isArray(rows) && rows.length > 0;
   } catch (err) {
     console.warn('[MinuteFlow] Slot check failed, capturing anyway:', err.message);
+    return false;
+  }
+}
+
+/**
+ * True when desktop is open for this user right now (Toni's call,
+ * 2026-11-16 — found reviewing Admin screenshots that this extension was
+ * still covering a VA who was on desktop instead). Desktop sends a
+ * heartbeat every 30s while open; two missed beats means it's genuinely
+ * closed, not a slow tick. Only gates the recurring 'progress' capture —
+ * desktop has no equivalent of its own for 'start'/'end'/'manual', so
+ * standing down on those would lose coverage rather than dedupe it.
+ * Any failure answers false, same fallback every other check here uses —
+ * a lookup problem costs a duplicate screenshot, never a missing one.
+ */
+async function desktopActive(userId) {
+  try {
+    const rows = await DB.query('desktop_heartbeats', {
+      filters: `user_id=eq.${userId}&select=last_seen&limit=1`,
+    });
+    const lastSeen = rows?.[0]?.last_seen;
+    if (!lastSeen) return false;
+    return Date.now() - new Date(lastSeen).getTime() <= 60000;
+  } catch (err) {
+    console.warn('[MinuteFlow] Desktop presence check failed, capturing anyway:', err.message);
     return false;
   }
 }

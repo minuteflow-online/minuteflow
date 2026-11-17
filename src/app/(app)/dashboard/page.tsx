@@ -314,6 +314,11 @@ export default function DashboardPage() {
   // 5-minute schedule, so the in-page capture path stands down rather than adding
   // a second stream of screenshots on top of it.
   const extensionLiveRef = useRef(false);
+  // True while desktop is open for this VA (Toni's call, 2026-11-16) — same
+  // idea as extensionLiveRef, but for the "reshare your screen"/"extension
+  // offline" nagging below: none of it is relevant when desktop is the one
+  // actually handling capture.
+  const desktopLiveRef = useRef(false);
   const lastCaptureTimeRef = useRef(0);
   const consecutiveCaptureFailuresRef = useRef(0);
   const [showScreenShareAlert, setShowScreenShareAlert] = useState(false);
@@ -362,7 +367,7 @@ export default function DashboardPage() {
     const wasActive = prevScreenShareActiveRef.current;
     prevScreenShareActiveRef.current = screenShareActive;
 
-    if (wasActive && !screenShareActive && sessionState !== "idle") {
+    if (wasActive && !screenShareActive && sessionState !== "idle" && !desktopLiveRef.current) {
       // Stream just dropped — show the banner and fire OS notification
       setBannerReason('screenshare');
       setShowCaptureDropBanner(true);
@@ -407,7 +412,8 @@ export default function DashboardPage() {
       if (
         sessionStateRef.current === "idle" ||
         screenShareActiveRef.current ||
-        showCaptureDropBannerRef.current
+        showCaptureDropBannerRef.current ||
+        desktopLiveRef.current
       ) return;
 
       const now = Date.now();
@@ -464,13 +470,40 @@ export default function DashboardPage() {
     };
   }, [userId]);
 
+  // ─── Desktop heartbeat monitor ──────────────────────────────
+  // Desktop sends a heartbeat every 30s while open (see desktopHeartbeat.ts).
+  // Two missed beats means it's genuinely closed, not a slow tick — same
+  // staleness window the extension's own check above uses.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      const { data } = await supabase
+        .from("desktop_heartbeats")
+        .select("last_seen")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (cancelled) return;
+      const staleMs = data?.last_seen ? Date.now() - new Date(data.last_seen).getTime() : Infinity;
+      desktopLiveRef.current = staleMs <= 60 * 1000;
+    };
+
+    refresh();
+    const interval = setInterval(refresh, 30 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [userId]);
+
   // knows to reshare screen as a fallback.
   useEffect(() => {
     if (sceCheckRef.current) clearInterval(sceCheckRef.current);
     if (sessionState === "idle" || !userId) return;
 
     const checkSce = async () => {
-      if (sessionStateRef.current === "idle" || screenShareActiveRef.current || showCaptureDropBannerRef.current) return;
+      if (sessionStateRef.current === "idle" || screenShareActiveRef.current || showCaptureDropBannerRef.current || desktopLiveRef.current) return;
       const { data } = await supabase
         .from("extension_heartbeats")
         .select("last_seen")
