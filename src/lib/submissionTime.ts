@@ -33,6 +33,8 @@ export type TaskTime = {
   unsubmittedByDay: Record<string, number>;
   /** Everything logged on the task, submitted or not. */
   totalMs: number;
+  /** Start time (epoch ms) of the earliest log counted above. Null if none. */
+  firstStartMs: number | null;
 };
 
 /** The org-time offset from UTC at `ms`, in ms (positive east of UTC). */
@@ -101,6 +103,7 @@ export function allocateTaskTime(
   let unsubmittedMs = 0;
   const unsubmittedByDay: Record<string, number> = {};
   let totalMs = 0;
+  let firstStartMs: number | null = null;
 
   for (const log of logs) {
     const ms = Math.max(0, Number(log.duration_ms ?? 0));
@@ -108,6 +111,7 @@ export function allocateTaskTime(
     const start = new Date(log.start_time).getTime();
     if (!Number.isFinite(start)) continue;
     totalMs += ms;
+    if (firstStartMs === null || start < firstStartMs) firstStartMs = start;
     const days = splitAcrossDays(start, ms, timezone);
 
     // The first submission made at or after the log started is the one that
@@ -126,7 +130,24 @@ export function allocateTaskTime(
 
   for (const r of Object.values(bySubmission)) r.sessions.sort((a, b) => a.startMs - b.startMs);
 
-  return { bySubmission, unsubmittedMs, unsubmittedByDay, totalMs };
+  return { bySubmission, unsubmittedMs, unsubmittedByDay, totalMs, firstStartMs };
+}
+
+/**
+ * How long the task has been open end to end: from the first time logged on
+ * it to the latest submission — the one that completed it, or simply the
+ * most recent round if it's still in progress. Calendar time elapsed, not
+ * worked time (totalMs) — gaps between sessions count. Null if nothing has
+ * been logged yet, or there's no submission to anchor the end to.
+ */
+export function taskElapsedMs(
+  firstStartMs: number | null,
+  latestSubmissionAt: string | null | undefined
+): number | null {
+  if (firstStartMs === null || !latestSubmissionAt) return null;
+  const endMs = new Date(latestSubmissionAt).getTime();
+  if (!Number.isFinite(endMs)) return null;
+  return Math.max(0, endMs - firstStartMs);
 }
 
 /**
