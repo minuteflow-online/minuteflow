@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { Avatar, ago, splitReplyQuote, asMember } from "@/components/DashboardMessagePanel";
 
 interface VaOption {
   id: string;
@@ -12,7 +13,7 @@ interface ConversationListItem {
   id: string;
   is_group: boolean;
   title: string;
-  members: { id: string; name: string }[];
+  members: { id: string; name: string; avatar_url?: string | null }[];
   last_message: { body: string; created_at: string; mine: boolean } | null;
   updated_at: string;
 }
@@ -23,16 +24,6 @@ interface Message {
   created_at: string;
   mine: boolean;
   sender_name: string;
-}
-
-function timeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const days = Math.floor(ms / 86_400_000);
-  if (days >= 1) return `${days}d ago`;
-  const hours = Math.floor(ms / 3_600_000);
-  if (hours >= 1) return `${hours}h ago`;
-  const mins = Math.floor(ms / 60_000);
-  return mins >= 1 ? `${mins}m ago` : "just now";
 }
 
 export default function ClientMessagesPanel() {
@@ -243,18 +234,21 @@ export default function ClientMessagesPanel() {
           ) : messages.length === 0 ? (
             <p className="text-xs text-stone">No messages yet — say hello.</p>
           ) : (
-            messages.map((m) => (
-              <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[75%] rounded-lg px-3 py-1.5 text-[12px] ${
-                    m.mine ? "bg-terracotta text-white" : "bg-white border border-sand text-espresso"
-                  }`}
-                >
-                  {!m.mine && <p className="text-[10px] font-semibold opacity-70">{m.sender_name}</p>}
-                  <p className="whitespace-pre-wrap">{m.body}</p>
+            messages.map((m) => {
+              const { text } = splitReplyQuote(m.body);
+              return (
+                <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`max-w-[75%] rounded-lg px-3 py-1.5 text-[12px] ${
+                      m.mine ? "bg-terracotta text-white" : "bg-white border border-sand text-espresso"
+                    }`}
+                  >
+                    {!m.mine && <p className="text-[10px] font-semibold opacity-70">{m.sender_name}</p>}
+                    <p className="whitespace-pre-wrap">{text}</p>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -280,6 +274,8 @@ export default function ClientMessagesPanel() {
   }
 
   // ── Conversation list + new-message picker ──────────────────
+  // Same card markup as DashboardMessagePanel's Personal tab, just without
+  // the unread/archive affordances a client has no use for.
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
       <div className="flex items-center justify-between">
@@ -291,18 +287,19 @@ export default function ClientMessagesPanel() {
         <button
           type="button"
           onClick={() => setShowNewMessage(true)}
-          className="w-full rounded-lg border border-dashed border-clay py-2 text-[11px] font-semibold text-walnut hover:border-terracotta hover:text-terracotta transition-colors"
+          className="w-full rounded-lg border border-dashed border-sand py-1.5 text-[11px] font-semibold text-walnut hover:bg-cream transition-colors"
         >
           + New message
         </button>
       ) : (
         <div className="rounded-lg border border-sand bg-parchment/30 p-3 space-y-2">
           <p className="text-[11px] font-semibold text-walnut">Message who? (pick one or more)</p>
-          <div className="space-y-1">
+          <div className="space-y-0.5 max-h-40 overflow-y-auto rounded-lg border border-sand p-1.5">
             {vas.map((va) => (
-              <label key={va.id} className="flex items-center gap-2 text-[12px] text-espresso cursor-pointer">
+              <label key={va.id} className="flex items-center gap-2 py-0.5 px-1 text-[12px] text-espresso cursor-pointer hover:bg-cream rounded">
                 <input
                   type="checkbox"
+                  className="accent-sage"
                   checked={newMessagePicked.has(va.id)}
                   onChange={() => toggleNewMessagePick(va.id)}
                 />
@@ -314,9 +311,9 @@ export default function ClientMessagesPanel() {
             <button
               onClick={() => void startConversation()}
               disabled={starting || newMessagePicked.size === 0}
-              className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 rounded-lg bg-amber-soft text-amber text-[12px] font-semibold border border-amber/30 hover:bg-amber/20 disabled:opacity-50"
             >
-              {starting ? "Starting..." : newMessagePicked.size > 1 ? "Start Group Chat" : "Start"}
+              {starting ? "Starting..." : newMessagePicked.size > 1 ? "Start group chat" : "Start chat"}
             </button>
             <button
               onClick={() => { setShowNewMessage(false); setNewMessagePicked(new Set()); }}
@@ -328,28 +325,34 @@ export default function ClientMessagesPanel() {
         </div>
       )}
 
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         {conversations.length === 0 ? (
-          <p className="text-xs text-stone py-4 text-center">No conversations yet — start one above.</p>
+          <p className="text-[12px] text-walnut px-1">No conversations yet.</p>
         ) : (
           conversations.map((c) => (
             <button
               key={c.id}
+              type="button"
               onClick={() => void openThread(c.id)}
-              className="w-full flex flex-col gap-0.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors text-left"
+              className="w-full text-left rounded-lg border border-sand bg-white px-2.5 py-2 hover:bg-cream transition-colors"
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[13px] font-semibold text-espresso leading-tight">
+              <span className="flex items-center gap-1.5">
+                <span className="flex -space-x-1 shrink-0">
+                  {c.members.slice(0, 3).map((m) => (
+                    <Avatar key={m.id} member={asMember(m.id, m.name, m.avatar_url ?? null)} size={18} />
+                  ))}
+                </span>
+                <span className="text-[12px] font-semibold text-espresso truncate">
                   {c.is_group ? "👥 " : ""}{c.title}
                 </span>
-                {c.last_message && (
-                  <span className="text-[10px] text-stone shrink-0">{timeAgo(c.last_message.created_at)}</span>
-                )}
-              </div>
+              </span>
               {c.last_message && (
-                <p className="text-[11px] text-stone/80 truncate">
-                  {c.last_message.mine ? "You: " : ""}{c.last_message.body}
-                </p>
+                <span className="block text-[11px] text-walnut truncate">
+                  {c.last_message.mine ? "You: " : ""}{splitReplyQuote(c.last_message.body).text}
+                </span>
+              )}
+              {c.last_message && (
+                <span className="block text-[10px] text-bark">{ago(c.last_message.created_at)} ago</span>
               )}
             </button>
           ))

@@ -23,8 +23,8 @@ type Project = { id: string; name: string };
 type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
 type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
 type Notif = { id: number; content: string; read: boolean; created_at: string; kind?: string | null };
-type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
-type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string; avatar_url?: string | null }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string; archived: boolean };
+export type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
+export type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string; avatar_url?: string | null }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string; archived: boolean };
 type DM = { id: number; body: string; created_at: string; edited_at?: string | null; mine: boolean; sender_name: string; sender_id?: string | null; attachments?: Attachment[] };
 
 // ── Admin (moderator-only oversight of everyone's Personal conversations) ──
@@ -112,7 +112,7 @@ function linkifyText(text: string, mentionNames: string[] = []): ReactNode {
 // client just shows the quote as plain text.
 const REPLY_QUOTE = /^> ([^:\n]{1,80}): ([^\n]*)\n\n?/;
 
-function splitReplyQuote(body: string): { quote: { name: string; text: string } | null; prefix: string; text: string } {
+export function splitReplyQuote(body: string): { quote: { name: string; text: string } | null; prefix: string; text: string } {
   const m = body.match(REPLY_QUOTE);
   if (!m) return { quote: null, prefix: "", text: body };
   return { quote: { name: m[1], text: m[2] }, prefix: m[0], text: body.slice(m[0].length) };
@@ -124,24 +124,24 @@ function replyQuoteFor(name: string, body: string): string {
   return `> ${name}: ${words.length > 120 ? `${words.slice(0, 120)}…` : words}\n\n`;
 }
 
-function ago(iso: string) {
+export function ago(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (s < 60) return "now";
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 }
-const nameOf = (m: Member) => m.full_name || m.username || "?";
+export const nameOf = (m: Member) => m.full_name || m.username || "?";
 // The admin endpoints return {id, name, avatar_url} rather than a full
 // profile — this adapts one into the shape Avatar/nameOf already expect.
-const asMember = (id: string, name: string, avatar_url: string | null): Member => ({ id, full_name: name, avatar_url });
+export const asMember = (id: string, name: string, avatar_url: string | null): Member => ({ id, full_name: name, avatar_url });
 
 /**
  * A person, small. Their photo when they have one, otherwise the initials
  * circle used everywhere else in the app, coloured from their name so the same
  * person is the same colour wherever they appear.
  */
-function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; size?: number }) {
+export function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; size?: number }) {
   const label = member ? nameOf(member) : name || "?";
   const style = { width: size, height: size, fontSize: Math.round(size * 0.42) };
   if (member?.avatar_url) {
@@ -167,7 +167,7 @@ function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; s
   );
 }
 
-export default function DashboardMessagePanel({ currentUserId, canModerate = false }: { currentUserId: string; canModerate?: boolean }) {
+export default function DashboardMessagePanel({ currentUserId, canModerate = false, onCommunicationActivity }: { currentUserId: string; canModerate?: boolean; onCommunicationActivity?: () => void }) {
   // A "sent you a message" bell notification carries no conversation id of
   // its own (a DM notification only knows who sent it) — this resolves that
   // via the same find-or-create-a-1:1 call startChat already uses, then
@@ -489,11 +489,12 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
         setTopicTitle("");
         setTopicBody("");
         setReloadKey((k) => k + 1);
+        onCommunicationActivity?.();
       }
     } finally {
       setSending(false);
     }
-  }, [topicTitle, topicBody, topicComposer]);
+  }, [topicTitle, topicBody, topicComposer, onCommunicationActivity]);
 
   // Soft delete: the route stamps deleted_at, so the topic leaves every list
   // without the replies underneath it being destroyed. Author or admin only,
@@ -834,8 +835,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
       if (d.comment?.id) await replyComposer.flush("project_message_comment", d.comment.id);
       if (d.comment) setActiveThread((a) => a ? { ...a, comments: [...(a.comments ?? []), { id: d.comment.id, body: d.comment.body, created_at: d.comment.created_at }] } : a);
       setReloadKey((k) => k + 1);
+      onCommunicationActivity?.();
     }
-  }, [activeThread, reply, replyComposer]);
+  }, [activeThread, reply, replyComposer, onCommunicationActivity]);
 
   const input = "w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white";
   const unreadTotal = convs.reduce((n, c) => n + c.unread, 0);
