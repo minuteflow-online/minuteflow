@@ -16,9 +16,13 @@ interface Message {
   sender_name: string;
 }
 
+// Pseudo-target in the selector for the group thread with every active VA —
+// never a real id, so it can't collide with one.
+const GENERAL = "__general__";
+
 export default function ClientMessagesPanel() {
   const [vas, setVas] = useState<VaOption[]>([]);
-  const [selectedVaId, setSelectedVaId] = useState<string | null>(null);
+  const [selectedTarget, setSelectedTarget] = useState<string>(GENERAL);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -47,7 +51,6 @@ export default function ClientMessagesPanel() {
           .map((m) => ({ id: m.va_id, full_name: m.profiles?.full_name ?? "Unknown" }))
           .sort((a, b) => a.full_name.localeCompare(b.full_name));
         setVas(active);
-        setSelectedVaId((current) => current ?? active[0]?.id ?? null);
 
         const userId = userResult.data.user?.id;
         if (userId) {
@@ -73,20 +76,40 @@ export default function ClientMessagesPanel() {
     load();
   }, []);
 
-  const openConversationWith = useCallback(async (vaId: string) => {
+  const openConversation = useCallback(async (target: string, vaIds: string[]) => {
     setLoadingThread(true);
     setMessages([]);
     try {
-      const res = await fetch("/api/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ member_ids: [vaId] }),
-      });
-      const data = await res.json();
-      if (!res.ok) return;
-      setConversationId(data.conversation_id);
+      let convoId: string | null = null;
 
-      const msgRes = await fetch(`/api/conversations/${data.conversation_id}/messages`);
+      // Groups have no server-side reuse (only 1:1s do) — check for an
+      // existing one first so clicking "General" repeatedly doesn't spawn a
+      // fresh thread every time.
+      if (target === GENERAL) {
+        const listRes = await fetch("/api/conversations");
+        const listData = await listRes.json();
+        interface ConvoListItem { id: string; is_group: boolean }
+        const existing = ((listData.conversations ?? []) as ConvoListItem[]).find((c) => c.is_group);
+        if (existing) convoId = existing.id;
+      }
+
+      if (!convoId) {
+        const res = await fetch("/api/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            target === GENERAL
+              ? { member_ids: vaIds, is_group: true, title: "Team" }
+              : { member_ids: [target] }
+          ),
+        });
+        const data = await res.json();
+        if (!res.ok) return;
+        convoId = data.conversation_id;
+      }
+
+      setConversationId(convoId);
+      const msgRes = await fetch(`/api/conversations/${convoId}/messages`);
       const msgData = await msgRes.json();
       setMessages(msgData.messages ?? []);
     } finally {
@@ -95,8 +118,10 @@ export default function ClientMessagesPanel() {
   }, []);
 
   useEffect(() => {
-    if (selectedVaId) void openConversationWith(selectedVaId);
-  }, [selectedVaId, openConversationWith]);
+    if (vas.length === 0) return;
+    void openConversation(selectedTarget, vas.map((v) => v.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTarget, vas.length]);
 
   const handleSend = useCallback(async () => {
     if (!draft.trim() || !conversationId) return;
@@ -172,10 +197,11 @@ export default function ClientMessagesPanel() {
 
       <div className="flex items-center gap-2">
         <select
-          value={selectedVaId ?? ""}
-          onChange={(e) => setSelectedVaId(e.target.value || null)}
+          value={selectedTarget}
+          onChange={(e) => setSelectedTarget(e.target.value)}
           className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
         >
+          <option value={GENERAL}>📢 General (all VAs)</option>
           {vas.map((va) => (
             <option key={va.id} value={va.id}>{va.full_name}</option>
           ))}
