@@ -267,7 +267,6 @@ export default function DashboardPage() {
   // Rating state for clock-out modal
   const [clockOutRating, setClockOutRating] = useState<number | null>(null);
   const [clockOutRatingNote, setClockOutRatingNote] = useState("");
-  const [showClockOutMemoGuide, setShowClockOutMemoGuide] = useState(false);
   const [showClockOutRatingGuide, setShowClockOutRatingGuide] = useState(false);
 
   // Clock Out gate (Phase 3, Toni's call, 2026-11-02): narrow version — only
@@ -280,13 +279,10 @@ export default function DashboardPage() {
   >(null);
   const [stoppingBlockedLogId, setStoppingBlockedLogId] = useState<number | null>(null);
 
-  // Close-task-before-clockout modal state
+  // End-of-day review modal state (mood + day rating only — no task-status
+  // or memo gate; closing whatever's still running is performClockOut's own
+  // silent orphan sweep, same as Stop/Start everywhere else).
   const [showClockOutModal, setShowClockOutModal] = useState(false);
-  const [clockOutTaskStatus, setClockOutTaskStatus] = useState("");
-  const [clockOutClientMemo, setClockOutClientMemo] = useState("");
-  const [clockOutInternalMemo, setClockOutInternalMemo] = useState("");
-  const [showClockOutClientMemo, setShowClockOutClientMemo] = useState(false);
-  const [showClockOutInternalMemo, setShowClockOutInternalMemo] = useState(false);
   const [clockingOut, setClockingOut] = useState(false);
   const [clockOutMood, setClockOutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
@@ -1624,100 +1620,38 @@ export default function DashboardPage() {
       // than trapping the VA over a network hiccup on the gate itself.
     }
 
-    // Silent now, same as Stop/Start — no forced "close this task first"
-    // popup. performClockOut()'s own orphan sweep already closes whatever's
-    // still open (including the active task's log) and demotes its status
-    // correctly on its own (Phase 1/2, Toni's call, 2026-11-02); live-tested
-    // this exact path earlier today.
-    await performClockOut();
-  }, [userId, performClockOut, supabase]);
+    // No forced "close this task first" popup — performClockOut()'s own
+    // orphan sweep already closes whatever's still open (including the
+    // active task's log) and demotes its status correctly on its own
+    // (Phase 1/2, Toni's call, 2026-11-02). The only thing shown now is the
+    // end-of-day review (mood + day rating), and nothing in it is required.
+    setShowClockOutModal(true);
+  }, [userId, supabase]);
 
-  const handleCloseTaskAndClockOut = useCallback(async () => {
-    if (!clockOutTaskStatus || (!clockOutClientMemo.trim() && !clockOutInternalMemo.trim())) return;
-    if (!activeTask?.logId || !userId) return;
+  const submitDayReviewAndClockOut = useCallback(async () => {
     setClockingOut(true);
-
     try {
-      const now = new Date().toISOString();
-      const logId = parseInt(activeTask.logId, 10);
-      // Guard: ensure duration is never negative (clock skew protection)
-      const startMs = activeTask.start_time ? new Date(activeTask.start_time).getTime() : Date.now();
-      const durationMs = Math.max(0, new Date(now).getTime() - startMs);
-
-      // Close the active task with status and memo
-      if (logId) {
-        const updatePayload: Record<string, unknown> = {
-          end_time: now,
-          duration_ms: durationMs,
-        };
-        if (clockOutClientMemo.trim()) {
-          updatePayload.client_memo = clockOutClientMemo.trim();
-        }
-        if (clockOutInternalMemo.trim()) {
-          updatePayload.internal_memo = clockOutInternalMemo.trim();
-        }
-        await supabase.from("time_logs").update(updatePayload).eq("id", logId);
-
-        setTimeLogs((prev) =>
-          prev.map((log) =>
-            log.id === logId
-              ? { ...log, ...updatePayload, end_time: now, duration_ms: durationMs } as TimeLog
-              : log
-          )
-        );
-
-        // Same gap as stopCurrentTask and the startTask sweep: closing the log
-        // here never used to touch the assignment's status, so clocking out
-        // while a task was running left it stuck "in_progress" forever even
-        // though nothing was running. Phase 1 of the Start/Stop/Submit rework
-        // (Toni's call, 2026-11-02).
-        if (activeTask?.assignedTaskId) {
-          void setAssignedTaskStatus({
-            assignedTaskId: activeTask.assignedTaskId,
-            status: "on_queue",
-            vaId: userId,
-          }).then(() => setWidgetRefetchCount((c) => c + 1));
-        }
-      }
-
       // Capture mood and day rating before resetting
       const savedMood = clockOutMood;
       const savedDayRating = clockOutRating;
       const savedDayRatingNote = clockOutRatingNote;
 
-      // Reset modal state
       setShowClockOutModal(false);
-      setClockOutTaskStatus("");
-      setClockOutClientMemo("");
-      setClockOutInternalMemo("");
-      setShowClockOutClientMemo(false);
-      setShowClockOutInternalMemo(false);
-      setClockingOut(false);
       setClockOutMood(null);
       setClockOutRating(null);
       setClockOutRatingNote("");
-      setShowClockOutMemoGuide(false);
       setShowClockOutRatingGuide(false);
 
-      // Clear active task locally before clocking out
-      setActiveTask(null);
-
-      // Now clock out with mood and day rating
+      // Whatever's still running (including the active task) is closed by
+      // performClockOut()'s own orphan sweep — nothing to do here.
       await performClockOut(savedMood, savedDayRating, savedDayRatingNote);
-    } catch (err) {
-      console.error("Error closing task before clock out:", err);
+    } finally {
       setClockingOut(false);
     }
-  }, [activeTask, userId, supabase, clockOutTaskStatus, clockOutClientMemo, clockOutInternalMemo, clockOutMood, clockOutRating, clockOutRatingNote, performClockOut]);
+  }, [clockOutMood, clockOutRating, clockOutRatingNote, performClockOut]);
 
   const cancelClockOutModal = useCallback(() => {
     setShowClockOutModal(false);
-    setClockOutTaskStatus("");
-    setClockOutClientMemo("");
-    setClockOutInternalMemo("");
-    setShowClockOutClientMemo(false);
-    setShowClockOutInternalMemo(false);
-    setClockingOut(false);
     setClockOutMood(null);
     setClockOutRating(null);
     setClockOutRatingNote("");
@@ -4291,13 +4225,13 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ─── Close Task Before Clock Out Modal ─── */}
-      {showClockOutModal && activeTask && (
+      {/* ─── End of Day Review Modal ─── */}
+      {showClockOutModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-lg mx-4">
             <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
               <h3 className="text-sm font-bold text-espresso">
-                Close Active Task Before Clocking Out
+                End of Day Review
               </h3>
               <button
                 onClick={cancelClockOutModal}
@@ -4307,124 +4241,6 @@ export default function DashboardPage() {
               </button>
             </div>
             <div className="p-5">
-              {/* Info banner */}
-              <div className="mb-4 p-3 rounded-lg bg-amber-soft border border-[#d4c07a] text-xs text-amber font-medium">
-                You have an active task: <strong>{activeTask.task_name}</strong>. Please close it before clocking out.
-              </div>
-
-              {/* Task Status */}
-              <div className="mb-4">
-                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
-                  Task Status <span className="text-terracotta">*</span>
-                </p>
-                <div className="flex gap-2">
-                  {["In Progress", "Completed", "On Hold"].map((status) => (
-                    <button
-                      key={status}
-                      onClick={() => setClockOutTaskStatus(status)}
-                      className={`flex-1 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
-                        clockOutTaskStatus === status
-                          ? status === "Completed"
-                            ? "bg-sage text-white border border-sage"
-                            : status === "On Hold"
-                            ? "bg-amber text-white border border-amber"
-                            : "bg-terracotta text-white border border-terracotta"
-                          : "border border-sand bg-white text-bark hover:border-terracotta"
-                      }`}
-                    >
-                      {status}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Memos — both independently fillable */}
-              <div className="mb-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <p className="text-[11px] font-semibold text-walnut tracking-wide">
-                    Add Comments <span className="text-stone font-normal">(at least one required)</span>
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowClockOutMemoGuide(!showClockOutMemoGuide)}
-                    className="text-[10px] w-4 h-4 rounded-full bg-slate-blue-soft text-slate-blue font-bold leading-none flex items-center justify-center cursor-pointer hover:bg-slate-blue hover:text-white transition-all flex-shrink-0"
-                    title="Memo writing guide"
-                  >
-                    ?
-                  </button>
-                </div>
-                {showClockOutMemoGuide && (
-                  <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
-                    <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
-                    <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
-                    <div className="space-y-1">
-                      <p><span className="font-semibold">1. Who:</span> Who</p>
-                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
-                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
-                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
-                      <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="mb-3">
-                  <button
-                    onClick={() => setShowClockOutClientMemo(!showClockOutClientMemo)}
-                    className={`w-full flex items-center justify-between py-2.5 px-3.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
-                      showClockOutClientMemo || clockOutClientMemo
-                        ? "bg-slate-blue text-white border border-slate-blue"
-                        : "border border-slate-blue/30 bg-slate-blue-soft text-slate-blue hover:border-slate-blue"
-                    }`}
-                  >
-                    <span>Client Memo</span>
-                    <span className="text-[10px] opacity-75">
-                      {clockOutClientMemo ? "filled" : showClockOutClientMemo ? "collapse" : "expand"}
-                    </span>
-                  </button>
-                  {showClockOutClientMemo && (
-                    <>
-                      <textarea
-                        value={clockOutClientMemo}
-                        onChange={(e) => setClockOutClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
-                        placeholder="Notes visible to the client..."
-                        rows={2}
-                        autoFocus
-                        className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
-                      />
-                      <p className="text-[10px] text-stone mt-1">
-                        {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(clockOutClientMemo))} words remaining
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                <div>
-                  <button
-                    onClick={() => setShowClockOutInternalMemo(!showClockOutInternalMemo)}
-                    className={`w-full flex items-center justify-between py-2.5 px-3.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
-                      showClockOutInternalMemo || clockOutInternalMemo
-                        ? "bg-walnut text-white border border-walnut"
-                        : "border border-walnut/30 bg-amber-soft text-walnut hover:border-walnut"
-                    }`}
-                  >
-                    <span>Internal Memo</span>
-                    <span className="text-[10px] opacity-75">
-                      {clockOutInternalMemo ? "filled" : showClockOutInternalMemo ? "collapse" : "expand"}
-                    </span>
-                  </button>
-                  {showClockOutInternalMemo && (
-                    <textarea
-                      value={clockOutInternalMemo}
-                      onChange={(e) => setClockOutInternalMemo(e.target.value)}
-                      placeholder="Internal notes (not visible to client)..."
-                      rows={2}
-                      autoFocus
-                      className="w-full mt-1.5 py-2.5 px-[13px] border border-walnut/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-walnut focus:shadow-[0_0_0_3px_rgba(93,75,60,0.08)] placeholder:text-stone resize-none"
-                    />
-                  )}
-                </div>
-              </div>
-
               {/* Mood Rating */}
               <div className="mb-3">
                 <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
@@ -4522,16 +4338,14 @@ export default function DashboardPage() {
                   Cancel
                 </button>
                 <button
-                  onClick={handleCloseTaskAndClockOut}
+                  onClick={submitDayReviewAndClockOut}
                   disabled={
-                    !clockOutTaskStatus ||
-                    (!clockOutClientMemo.trim() && !clockOutInternalMemo.trim()) ||
                     clockingOut ||
                     (clockOutRating !== null && clockOutRatingNote.trim().split(/\s+/).filter(Boolean).length < 5)
                   }
-                  className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 py-2.5 rounded-lg bg-sage text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-sage/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {clockingOut ? "Closing & clocking out..." : "Close Task & Clock Out"}
+                  {clockingOut ? "Clocking out..." : "Clock Out"}
                 </button>
               </div>
             </div>
