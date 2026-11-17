@@ -268,6 +268,7 @@ export default function DashboardPage() {
   const [clockOutRating, setClockOutRating] = useState<number | null>(null);
   const [clockOutRatingNote, setClockOutRatingNote] = useState("");
   const [showClockOutRatingGuide, setShowClockOutRatingGuide] = useState(false);
+  const [clockOutSummary, setClockOutSummary] = useState("");
 
   // Clock Out gate (Phase 3, Toni's call, 2026-11-02): narrow version — only
   // blocks on a task actively in_progress right now, not on older
@@ -1429,7 +1430,7 @@ export default function DashboardPage() {
     }
   }, [userId, profile, supabase, sessionActionPendingRef, notifyVA, refreshSession]);
 
-  const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null, dayRating?: number | null, dayRatingNote?: string) => {
+  const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null, dayRating?: number | null, dayRatingNote?: string, daySummary?: string) => {
     // Check ref synchronously — state check alone has an async race that allows
     // double-clicks to both pass before either setState has landed.
     if (!userId || sessionActionPendingRef.current) return;
@@ -1535,6 +1536,10 @@ export default function DashboardPage() {
             // Use the session's start date so the clock-out entry groups under
             // the same day as the rest of the shift (handles overnight clock-outs).
             session_date: getCorrectSessionDate(session, orgTimezone),
+            // The end-of-day review's free-text summary rides on this marker
+            // row as an internal_memo — Time Log's existing memo icon/expand
+            // view picks it up for free, no new UI needed.
+            internal_memo: daySummary?.trim() || null,
           })
           .select()
           .single();
@@ -1631,24 +1636,26 @@ export default function DashboardPage() {
   const submitDayReviewAndClockOut = useCallback(async () => {
     setClockingOut(true);
     try {
-      // Capture mood and day rating before resetting
+      // Capture mood, day rating, and the free-text summary before resetting
       const savedMood = clockOutMood;
       const savedDayRating = clockOutRating;
       const savedDayRatingNote = clockOutRatingNote;
+      const savedSummary = clockOutSummary;
 
       setShowClockOutModal(false);
       setClockOutMood(null);
       setClockOutRating(null);
       setClockOutRatingNote("");
       setShowClockOutRatingGuide(false);
+      setClockOutSummary("");
 
       // Whatever's still running (including the active task) is closed by
       // performClockOut()'s own orphan sweep — nothing to do here.
-      await performClockOut(savedMood, savedDayRating, savedDayRatingNote);
+      await performClockOut(savedMood, savedDayRating, savedDayRatingNote, savedSummary);
     } finally {
       setClockingOut(false);
     }
-  }, [clockOutMood, clockOutRating, clockOutRatingNote, performClockOut]);
+  }, [clockOutMood, clockOutRating, clockOutRatingNote, clockOutSummary, performClockOut]);
 
   const cancelClockOutModal = useCallback(() => {
     setShowClockOutModal(false);
@@ -1656,6 +1663,7 @@ export default function DashboardPage() {
     setClockOutRating(null);
     setClockOutRatingNote("");
     setShowClockOutRatingGuide(false);
+    setClockOutSummary("");
   }, []);
 
   // Track if we're triggering the wizard for a break (vs switching tasks)
@@ -4270,6 +4278,20 @@ export default function DashboardPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Day Summary (optional) */}
+              <div className="mb-3">
+                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
+                  What did you get done today? <span className="text-stone font-normal">(optional)</span>
+                </p>
+                <textarea
+                  value={clockOutSummary}
+                  onChange={(e) => setClockOutSummary(e.target.value)}
+                  placeholder="Summarize what you worked on today..."
+                  rows={3}
+                  className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-walnut focus:shadow-[0_0_0_3px_rgba(93,75,60,0.08)] placeholder:text-stone resize-none"
+                />
               </div>
 
               {/* Day Rating (optional) */}
