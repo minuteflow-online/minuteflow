@@ -3183,6 +3183,14 @@ function ThreadCard({
   // anything logged since the latest submission. Each round's own figure sits
   // on its entry below.
   const totalMs = taskTime?.totalMs ?? 0;
+  // First log start to last log end, across every submitted round — same
+  // "Processed" span each entry below already shows for its own round, just
+  // rolled up for the whole task so it's visible without opening the dropdown
+  // (Toni's call, 2026-11-17). Doesn't cover not-yet-submitted work, which
+  // has no individual sessions to span — same limitation the dropdown's own
+  // "Not yet submitted" line already carries.
+  const allSessions = Object.values(taskTime?.bySubmission ?? {}).flatMap((r) => r.sessions);
+  const workedSpan = workedSpanLabel(allSessions, timezone);
 
   const fieldValue = (key: string): string | null => {
     switch (key) {
@@ -3504,6 +3512,15 @@ function ThreadCard({
             viewDay={viewDay}
             timezone={timezone}
           />
+        )}
+
+        {workedSpan && (
+          <span
+            className="shrink-0 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut"
+            title="When this work happened — first log start to last log end"
+          >
+            {workedSpan}
+          </span>
         )}
 
         {/* Buttons exist only while there's a decision to make. Once reviewed,
