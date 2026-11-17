@@ -3494,6 +3494,24 @@ export default function DashboardPage() {
     [startTask]
   );
 
+  // Sending a message in the Messages panel's General tab is the automatic
+  // equivalent of clicking Quick Pick's "General Message" — same mapping,
+  // same startTask (no on-hold, no wizard). Skipped if Communication time is
+  // already running so a burst of replies doesn't spawn a fresh log per
+  // message.
+  const handleMessageActivity = useCallback(async () => {
+    if (activeTaskRef.current?.category === "Communication") return;
+    await startTask({
+      task_name: "General Message",
+      category: "Communication",
+      account: "Virtual Concierge",
+      project: "Supervision",
+      client_name: "Toni Colina",
+      client_memo: "",
+      internal_memo: "",
+    });
+  }, [startTask]);
+
   const handleSidebarMemoSave = useCallback(async () => {
     if (!activeTask?.logId) return;
     if (!sidebarClientMemo.trim() && !sidebarInternalMemo.trim()) return;
@@ -3810,7 +3828,7 @@ export default function DashboardPage() {
                 rendering with a build error. */}
             {userId && (
               <Suspense fallback={null}>
-                <DashboardMessagePanel currentUserId={userId} canModerate={hasModerationAccess(profile)} />
+                <DashboardMessagePanel currentUserId={userId} canModerate={hasModerationAccess(profile)} onCommunicationActivity={handleMessageActivity} />
               </Suspense>
             )}
             {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
