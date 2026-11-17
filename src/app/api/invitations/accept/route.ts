@@ -82,7 +82,7 @@ export async function POST(request: Request) {
   // 1. Look up and validate the invitation
   const { data: invite, error: inviteError } = await adminClient
     .from("invitations")
-    .select("id, email, expires_at, used_at, employment_type, requires_extension")
+    .select("id, email, expires_at, used_at, employment_type, requires_extension, organization_id, invited_by")
     .eq("code", code)
     .single();
 
@@ -166,6 +166,18 @@ export async function POST(request: Request) {
     .from("invitations")
     .update({ used_at: now, used_by: userId })
     .eq("id", invite.id);
+
+  // 6. Client-sent invite — link into that organization's roster.
+  const organizationId = (invite as { organization_id?: string | null }).organization_id;
+  if (organizationId) {
+    await adminClient.from("organization_members").insert({
+      organization_id: organizationId,
+      va_id: userId,
+      status: "active",
+      invited_by: (invite as { invited_by?: string | null }).invited_by ?? null,
+      joined_at: now,
+    });
+  }
 
   return Response.json({ success: true });
 }

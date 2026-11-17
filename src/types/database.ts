@@ -1,4 +1,21 @@
-export type UserRole = 'admin' | 'manager' | 'va' | 'coordinator' | 'specialist' | 'ceo' | 'founder';
+export type UserRole = 'admin' | 'manager' | 'va' | 'coordinator' | 'specialist' | 'ceo' | 'founder' | 'client';
+
+export interface Organization {
+  id: string;
+  name: string;
+  owner_profile_id: string;
+  created_at: string;
+}
+
+export interface OrganizationMember {
+  id: string;
+  organization_id: string;
+  va_id: string;
+  status: 'invited' | 'active';
+  invited_by: string | null;
+  created_at: string;
+  joined_at: string | null;
+}
 
 export const VA_POSITION_OPTIONS = [
   "Full Time",
@@ -59,6 +76,8 @@ export interface Profile {
   department: string | null;
   position: string | null;
   role: UserRole;
+  // Set only for role === 'client': the organization this client owns.
+  organization_id: string | null;
   pay_rate: number;
   pay_rate_type: 'hourly' | 'daily' | 'monthly' | 'per_task';
   // Currency the VA is paid in — symbol only, amounts are entered in it. See lib/payroll.ts.
@@ -210,6 +229,9 @@ export interface TimeLog {
   category: string;
   project: string | null;
   account: string | null;
+  // Authoritative client-org tag, set when the account logged against is a
+  // client organization rather than a legacy free-text account.
+  organization_id: string | null;
   client_name: string | null;
   start_time: string;
   end_time: string | null;
@@ -432,6 +454,7 @@ export interface PlannedTask {
   user_id: string;
   task_name: string;
   account: string | null;
+  organization_id: string | null;
   plan_date: string;
   sort_order: number;
   completed: boolean;

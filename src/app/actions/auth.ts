@@ -105,6 +105,78 @@ export async function signUp(
   redirect("/dashboard");
 }
 
+// Client signup is intentionally open — unlike signUp() above, it is never
+// gated by the `invitations` table. A client is a new customer, not staff.
+export async function signUpClient(
+  prevState: { error: string } | null,
+  formData: FormData
+) {
+  const orgName = (formData.get("org_name") as string)?.trim();
+  const fullName = (formData.get("full_name") as string)?.trim();
+  const email = (formData.get("email") as string)?.trim().toLowerCase();
+  const password = formData.get("password") as string;
+
+  if (!orgName || !fullName || !email || !password) {
+    return { error: "All fields are required." };
+  }
+
+  const supabase = await createClient();
+
+  let userId: string | undefined;
+  try {
+    const result = await withTimeout(
+      supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: fullName } },
+      }),
+      12000
+    );
+    if (result.error) {
+      return { error: result.error.message };
+    }
+    userId = result.data.user?.id;
+  } catch {
+    return { error: SERVICE_UNAVAILABLE };
+  }
+
+  if (!userId) {
+    return { error: SERVICE_UNAVAILABLE };
+  }
+
+  // handle_new_user() always inserts the profile as role 'va' — fix it up to
+  // 'client' and attach the new org, using the service role since this user
+  // has no standing permission to grant themselves either.
+  const adminClient = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
+  const { data: org, error: orgError } = await adminClient
+    .from("organizations")
+    .insert({ name: orgName, owner_profile_id: userId })
+    .select("id")
+    .single();
+
+  if (orgError || !org) {
+    await adminClient.auth.admin.deleteUser(userId);
+    return { error: SERVICE_UNAVAILABLE };
+  }
+
+  const { error: profileError } = await adminClient
+    .from("profiles")
+    .update({ role: "client", organization_id: org.id })
+    .eq("id", userId);
+
+  if (profileError) {
+    await adminClient.auth.admin.deleteUser(userId);
+    return { error: SERVICE_UNAVAILABLE };
+  }
+
+  redirect("/dashboard");
+}
+
 export async function resetPassword(
   prevState: { error: string; success?: boolean } | null,
   formData: FormData

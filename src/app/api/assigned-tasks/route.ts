@@ -87,7 +87,7 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, admin_permissions")
+    .select("role, admin_permissions, organization_id")
     .eq("id", user.id)
     .single();
 
@@ -205,6 +205,22 @@ export async function GET(request: Request) {
   // the isPermittedPost comment below for the bug this shape used to hide.
   const isPermitted = hasBroadAdminAccess(profile) || hasAdminPermission(profile, "task_management");
 
+  // A client may view (read-only) one of their own org's VAs — narrower than
+  // isPermitted on purpose: this never grants task-management access, only
+  // the same "View as VA" read the admin gets, and only for a VA actually in
+  // their organization_members roster.
+  let isClientViewingOwnVa = false;
+  if (!isPermitted && viewAsVaParam && profile?.role === "client" && profile.organization_id) {
+    const { data: membership } = await serviceRoleClient
+      .from("organization_members")
+      .select("id")
+      .eq("organization_id", profile.organization_id)
+      .eq("va_id", viewAsVaParam)
+      .eq("status", "active")
+      .maybeSingle();
+    isClientViewingOwnVa = Boolean(membership);
+  }
+
   // One task by id, in the admin row format — what the ?task= deep link from
   // Submissions needs. Every other list here is scoped (your own work, or the
   // reviewer queue of what is still sitting at "submitted"), so a link to an
@@ -260,7 +276,7 @@ export async function GET(request: Request) {
   const vaSelectString = `id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at, sort_order,
      assigned_tasks(id, account, project, project_id, parent_task_id, category, recurring_template_id, spawned_template_id, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, paid_manually, assigned_by, instructions, instructions_locked, review_required, review_required_locked, revision_count, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name, kind), task_todos(id, text, sort_order))`;
 
-  if (isPermitted && viewAsVaParam) {
+  if ((isPermitted || isClientViewingOwnVa) && viewAsVaParam) {
     // Admin viewing a specific VA's task list — bypass RLS with serviceRoleClient
     // so we see exactly what that VA sees (no collaborative tasks included).
     let assigneeQuery = serviceRoleClient
