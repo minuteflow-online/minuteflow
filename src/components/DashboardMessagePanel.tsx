@@ -167,7 +167,7 @@ function Avatar({ member, name, size = 18 }: { member?: Member; name?: string; s
   );
 }
 
-export default function DashboardMessagePanel({ currentUserId, canModerate = false }: { currentUserId: string; canModerate?: boolean }) {
+export default function DashboardMessagePanel({ currentUserId, canModerate = false, onCommunicationActivity }: { currentUserId: string; canModerate?: boolean; onCommunicationActivity?: () => void }) {
   // A "sent you a message" bell notification carries no conversation id of
   // its own (a DM notification only knows who sent it) — this resolves that
   // via the same find-or-create-a-1:1 call startChat already uses, then
@@ -489,11 +489,12 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
         setTopicTitle("");
         setTopicBody("");
         setReloadKey((k) => k + 1);
+        onCommunicationActivity?.();
       }
     } finally {
       setSending(false);
     }
-  }, [topicTitle, topicBody, topicComposer]);
+  }, [topicTitle, topicBody, topicComposer, onCommunicationActivity]);
 
   // Soft delete: the route stamps deleted_at, so the topic leaves every list
   // without the replies underneath it being destroyed. Author or admin only,
@@ -834,8 +835,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
       if (d.comment?.id) await replyComposer.flush("project_message_comment", d.comment.id);
       if (d.comment) setActiveThread((a) => a ? { ...a, comments: [...(a.comments ?? []), { id: d.comment.id, body: d.comment.body, created_at: d.comment.created_at }] } : a);
       setReloadKey((k) => k + 1);
+      onCommunicationActivity?.();
     }
-  }, [activeThread, reply, replyComposer]);
+  }, [activeThread, reply, replyComposer, onCommunicationActivity]);
 
   const input = "w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white";
   const unreadTotal = convs.reduce((n, c) => n + c.unread, 0);
