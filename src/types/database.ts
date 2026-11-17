@@ -5,6 +5,10 @@ export interface Organization {
   name: string;
   owner_profile_id: string;
   created_at: string;
+  /** Client's own setting: when true, a VA's time replying to this client's
+   *  messages counts toward tracked hours. Storage only for now — see
+   *  "track themselves" / messaging-time follow-up for the VA-side wiring. */
+  track_messaging_time: boolean;
 }
 
 export interface OrganizationMember {
