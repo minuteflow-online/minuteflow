@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import ClientTeamPanel from "@/components/ClientTeamPanel";
 import ClientAssignedTasksPanel from "@/components/ClientAssignedTasksPanel";
+import ClientBoardPanel from "@/components/ClientBoardPanel";
+import ClientActivityLogPanel from "@/components/ClientActivityLogPanel";
 
 export default async function ClientDashboardPage() {
   const supabase = await createClient();
@@ -31,6 +33,8 @@ export default async function ClientDashboardPage() {
 
       <ClientTeamPanel />
       <ClientAssignedTasksPanel />
+      <ClientBoardPanel />
+      <ClientActivityLogPanel />
     </div>
   );
 }
