@@ -3,7 +3,7 @@
 import { isBillableCategory } from "@/lib/billable";
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { countWords } from "@/lib/utils";
+import { countWords, isReservedTaskName } from "@/lib/utils";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { syncTaskDetailFromMemo } from "@/lib/syncTaskDetailFromMemo";
 import { loadOrgTimezone } from "@/hooks/useOrgTimezone";
@@ -280,6 +280,10 @@ export default function EditTimeLogModal({
   const handleSave = async () => {
     if (!taskName.trim()) {
       setError("Task name is required");
+      return;
+    }
+    if (isReservedTaskName(taskName)) {
+      setError(`"${taskName.trim()}" is reserved for the system's own clock in/out markers — please use a different task name.`);
       return;
     }
     if (!startTime) {
