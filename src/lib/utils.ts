@@ -10,6 +10,17 @@ export function isDuplicateActiveLogError(error: { code?: string; message?: stri
   return error.code === "23505" && (error.message?.includes("time_logs_one_active_per_user") ?? false);
 }
 
+/**
+ * The system's own zero-duration Clock In/Out boundary markers — never a
+ * real task. A VA renaming (or typing) a real, billable task to one of
+ * these makes it look like an automated placeholder to anyone reviewing the
+ * Timeline later, which is exactly the confusion that surfaced on Shem's
+ * Planning/Sorting entries (Toni flagged it, 2026-11-19).
+ */
+export function isReservedTaskName(taskName: string): boolean {
+  return ["clock in", "clocked in", "clock out", "clocked out"].includes(taskName.trim().toLowerCase());
+}
+
 /** Count words in a string (trims and splits on whitespace) */
 export function countWords(text: string): number {
   const trimmed = text.trim();
