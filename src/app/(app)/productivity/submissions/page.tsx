@@ -36,6 +36,7 @@ import {
   formatStamp,
   roundDays,
   splitAcrossDays,
+  taskElapsedMs,
   workedSpanLabel,
   type RoundTime,
   type TaskTime,
@@ -233,6 +234,7 @@ const CARD_FIELDS: ColumnDef[] = [
   { key: "submitter", label: "Submitted by", defaultWidth: 0 },
   { key: "count", label: "Submission count", defaultWidth: 0 },
   { key: "total_time", label: "Total time", defaultWidth: 0 },
+  { key: "elapsed_time", label: "Time open", defaultWidth: 0 },
 ];
 
 /**
@@ -288,6 +290,18 @@ function formatDuration(ms: number): string {
   if (totalMinutes < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+/** "2d 6h" / "6h 20m" / "45m" — day-aware since this measures calendar span, not worked time. */
+function formatElapsed(ms: number): string {
+  if (!ms || ms <= 0) return "0m";
+  const totalMinutes = Math.floor(ms / 60000);
+  if (totalMinutes < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
@@ -3191,6 +3205,10 @@ function ThreadCard({
   // "Not yet submitted" line already carries.
   const allSessions = Object.values(taskTime?.bySubmission ?? {}).flatMap((r) => r.sessions);
   const workedSpan = workedSpanLabel(allSessions, timezone);
+  // Calendar time elapsed: first log on the task to the latest submission —
+  // the one that completed it, or just the most recent round if it's still
+  // open. Gaps between sessions count, unlike totalMs.
+  const elapsedMs = taskElapsedMs(taskTime?.firstStartMs ?? null, latest?.created_at);
 
   const fieldValue = (key: string): string | null => {
     switch (key) {
@@ -3220,6 +3238,8 @@ function ThreadCard({
         return head.profiles?.full_name || head.profiles?.username || null;
       case "total_time":
         return totalMs > 0 ? formatDuration(totalMs) : null;
+      case "elapsed_time":
+        return elapsedMs != null && elapsedMs > 0 ? formatElapsed(elapsedMs) : null;
       case "count":
         return expanded
           ? null

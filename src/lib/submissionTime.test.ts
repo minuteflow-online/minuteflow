@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocateTaskTime, placeShotsByWork, roundDays, splitAcrossDays, workedSpanLabel } from "./submissionTime";
+import { allocateTaskTime, placeShotsByWork, roundDays, splitAcrossDays, taskElapsedMs, workedSpanLabel } from "./submissionTime";
 
 const TZ = "America/New_York";
 const H = 3_600_000;
@@ -61,6 +61,30 @@ describe("allocateTaskTime", () => {
       { start_time: "2026-11-05T14:00:00Z", duration_ms: null },
     ], TZ);
     expect(none.totalMs).toBe(0);
+  });
+
+  it("tracks the earliest counted log's start", () => {
+    expect(t.firstStartMs).toBe(Date.parse("2026-11-05T14:00:00Z"));
+  });
+
+  it("is null for firstStartMs when nothing counted", () => {
+    const none = allocateTaskTime(subs, [{ start_time: null, duration_ms: H }], TZ);
+    expect(none.firstStartMs).toBeNull();
+  });
+});
+
+describe("taskElapsedMs", () => {
+  it("spans from the first log to the latest submission, gaps included", () => {
+    // First log Nov 5 2pm UTC, latest submission Nov 7 noon UTC — just under 2 days.
+    expect(taskElapsedMs(Date.parse("2026-11-05T14:00:00Z"), "2026-11-07T12:00:00Z")).toBe(46 * H);
+  });
+
+  it("is null with no logged start", () => {
+    expect(taskElapsedMs(null, "2026-11-07T12:00:00Z")).toBeNull();
+  });
+
+  it("is null with no submission to anchor the end", () => {
+    expect(taskElapsedMs(Date.parse("2026-11-05T14:00:00Z"), null)).toBeNull();
   });
 });
 
