@@ -234,7 +234,7 @@ const CARD_FIELDS: ColumnDef[] = [
   { key: "submitter", label: "Submitted by", defaultWidth: 0 },
   { key: "count", label: "Submission count", defaultWidth: 0 },
   { key: "total_time", label: "Total time", defaultWidth: 0 },
-  { key: "elapsed_time", label: "Time open", defaultWidth: 0 },
+  { key: "elapsed_time", label: "Parking time", defaultWidth: 0 },
 ];
 
 /**
@@ -3239,7 +3239,8 @@ function ThreadCard({
       case "total_time":
         return totalMs > 0 ? formatDuration(totalMs) : null;
       case "elapsed_time":
-        return elapsedMs != null && elapsedMs > 0 ? formatElapsed(elapsedMs) : null;
+        // Labelled so it isn't mistaken for a second total (Toni's call, 2026-11-18).
+        return elapsedMs != null && elapsedMs > 0 ? `Parking ${formatElapsed(elapsedMs)}` : null;
       case "count":
         return expanded
           ? null
