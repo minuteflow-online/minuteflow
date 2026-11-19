@@ -92,6 +92,14 @@ interface ProjectTask {
   task_rate?: number | null;
 }
 
+/** One client org a VA can log work against — same shape ProjectSidebar's
+ *  clientQuickPicks uses, so the dashboard can pass that array straight
+ *  through without reshaping it. */
+export interface ClientOrgOption {
+  organizationId: string;
+  orgName: string;
+}
+
 interface TaskEntryFormProps {
   onStartTask: (data: TaskFormData) => void;
   hasActiveTask?: boolean;
@@ -101,11 +109,15 @@ interface TaskEntryFormProps {
   activeTaskClientMemo?: string;
   /** Skip the outer card/header chrome — for embedding inside a shared tabbed container that already provides its own box and tab strip. */
   bare?: boolean;
+  /** Client orgs this VA works for — offered as extra "Account" options so
+   *  any task (not just the two canned Quick Pick ones) can be tagged to a
+   *  client, the one place a VA picks who a given log is for. */
+  clientOrgs?: ClientOrgOption[];
 }
 
 type WizardStep = "form" | "close-old" | "log-fixed";
 
-export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false, activeTaskClientMemo = "", bare = false }: TaskEntryFormProps) {
+export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false, activeTaskClientMemo = "", bare = false, clientOrgs = [] }: TaskEntryFormProps) {
   const isAdmin = hasBroadAdminAccess({ role });
 
   // ─── Form Fields ───
@@ -176,18 +188,30 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   }, [fetchFormOptions]);
 
   // ─── Cascading resets ───
+  // A client org has no project_tags of its own, so picking one as the
+  // Account skips the usual project lookup: project is fixed to "Client
+  // Work" (same string the client-specific Quick Pick actions use), and the
+  // client name is the org's own name rather than anything in accountClientMap.
+  const selectedClientOrg = clientOrgs.find((o) => o.orgName === account);
+
   // When account changes, reset project and task
   useEffect(() => {
+    setTaskName("");
+    if (selectedClientOrg) {
+      setProject("Client Work");
+      setProjectTagId(null);
+      setClient(selectedClientOrg.orgName);
+      return;
+    }
     setProject("");
     setProjectTagId(null);
-    setTaskName("");
     // Auto-map client
     if (account && accountClientMap[account]) {
       setClient(accountClientMap[account]);
     } else {
       setClient("");
     }
-  }, [account, accountClientMap]);
+  }, [account, accountClientMap, selectedClientOrg]);
 
   // When project changes, reset task
   useEffect(() => {
@@ -332,6 +356,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       _isFixedTaskLog: true,
       task_rating: wizardRating ?? undefined,
       task_rating_note: wizardRatingNote.trim() || undefined,
+      organization_id: selectedClientOrg?.organizationId ?? null,
     });
 
     // Reset everything
@@ -389,6 +414,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       task_rate: selectedTaskRate,
       task_rating: rating ?? undefined,
       task_rating_note: ratingNote || undefined,
+      organization_id: selectedClientOrg?.organizationId ?? null,
     });
 
     // Reset everything
@@ -531,28 +557,45 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                   {filteredAccounts.map((a) => (
                     <option key={a} value={a}>{a}</option>
                   ))}
+                  {clientOrgs.length > 0 && (
+                    <optgroup label="Your Clients">
+                      {clientOrgs.map((o) => (
+                        <option key={o.organizationId} value={o.orgName}>{o.orgName}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
 
-              {/* Project Dropdown (filtered by account) */}
+              {/* Project — a client org has no project_tags of its own, so
+                  it's fixed to "Client Work" instead of the usual dropdown. */}
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
                   Project <span className="text-terracotta">*</span>
                 </label>
-                <select
-                  value={projectTagId?.toString() ?? ""}
-                  onChange={(e) => handleProjectChange(e.target.value)}
-                  onFocus={handleFormFieldFocus}
-                  disabled={!account || category === "Break"}
-                  className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] disabled:opacity-60 disabled:bg-parchment ${fieldError(!project.trim())}`}
-                >
-                  <option value="">
-                    {!account ? "Select account first..." : "Select project..."}
-                  </option>
-                  {filteredProjects.map((p) => (
-                    <option key={p.id} value={p.id.toString()}>{p.project_name}</option>
-                  ))}
-                </select>
+                {selectedClientOrg ? (
+                  <input
+                    type="text"
+                    value="Client Work"
+                    disabled
+                    className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-parchment outline-none opacity-80"
+                  />
+                ) : (
+                  <select
+                    value={projectTagId?.toString() ?? ""}
+                    onChange={(e) => handleProjectChange(e.target.value)}
+                    onFocus={handleFormFieldFocus}
+                    disabled={!account || category === "Break"}
+                    className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] disabled:opacity-60 disabled:bg-parchment ${fieldError(!project.trim())}`}
+                  >
+                    <option value="">
+                      {!account ? "Select account first..." : "Select project..."}
+                    </option>
+                    {filteredProjects.map((p) => (
+                      <option key={p.id} value={p.id.toString()}>{p.project_name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
           )}

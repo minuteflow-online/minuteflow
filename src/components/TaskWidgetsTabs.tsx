@@ -5,7 +5,7 @@
 // is rendered in "bare" mode (no card/header/collapse of its own) so this
 // container is the only chrome. Assigned Tasks is the default tab.
 import { useState } from "react";
-import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
+import TaskEntryForm, { type TaskFormData, type ClientOrgOption } from "@/components/TaskEntryForm";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import BudgetWidget from "@/components/BudgetWidget";
 import type { VAAssignedTask, Profile } from "@/types/database";
@@ -37,6 +37,9 @@ interface TaskWidgetsTabsProps {
   /** For the admin-only "View as VA" picker on the Assigned Tasks tab
    *  (Toni's call, 2026-11-11) — same pattern as the Assignment page's own. */
   teamMembers?: Profile[];
+  /** Client orgs this VA works for, passed straight through to the Log an
+   *  Activity tab's Account picker. */
+  clientOrgs?: ClientOrgOption[];
 }
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -66,6 +69,7 @@ export default function TaskWidgetsTabs({
   role,
   activeTaskClientMemo,
   teamMembers = [],
+  clientOrgs = [],
 }: TaskWidgetsTabsProps) {
   const [activeTab, setActiveTab] = useState<Tab>("assigned");
   // Admin-only "View as VA" on the Assigned Tasks tab — null means "my own".
@@ -98,6 +102,7 @@ export default function TaskWidgetsTabs({
             role={role}
             sessionState={sessionState as "idle" | "clocked-in" | "on-break"}
             activeTaskClientMemo={activeTaskClientMemo}
+            clientOrgs={clientOrgs}
             bare
           />
         )}

@@ -3835,6 +3835,7 @@ export default function DashboardPage() {
                 role={role}
                 activeTaskClientMemo={activeTask?.client_memo || ""}
                 teamMembers={teamMembers.map((m) => m.profile)}
+                clientOrgs={clientQuickPicks}
               />
             )}
             {/* Right column: Quick Pick, then the tasks up for grabs, then
@@ -4478,6 +4479,7 @@ export default function DashboardPage() {
                   activeTaskClientMemo={activeTask?.client_memo || ""}
                   role={role}
                   sessionState={sessionState}
+                  clientOrgs={clientQuickPicks}
                   bare
                 />
               ) : (
