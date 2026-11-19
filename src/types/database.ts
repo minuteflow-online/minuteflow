@@ -9,6 +9,11 @@ export interface Organization {
    *  messages counts toward tracked hours. Storage only for now — see
    *  "track themselves" / messaging-time follow-up for the VA-side wiring. */
   track_messaging_time: boolean;
+  /** Client-controlled Quick Pick actions offered to the VAs working under
+   *  them — each a toggle shown on the client dashboard, rendered as its own
+   *  section in the VA's Quick Pick (ProjectSidebar) when on. */
+  quick_pick_message: boolean;
+  quick_pick_planning: boolean;
 }
 
 export interface OrganizationMember {

@@ -72,6 +72,9 @@ export interface TaskFormData {
   _assignedTaskId?: number;
   task_rating?: number | null;
   task_rating_note?: string;
+  /** Set when this log is for a client org (e.g. a client-scoped Quick Pick
+   *  action) so it counts toward that client's own Activity Log/Budget. */
+  organization_id?: string | null;
 }
 
 interface ProjectTag {

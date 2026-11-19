@@ -4,6 +4,7 @@ import ClientAssignedTasksPanel from "@/components/ClientAssignedTasksPanel";
 import ClientBoardPanel from "@/components/ClientBoardPanel";
 import ClientActivityLogPanel from "@/components/ClientActivityLogPanel";
 import ClientMessagesPanel from "@/components/ClientMessagesPanel";
+import ClientQuickPickPanel from "@/components/ClientQuickPickPanel";
 
 export default async function ClientDashboardPage() {
   const supabase = await createClient();
@@ -37,6 +38,7 @@ export default async function ClientDashboardPage() {
       <ClientBoardPanel />
       <ClientActivityLogPanel />
       <ClientMessagesPanel />
+      <ClientQuickPickPanel />
     </div>
   );
 }
