@@ -88,7 +88,13 @@ const VA_WORKING_STATUSES = ["on_queue", "in_progress", "submitted"];
 function vaStatusOptionsFor(status: string): string[] | null {
   if (status === "approved") return ["approved", "completed"];
   if (["pending", "on_queue", "in_progress", "submitted", "revision_needed"].includes(status)) {
-    return Array.from(new Set([status, ...VA_WORKING_STATUSES]));
+    const options = [status, ...VA_WORKING_STATUSES];
+    // On Queue hasn't actually been started yet, so it can still go back to
+    // Pending (which drops it off the dashboard — Toni's call, 2026-11-19).
+    // In Progress/Submitted/Revision mean real work has happened, so Pending
+    // stays out of reach for those.
+    if (status === "pending" || status === "on_queue") options.push("pending");
+    return Array.from(new Set(options));
   }
   return null;
 }
