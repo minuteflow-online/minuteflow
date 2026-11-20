@@ -12,6 +12,10 @@ interface SessionBannerProps {
   screenShareActive?: boolean;
   timezone?: string;
   actionPending?: boolean;
+  /** Hides the Break button for callers with no break concept of their own
+   *  (the client's personal clock-in) — without it, state never becomes
+   *  "on-break", so Break would be a dead button that does nothing. */
+  hideBreak?: boolean;
   onClockIn?: () => void;
   onClockOut: () => void;
   onStartBreak: () => void;
@@ -44,6 +48,7 @@ export default function SessionBanner({
   screenShareActive,
   timezone,
   actionPending,
+  hideBreak,
   onClockIn,
   onClockOut,
   onStartBreak,
@@ -132,13 +137,15 @@ export default function SessionBanner({
         )}
         {state === "clocked-in" && (
           <>
-            <button
-              onClick={onStartBreak}
-              disabled={actionPending}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-soft text-amber text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#ecdbb0] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
-            >
-              Break
-            </button>
+            {!hideBreak && (
+              <button
+                onClick={onStartBreak}
+                disabled={actionPending}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-soft text-amber text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#ecdbb0] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
+              >
+                Break
+              </button>
+            )}
             <button
               onClick={onClockOut}
               disabled={actionPending}

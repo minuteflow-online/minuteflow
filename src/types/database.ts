@@ -183,6 +183,27 @@ export interface Session {
   updated_at: string;
 }
 
+export interface ClientClockSession {
+  id: number;
+  user_id: string;
+  clocked_in: boolean;
+  clock_in_time: string | null;
+  clock_out_time: string | null;
+  updated_at: string;
+}
+
+export interface ClientPersonalTask {
+  id: number;
+  user_id: string;
+  task_name: string;
+  note: string | null;
+  due_date: string | null;
+  completed: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SortingReview {
   id: number;
   log_id: number;

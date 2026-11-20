@@ -5,6 +5,8 @@ import ClientBoardPanel from "@/components/ClientBoardPanel";
 import ClientActivityLogPanel from "@/components/ClientActivityLogPanel";
 import ClientMessagesPanel from "@/components/ClientMessagesPanel";
 import ClientQuickPickPanel from "@/components/ClientQuickPickPanel";
+import ClientClockWidget from "@/components/ClientClockWidget";
+import ClientChecklistPanel from "@/components/ClientChecklistPanel";
 
 export default async function ClientDashboardPage() {
   const supabase = await createClient();
@@ -33,6 +35,8 @@ export default async function ClientDashboardPage() {
         <p className="mt-1 text-sm text-bark">{org?.name}</p>
       </div>
 
+      <ClientClockWidget />
+
       {/* Same 3-column shape as the main MinuteFlow dashboard — Messages,
           then the flexible middle column, then Quick Pick + Team on the
           right — just scoped to this client's own org instead of the
@@ -41,6 +45,7 @@ export default async function ClientDashboardPage() {
         <ClientMessagesPanel />
         <ClientAssignedTasksPanel />
         <div className="space-y-5">
+          <ClientChecklistPanel />
           <ClientQuickPickPanel />
           <ClientTeamPanel />
         </div>
