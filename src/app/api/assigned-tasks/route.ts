@@ -506,7 +506,7 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, admin_permissions")
+    .select("role, admin_permissions, organization_id")
     .eq("id", user.id)
     .single();
 
@@ -521,8 +521,11 @@ export async function POST(request: Request) {
   // calling the shared helper directly instead of re-deriving it locally is
   // what keeps this from drifting out of sync again.
   const isPermittedPost = hasBroadAdminAccess(profile) || hasAdminPermission(profile, "task_management");
+  // A client assigning work to their own VA — never anyone else's, checked
+  // against organization_members below once va_ids is known.
+  const isClientPost = profile?.role === "client" && Boolean(profile.organization_id);
 
-  if (!isPermittedPost && !isVaPost) {
+  if (!isPermittedPost && !isVaPost && !isClientPost) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -590,8 +593,10 @@ export async function POST(request: Request) {
   };
 
   // Plain VAs always self-assign regardless of what va_ids was sent;
-  // permission-granted VAs (and admins/managers) may assign to anyone.
-  const va_ids: string[] = isPermittedPost ? (rawVaIds ?? []) : [user.id];
+  // permission-granted VAs (and admins/managers) may assign to anyone; a
+  // client may assign to whoever they name, pending the org-membership
+  // check just below.
+  const va_ids: string[] = isPermittedPost || isClientPost ? (rawVaIds ?? []) : [user.id];
 
   if (!task_name?.trim()) {
     return Response.json({ error: "task_name is required" }, { status: 400 });
@@ -605,6 +610,20 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
+
+  // A client can only ever reach VAs active in their own org — verified
+  // server-side regardless of what va_ids the request named.
+  if (isClientPost) {
+    const { data: members } = await adminSupabase
+      .from("organization_members")
+      .select("va_id")
+      .eq("organization_id", profile!.organization_id as string)
+      .eq("status", "active");
+    const allowed = new Set((members ?? []).map((m) => m.va_id as string));
+    if (va_ids.length === 0 || va_ids.some((id) => !allowed.has(id))) {
+      return Response.json({ error: "You can only assign tasks to your own team." }, { status: 403 });
+    }
+  }
 
   // Creating a task with hours counts against the assignees' weekly budgets.
   if (start_time && end_time && va_ids.length > 0) {
@@ -653,6 +672,7 @@ export async function POST(request: Request) {
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
       status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),
+      organization_id: isClientPost ? profile!.organization_id : null,
     })
     .select()
     .single();

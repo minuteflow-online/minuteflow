@@ -730,6 +730,9 @@ export interface AssignedTask {
   start_time: string | null;
   end_time: string | null;
   pay_type?: string | null;
+  /** Set when a client assigned this task themselves — ties it (and its
+   *  submissions, found by joining through here) to that client's own org. */
+  organization_id?: string | null;
   review_required: boolean;
   /** True once Review Required has been answered. Also the record that it was
    *  answered at all — tasks predating the rule carry false and keep whatever
