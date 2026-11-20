@@ -40,7 +40,7 @@ export async function GET(request: Request) {
   if (driveIds.length === 0) return Response.json({ shots: {} });
 
   const admin = serviceClient();
-  const { data: rows, error } = await admin
+  const { data: rawRows, error } = await admin
     .from("task_screenshots")
     .select(
       "id, user_id, log_id, filename, screenshot_type, failure_reason, created_at, drive_file_id, captured_at, image_hash"
@@ -48,7 +48,35 @@ export async function GET(request: Request) {
     .in("drive_file_id", driveIds);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  const userIds = Array.from(new Set((rows ?? []).map((r) => r.user_id as string)));
+  // A client may only see details for their own org's VAs — everyone else
+  // keeps today's "any signed-in user" behavior unchanged. Rows outside the
+  // caller's org are dropped rather than the whole request rejected, so they
+  // simply read as "no metadata for this id", same as a non-screenshot id.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, organization_id")
+    .eq("id", user.id)
+    .single();
+  let rows = rawRows ?? [];
+  if (profile?.role === "client") {
+    if (!profile.organization_id) {
+      rows = [];
+    } else {
+      const shooterIds = Array.from(new Set(rows.map((r) => r.user_id as string)));
+      const { data: members } = shooterIds.length
+        ? await admin
+            .from("organization_members")
+            .select("va_id")
+            .eq("organization_id", profile.organization_id)
+            .eq("status", "active")
+            .in("va_id", shooterIds)
+        : { data: [] as Array<{ va_id: string }> };
+      const allowed = new Set((members ?? []).map((m) => m.va_id));
+      rows = rows.filter((r) => allowed.has(r.user_id as string));
+    }
+  }
+
+  const userIds = Array.from(new Set(rows.map((r) => r.user_id as string)));
   const logIds = Array.from(
     new Set((rows ?? []).map((r) => r.log_id as number | null).filter((v): v is number => v != null))
   );

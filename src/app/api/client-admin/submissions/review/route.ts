@@ -21,7 +21,7 @@ const ACTIONS = {
 export async function POST(request: Request) {
   const auth = await requireClientOrgVaIds();
   if (isResponse(auth)) return auth;
-  const { organizationId } = auth;
+  const { userId, organizationId } = auth;
 
   const { taskId, action, note } = (await request.json()) as {
     taskId?: number;
@@ -51,13 +51,22 @@ export async function POST(request: Request) {
   await admin.from("assigned_tasks").update({ status: cfg.status, updated_at: stamp }).eq("id", taskId);
   await syncFixedPayTaskStatus(admin, taskId, cfg.status);
 
-  await admin.from("task_submissions").insert({
+  // user_id is NOT NULL on task_submissions — this used to pass null, which
+  // the insert below silently rejected (the error was never checked), so the
+  // task's status flipped but no thread entry — and no revision note — was
+  // ever recorded. Caught live while building the client Submissions hub,
+  // which is the first place that reads this table for display rather than
+  // just the task's own status column.
+  const { error: insertError } = await admin.from("task_submissions").insert({
     assigned_task_id: taskId,
-    user_id: null,
+    user_id: userId,
     message_type: cfg.entry,
     content: note?.trim() || cfg.body,
     submission_comment: note?.trim() || cfg.body,
   });
+  if (insertError) {
+    return Response.json({ error: insertError.message }, { status: 500 });
+  }
 
   if (action === "approve") {
     await notifyAssigneesOfApproval(admin, {
