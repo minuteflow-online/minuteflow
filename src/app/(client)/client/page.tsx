@@ -33,12 +33,21 @@ export default async function ClientDashboardPage() {
         <p className="mt-1 text-sm text-bark">{org?.name}</p>
       </div>
 
-      <ClientTeamPanel />
-      <ClientAssignedTasksPanel />
-      <ClientBoardPanel />
+      {/* Same 3-column shape as the main MinuteFlow dashboard — Messages,
+          then the flexible middle column, then Quick Pick + Team on the
+          right — just scoped to this client's own org instead of the
+          whole company. */}
+      <div className="grid gap-5 grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[300px_1fr_280px]">
+        <ClientMessagesPanel />
+        <ClientAssignedTasksPanel />
+        <div className="space-y-5">
+          <ClientQuickPickPanel />
+          <ClientTeamPanel />
+        </div>
+      </div>
+
       <ClientActivityLogPanel />
-      <ClientMessagesPanel />
-      <ClientQuickPickPanel />
+      <ClientBoardPanel />
     </div>
   );
 }
