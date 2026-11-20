@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "@/app/actions/auth";
+import ClientHeaderActions from "@/components/ClientHeaderActions";
 
 export default async function ClientLayout({
   children,
@@ -69,14 +70,17 @@ export default async function ClientLayout({
               </Link>
             </nav>
           </div>
-          <form action={signOut}>
-            <button
-              type="submit"
-              className="text-sm font-medium text-bark hover:text-terracotta hover:underline"
-            >
-              Sign Out
-            </button>
-          </form>
+          <div className="flex items-center gap-4">
+            <ClientHeaderActions />
+            <form action={signOut}>
+              <button
+                type="submit"
+                className="text-sm font-medium text-bark hover:text-terracotta hover:underline"
+              >
+                Sign Out
+              </button>
+            </form>
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">
