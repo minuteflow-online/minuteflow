@@ -226,6 +226,9 @@ export default function DashboardPage() {
   const [teamMembers, setTeamMembers] = useState<
     { profile: Profile; session: Session | null }[]
   >([]);
+  const [clientQuickPicks, setClientQuickPicks] = useState<
+    { organizationId: string; orgName: string; message: boolean; planning: boolean }[]
+  >([]);
   const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
   const [screenshots, setScreenshots] = useState<
     Record<number, TaskScreenshot[]>
@@ -477,6 +480,41 @@ export default function DashboardPage() {
     };
   }, [userId]);
 
+  // Client orgs this VA belongs to, with whichever Quick Pick actions each
+  // client has turned on for their own team — feeds the extra sections
+  // ProjectSidebar renders below the fixed, agency-wide ones.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("organization_members")
+        .select("organization_id, organizations(name, quick_pick_message, quick_pick_planning)")
+        .eq("va_id", userId)
+        .eq("status", "active");
+      if (cancelled || !data) return;
+      setClientQuickPicks(
+        data
+          .map((row) => {
+            const org = row.organizations as unknown as
+              | { name: string; quick_pick_message: boolean; quick_pick_planning: boolean }
+              | null;
+            if (!org) return null;
+            return {
+              organizationId: row.organization_id as string,
+              orgName: org.name,
+              message: org.quick_pick_message,
+              planning: org.quick_pick_planning,
+            };
+          })
+          .filter((c): c is NonNullable<typeof c> => c !== null)
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
   // ─── Desktop heartbeat monitor ──────────────────────────────
   // Desktop sends a heartbeat every 30s while open (see desktopHeartbeat.ts).
   // Two missed beats means it's genuinely closed, not a slow tick — same
@@ -603,7 +641,9 @@ export default function DashboardPage() {
           sessionsMap.set(s.user_id, s)
         );
         const members = (allProfilesRes.data as Profile[])
-          .filter((p) => p.is_active !== false)
+          // A client isn't a team member — without this, every client who
+          // signs up would show up mixed into the internal staff roster.
+          .filter((p) => p.is_active !== false && p.role !== "client")
           .map((p) => ({
             profile: p,
             session: sessionsMap.get(p.id) || null,
@@ -2552,6 +2592,7 @@ export default function DashboardPage() {
               project: formData.project || null,
               account: formData.account || null,
               client_name: formData.client_name || null,
+              organization_id: formData.organization_id || null,
               start_time: now,
               end_time: now,
               duration_ms: 0,
@@ -2716,6 +2757,7 @@ export default function DashboardPage() {
             project: formData.project || null,
             account: formData.account || null,
             client_name: formData.client_name || null,
+            organization_id: formData.organization_id || null,
             start_time: now,
             billable: isBillable,
             client_memo: newTaskClientMemo,
@@ -3439,6 +3481,7 @@ export default function DashboardPage() {
         account: mapping.account,
         project: mapping.project || "",
         client_name: mapping.client_name || "",
+        organization_id: mapping.organization_id || null,
         client_memo: "",
         internal_memo: "",
       });
@@ -3804,6 +3847,7 @@ export default function DashboardPage() {
                 role={role}
                 activeTaskClientMemo={activeTask?.client_memo || ""}
                 teamMembers={teamMembers.map((m) => m.profile)}
+                clientOrgs={clientQuickPicks}
               />
             )}
             {/* Right column: Quick Pick, then the tasks up for grabs, then
@@ -3815,6 +3859,7 @@ export default function DashboardPage() {
                   onQuickAction={handleQuickAction}
                   onQuickSwitchAction={handleQuickSwitchTask}
                   isAdmin={hasBroadAdminAccess({ role })}
+                  clientQuickPicks={clientQuickPicks}
                 />
               )}
               {/* Tasks up for grabs, collapsed — admins are staff too, they
@@ -4446,6 +4491,7 @@ export default function DashboardPage() {
                   activeTaskClientMemo={activeTask?.client_memo || ""}
                   role={role}
                   sessionState={sessionState}
+                  clientOrgs={clientQuickPicks}
                   bare
                 />
               ) : (

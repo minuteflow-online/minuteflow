@@ -87,7 +87,7 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, admin_permissions")
+    .select("role, admin_permissions, organization_id")
     .eq("id", user.id)
     .single();
 
@@ -205,6 +205,22 @@ export async function GET(request: Request) {
   // the isPermittedPost comment below for the bug this shape used to hide.
   const isPermitted = hasBroadAdminAccess(profile) || hasAdminPermission(profile, "task_management");
 
+  // A client may view (read-only) one of their own org's VAs — narrower than
+  // isPermitted on purpose: this never grants task-management access, only
+  // the same "View as VA" read the admin gets, and only for a VA actually in
+  // their organization_members roster.
+  let isClientViewingOwnVa = false;
+  if (!isPermitted && viewAsVaParam && profile?.role === "client" && profile.organization_id) {
+    const { data: membership } = await serviceRoleClient
+      .from("organization_members")
+      .select("id")
+      .eq("organization_id", profile.organization_id)
+      .eq("va_id", viewAsVaParam)
+      .eq("status", "active")
+      .maybeSingle();
+    isClientViewingOwnVa = Boolean(membership);
+  }
+
   // One task by id, in the admin row format — what the ?task= deep link from
   // Submissions needs. Every other list here is scoped (your own work, or the
   // reviewer queue of what is still sitting at "submitted"), so a link to an
@@ -260,7 +276,7 @@ export async function GET(request: Request) {
   const vaSelectString = `id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at, sort_order,
      assigned_tasks(id, account, project, project_id, parent_task_id, category, recurring_template_id, spawned_template_id, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, paid_manually, assigned_by, instructions, instructions_locked, review_required, review_required_locked, revision_count, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name, kind), task_todos(id, text, sort_order))`;
 
-  if (isPermitted && viewAsVaParam) {
+  if ((isPermitted || isClientViewingOwnVa) && viewAsVaParam) {
     // Admin viewing a specific VA's task list — bypass RLS with serviceRoleClient
     // so we see exactly what that VA sees (no collaborative tasks included).
     let assigneeQuery = serviceRoleClient
@@ -490,7 +506,7 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, admin_permissions")
+    .select("role, admin_permissions, organization_id")
     .eq("id", user.id)
     .single();
 
@@ -505,8 +521,11 @@ export async function POST(request: Request) {
   // calling the shared helper directly instead of re-deriving it locally is
   // what keeps this from drifting out of sync again.
   const isPermittedPost = hasBroadAdminAccess(profile) || hasAdminPermission(profile, "task_management");
+  // A client assigning work to their own VA — never anyone else's, checked
+  // against organization_members below once va_ids is known.
+  const isClientPost = profile?.role === "client" && Boolean(profile.organization_id);
 
-  if (!isPermittedPost && !isVaPost) {
+  if (!isPermittedPost && !isVaPost && !isClientPost) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -574,8 +593,10 @@ export async function POST(request: Request) {
   };
 
   // Plain VAs always self-assign regardless of what va_ids was sent;
-  // permission-granted VAs (and admins/managers) may assign to anyone.
-  const va_ids: string[] = isPermittedPost ? (rawVaIds ?? []) : [user.id];
+  // permission-granted VAs (and admins/managers) may assign to anyone; a
+  // client may assign to whoever they name, pending the org-membership
+  // check just below.
+  const va_ids: string[] = isPermittedPost || isClientPost ? (rawVaIds ?? []) : [user.id];
 
   if (!task_name?.trim()) {
     return Response.json({ error: "task_name is required" }, { status: 400 });
@@ -589,6 +610,20 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
+
+  // A client can only ever reach VAs active in their own org — verified
+  // server-side regardless of what va_ids the request named.
+  if (isClientPost) {
+    const { data: members } = await adminSupabase
+      .from("organization_members")
+      .select("va_id")
+      .eq("organization_id", profile!.organization_id as string)
+      .eq("status", "active");
+    const allowed = new Set((members ?? []).map((m) => m.va_id as string));
+    if (va_ids.length === 0 || va_ids.some((id) => !allowed.has(id))) {
+      return Response.json({ error: "You can only assign tasks to your own team." }, { status: 403 });
+    }
+  }
 
   // Creating a task with hours counts against the assignees' weekly budgets.
   if (start_time && end_time && va_ids.length > 0) {
@@ -637,6 +672,7 @@ export async function POST(request: Request) {
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
       status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),
+      organization_id: isClientPost ? profile!.organization_id : null,
     })
     .select()
     .single();

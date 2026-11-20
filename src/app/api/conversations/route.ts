@@ -127,6 +127,28 @@ export async function POST(request: Request) {
 
   const supabase = serviceClient();
 
+  // A client may only start conversations with VAs in their own org — never
+  // any other staff member, VA, or client company-wide.
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role, organization_id")
+    .eq("id", user.id)
+    .single();
+  if (callerProfile?.role === "client") {
+    if (!callerProfile.organization_id) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const { data: members } = await supabase
+      .from("organization_members")
+      .select("va_id")
+      .eq("organization_id", callerProfile.organization_id)
+      .eq("status", "active");
+    const allowedIds = new Set((members ?? []).map((m) => m.va_id as string));
+    if (others.some((id) => !allowedIds.has(id))) {
+      return Response.json({ error: "You can only message your own team." }, { status: 403 });
+    }
+  }
+
   // Reuse an existing 1:1 with exactly these two people.
   if (!isGroup && others.length === 1) {
     const { data: myConvs } = await supabase.from("conversation_members").select("conversation_id").eq("user_id", user.id);

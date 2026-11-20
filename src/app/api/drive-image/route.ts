@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { serviceClient } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,10 @@ function getGoogleAuth() {
 }
 
 export async function GET(request: NextRequest) {
-  // Auth guard — any logged-in user may view drive images (screenshots)
+  // Auth guard — any logged-in staff member may view drive images
+  // (screenshots) — deliberate, Toni's call, 2026-11-09. A client is new and
+  // narrower: they may only see screenshots belonging to their own org's VAs,
+  // never anyone else's, so that one case gets an extra check below.
   const supabase = await createClient();
   const {
     data: { user },
@@ -26,6 +30,37 @@ export async function GET(request: NextRequest) {
   const fileId = request.nextUrl.searchParams.get("id");
   if (!fileId) {
     return new Response("Missing id", { status: 400 });
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, organization_id")
+    .eq("id", user.id)
+    .single();
+
+  if (profile?.role === "client") {
+    if (!profile.organization_id) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const admin = serviceClient();
+    const { data: shot } = await admin
+      .from("task_screenshots")
+      .select("user_id")
+      .eq("drive_file_id", fileId)
+      .maybeSingle();
+    if (!shot?.user_id) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const { data: membership } = await admin
+      .from("organization_members")
+      .select("va_id")
+      .eq("organization_id", profile.organization_id)
+      .eq("va_id", shot.user_id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (!membership) {
+      return new Response("Forbidden", { status: 403 });
+    }
   }
 
   try {
