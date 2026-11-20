@@ -50,6 +50,12 @@ export default async function ClientLayout({
                 Productivity
               </Link>
               <Link
+                href="/client/insights"
+                className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
+              >
+                Insights
+              </Link>
+              <Link
                 href="/client/admin"
                 className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
               >
