@@ -466,6 +466,17 @@ export default function ReviewModal({
                       Drop to attach
                     </p>
                   )}
+                  {qualityMode === "revision" && (
+                    <label className="mb-1.5 flex cursor-pointer select-none items-center gap-1 text-[10px] text-walnut">
+                      <input
+                        type="checkbox"
+                        checked={noFault}
+                        onChange={(e) => setNoFault(e.target.checked)}
+                        className="accent-sage"
+                      />
+                      No fault — doesn&apos;t count against them
+                    </label>
+                  )}
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
                     {qualityMode === "rejection" ? "Why is this being rejected?" : "What needs changing?"}
                   </label>
@@ -490,17 +501,6 @@ export default function ReviewModal({
                         className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
                       />
                     </div>
-                  )}
-                  {qualityMode === "revision" && (
-                    <label className="mt-1.5 flex cursor-pointer select-none items-center gap-1 text-[10px] text-walnut">
-                      <input
-                        type="checkbox"
-                        checked={noFault}
-                        onChange={(e) => setNoFault(e.target.checked)}
-                        className="accent-sage"
-                      />
-                      No fault — doesn&apos;t count against them
-                    </label>
                   )}
 
                   <div className="mt-1.5">
