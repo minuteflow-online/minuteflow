@@ -392,7 +392,9 @@ export default function TeamPage() {
     setPhpPerUsd(parsePhpPerUsd(orgRes.data?.php_per_usd));
 
     const allProfiles = (profilesRes.data ?? []) as Profile[];
-    const profiles = allProfiles.filter((p) => p.is_active !== false);
+    // A client isn't a team member — without this, every client who signs up
+    // would show up mixed into the internal staff roster.
+    const profiles = allProfiles.filter((p) => p.is_active !== false && p.role !== "client");
     const sessions = (sessionsRes.data ?? []) as Session[];
     const logs = (logsRes.data ?? []) as TimeLog[];
     const screenshots = (screenshotsRes.data ?? []) as TaskScreenshot[];

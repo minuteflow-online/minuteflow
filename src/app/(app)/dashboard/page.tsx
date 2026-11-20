@@ -631,7 +631,9 @@ export default function DashboardPage() {
           sessionsMap.set(s.user_id, s)
         );
         const members = (allProfilesRes.data as Profile[])
-          .filter((p) => p.is_active !== false)
+          // A client isn't a team member — without this, every client who
+          // signs up would show up mixed into the internal staff roster.
+          .filter((p) => p.is_active !== false && p.role !== "client")
           .map((p) => ({
             profile: p,
             session: sessionsMap.get(p.id) || null,
