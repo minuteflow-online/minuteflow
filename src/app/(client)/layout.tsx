@@ -61,6 +61,12 @@ export default async function ClientLayout({
               >
                 Admin
               </Link>
+              <Link
+                href="/client/portal"
+                className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
+              >
+                Portal
+              </Link>
             </nav>
           </div>
           <form action={signOut}>
