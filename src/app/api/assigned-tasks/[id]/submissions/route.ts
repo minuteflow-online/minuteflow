@@ -108,6 +108,21 @@ async function withAttachments(
   return submissions.map((s) => ({ ...s, attachments: bySubmission.get(s.id) ?? [] }));
 }
 
+/**
+ * Pulls the real links out of a submission's link field. Accepts full URLs
+ * and scheme-less ones ("www.site.com", "site.com/page", which get https://
+ * added), several per field, and ignores filler like "N/A" or "none".
+ */
+function extractLinks(raw: string): string[] {
+  const found: string[] = [];
+  for (const token of raw.split(/[\s,]+/)) {
+    const t = token.replace(/[)\].;]+$/, "");
+    if (/^https?:\/\/\S+/i.test(t)) found.push(t);
+    else if (/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(t)) found.push(`https://${t}`);
+  }
+  return [...new Set(found)];
+}
+
 /** Enough to show the work without turning one submission into a wall of
  *  images. Anything past this stays in the admin panel. */
 const MAX_FILES_POSTED = 5;
@@ -816,31 +831,35 @@ ${esc(snippet)}` : ""}`,
     const who = prof?.full_name || prof?.username || "A VA";
     const where = [task.account, task.project].filter(Boolean).join(" / ");
 
-    const outcome = pendingReview
-      ? progressStatus === "in_progress"
-        ? "In progress — review requested"
-        : "Waiting for review"
-      : progressStatus === "in_progress"
-        ? "In progress — auto approved, no review needed"
-        : autoStatus === "approved"
-          ? "Auto approved — no review needed"
-          : "Logged — completes on submit";
+    // Whether the work is finished or still going is the first thing a
+    // reviewer needs, so it gets its own line rather than being implied by
+    // the review wording ("Waiting for review" never said "completed").
+    const workStatus = progressStatus === "in_progress" ? "🟡 In progress" : "✅ Completed";
+    const reviewNote = pendingReview
+      ? "review requested"
+      : progressStatus === "in_progress" || autoStatus === "approved"
+        ? "auto approved, no review needed"
+        : "logged, no review needed";
 
     const lines = [
       `📤 <b>New submission</b> from ${mention(who, prof?.telegram_chat_id)}`,
       `Task: ${esc(task.task_name ?? "a task")}`,
     ];
     if (where) lines.push(`Project: ${esc(where)}`);
-    lines.push(outcome);
+    lines.push(`Status: <b>${workStatus}</b> — ${reviewNote}`);
 
     // The work itself. Most submissions here are a link rather than a file —
     // both of Flordeliz's today were — and the alert named the task without
     // ever showing what was handed in, so reviewing meant opening the admin
     // panel to find out. The buttons underneath are useless without it.
-    // Only if it is actually a link. People type "N/A" in that box when there
-    // is nothing to give — Flordeliz did, twice today — and "🔗 N/A" reads as
-    // though something was submitted when nothing was.
-    if (/^https?:\/\//i.test(link)) lines.push("", `🔗 ${esc(link)}`);
+    // Only real links count. People type "N/A" in that box when there is
+    // nothing to give, and "🔗 N/A" reads as though something was submitted.
+    // A link typed without the scheme ("www.site.com", "site.com/page") is
+    // still a link — it used to be dropped silently.
+    const submittedLinks = extractLinks(link);
+    if (submittedLinks.length > 0) {
+      lines.push("", ...submittedLinks.map((url) => `🔗 ${esc(url)}`));
+    }
     if (message) {
       const note = message.length > 400 ? message.slice(0, 400) + "…" : message;
       lines.push("", esc(note));
@@ -859,7 +878,8 @@ ${esc(snippet)}` : ""}`,
         `<a href="${links.approve}">✅ Approve</a>  •  <a href="${links.revision}">🔁 Needs revision</a>`
       );
     }
-    lines.push("", "Review: https://minuteflow.click/admin");
+    // Straight to this task's submission thread, not the admin landing page.
+    lines.push("", `Open submission: https://minuteflow.click/productivity/assignment?task=${id}`);
 
     const sent = await sendTelegram("submissions", lines.join("\n"));
 
