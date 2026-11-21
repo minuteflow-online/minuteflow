@@ -4,7 +4,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { weeklyBudgetRejection, weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
-import { syncFixedPayTaskStatus, syncFixedPayTaskPaid } from "@/lib/fixedPayTaskSync";
+import { syncFixedPayTaskStatus, syncFixedPayTaskPaid, syncFixedPayTaskDetails } from "@/lib/fixedPayTaskSync";
 import { boardStatus } from "@/lib/subtaskStatusColumns";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -347,6 +347,9 @@ export async function PUT(request: Request, { params }: RouteContext) {
 
   if (updateError)
     return Response.json({ error: updateError.message }, { status: 500 });
+
+  // An Output Based task's wording lives on fixed_pay_tasks too — the paystub reads it from there.
+  await syncFixedPayTaskDetails(adminSupabase, id, { task_name, task_detail, task_notes, link });
 
   // Sync task_detail → client_memo on linked time_logs
   if (task_detail !== undefined) {
@@ -1344,6 +1347,9 @@ ${existing}` : addition;
         }
       }
     }
+
+    // An Output Based task's wording lives on fixed_pay_tasks too — the paystub reads it from there.
+    await syncFixedPayTaskDetails(adminSupabase, id, { task_name, task_detail, task_notes, link });
 
     // Sync task_detail → client_memo on linked time_logs
     if (task_detail !== undefined) {
