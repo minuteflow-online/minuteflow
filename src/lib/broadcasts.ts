@@ -71,9 +71,10 @@ export function followUpTitle(parentTitle: string): string {
   return `Follow-up: ${parentTitle}`;
 }
 
-// Portal tab that lists each broadcast category. Announcements have no portal tab, so no link.
+// Portal tab that lists each broadcast category. Announcements are listed on the Memos tab.
 export const PORTAL_TAB_BY_CATEGORY: Record<string, string> = {
   memo: "memos",
+  announcement: "memos",
   training: "trainings",
   coaching_notes: "coaching_notes",
   onboarding: "onboarding",
@@ -85,4 +86,33 @@ export function broadcastPortalPath(category: string, id: string): string | null
   const tab = PORTAL_TAB_BY_CATEGORY[category];
   if (!tab) return null;
   return `/portal?tab=${tab}&broadcast=${encodeURIComponent(id)}`;
+}
+
+/**
+ * Coaching notes are private among admins: only the admin who wrote one, and the
+ * admins they share it with, see it in the admin list (Toni's call, 2026-11-20).
+ * The person it's addressed to still sees it in their portal.
+ */
+export function isPrivateCategory(category: string | null | undefined): boolean {
+  return category === "coaching_notes";
+}
+
+/** Whether an admin may see a broadcast in the admin list. */
+export function adminCanSee(
+  broadcast: { category: string; created_by?: string | null; shared_with?: string[] | null },
+  userId: string
+): boolean {
+  if (!isPrivateCategory(broadcast.category)) return true;
+  return broadcast.created_by === userId || (broadcast.shared_with ?? []).includes(userId);
+}
+
+/** Pinned first, then the admin's sort order (lower first), then newest first. */
+export function compareBroadcastOrder(
+  a: { pinned?: boolean | null; sort_order?: number | null; created_at: string },
+  b: { pinned?: boolean | null; sort_order?: number | null; created_at: string }
+): number {
+  if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+  const so = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  if (so !== 0) return so;
+  return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 }

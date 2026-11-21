@@ -4,6 +4,13 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import RichTextEditor from "@/components/RichTextEditor";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import { broadcastDisplayHtml, handleDetailsButtonClick } from "@/lib/broadcastDisplay";
+import { compareBroadcastOrder, isPrivateCategory } from "@/lib/broadcasts";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import BroadcastFilters, {
+  applyBroadcastFilters,
+  EMPTY_BROADCAST_FILTERS,
+  type BroadcastFilterState,
+} from "@/components/BroadcastFilters";
 import {
   hasMagicWordToken,
   magicWordToken,
@@ -54,6 +61,12 @@ interface Broadcast {
   tags: string[];
   /** Who published it, shown on the admin card. */
   published_by_name?: string | null;
+  created_by?: string | null;
+  /** Always listed first, for VAs and in this list. */
+  pinned?: boolean;
+  /** A private note's extra admin readers (ids, and their names for the card). */
+  shared_with?: string[] | null;
+  shared_with_names?: string[];
   /** Set on a follow-up: the broadcast it updates. */
   parent_id?: string | null;
 }
@@ -285,6 +298,14 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
   const [imageDragActive, setImageDragActive] = useState(false);
   const imageDragCounter = useRef(0);
   const [sortOrder, setSortOrder] = useState(0);
+  const [pinned, setPinned] = useState(false);
+  // A coaching note is private: admins it's shared with (ids)
+  const [sharedWith, setSharedWith] = useState<string[]>([]);
+  // Who's looking — a private note's sharing and editing belong to its author
+  const [viewerId, setViewerId] = useState<string | null>(null);
+  // List filters: Type / Account / Author, each multi-select
+  const [filters, setFilters] = useState<BroadcastFilterState>(EMPTY_BROADCAST_FILTERS);
+  const [pinning, setPinning] = useState<Record<string, boolean>>({});
 
   // Publish
   const [publishMode, setPublishMode] = useState<PublishMode>("immediate");
@@ -300,6 +321,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
       const res = await fetch("/api/broadcasts");
       const d = await res.json();
       setBroadcasts(d.broadcasts || d || []);
+      if (d.viewer_id) setViewerId(d.viewer_id);
     } finally {
       setLoading(false);
     }
@@ -346,6 +368,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     setLink("");
     setImageUrl("");
     setSortOrder(0);
+    setPinned(false);
+    setSharedWith([]);
     setPublishMode("immediate");
     setScheduledAt("");
     setResendMode("none");
@@ -372,6 +396,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     setLink(b.link || "");
     setImageUrl(b.image_url || "");
     setSortOrder(b.sort_order ?? 0);
+    setPinned(!!b.pinned);
+    setSharedWith(b.shared_with ?? []);
 
     if (b.status === "scheduled") {
       setPublishMode("scheduled");
@@ -450,6 +476,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
         image_url: imageUrl.trim() || null,
         sort_order: sortOrder,
         tags,
+        pinned,
+        ...(isPrivateCategory(category) ? { shared_with: sharedWith } : {}),
         // Only matters when editing one that's already published
         ...(editing?.status === "published" ? { resend: resendMode } : {}),
       };
@@ -489,7 +517,7 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [title, body, category, tags, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder, resendMode]
+    [title, body, category, tags, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder, resendMode, pinned, sharedWith]
   );
 
   const handleDelete = useCallback(
@@ -626,7 +654,31 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     .forEach((f) => {
       followUpsByParent.set(f.parent_id!, [...(followUpsByParent.get(f.parent_id!) ?? []), f]);
     });
-  const originals = visibleBroadcasts.filter((b) => !b.parent_id);
+  const allOriginals = visibleBroadcasts.filter((b) => !b.parent_id).sort(compareBroadcastOrder);
+  const originals = applyBroadcastFilters(allOriginals, filters);
+
+  // A private note is changed only by whoever wrote it; the admins it's shared with just read it.
+  const canChange = (b: Broadcast) => !isPrivateCategory(b.category) || !viewerId || b.created_by === viewerId;
+
+  // Admins the note can be shared with: everyone with admin access except the author.
+  const shareableAdmins = teamMembers
+    .filter((m) => hasBroadAdminAccess(m) && m.id !== (editing?.created_by ?? viewerId))
+    .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""));
+
+  const togglePin = async (b: Broadcast) => {
+    setPinning((p) => ({ ...p, [b.id]: true }));
+    try {
+      // resend "none": pinning is not news, nobody gets it again
+      const res = await fetch(`/api/broadcasts?id=${b.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned: !b.pinned, resend: "none" }),
+      });
+      if (res.ok) setBroadcasts((prev) => prev.map((x) => (x.id === b.id ? { ...x, pinned: !b.pinned } : x)));
+    } finally {
+      setPinning((p) => ({ ...p, [b.id]: false }));
+    }
+  };
 
   // ── Toggle helpers ───────────────────────────────────────────────────────────
 
@@ -1134,6 +1186,67 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
               <p className="mt-1 text-[11px] text-stone">Lower number = shows first. 0 = default order.</p>
             </div>
 
+            {/* Pin */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={pinned}
+                onChange={(e) => setPinned(e.target.checked)}
+                className="accent-terracotta"
+              />
+              <span className="text-[13px] text-walnut">Pin to the top</span>
+            </label>
+
+            {/* Private note: who else (with admin access) can see it */}
+            {isPrivateCategory(category) && (
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
+                  Share With
+                </label>
+                <p className="mb-2 text-[11px] text-stone">
+                  Coaching notes are private. In admin, only you and the people you add here can see this note.
+                  The person it&apos;s for still sees it in their portal.
+                </p>
+                {sharedWith.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {sharedWith.map((id) => (
+                      <span
+                        key={id}
+                        className="inline-flex items-center gap-1 rounded-full bg-slate-blue-soft px-2 py-0.5 text-[11px] font-semibold text-slate-blue"
+                      >
+                        {teamMembers.find((m) => m.id === id)?.full_name ?? "Unknown"}
+                        <button
+                          type="button"
+                          onClick={() => setSharedWith((prev) => prev.filter((x) => x !== id))}
+                          className="cursor-pointer hover:text-espresso"
+                          aria-label="Stop sharing"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    if (id) setSharedWith((prev) => (prev.includes(id) ? prev : [...prev, id]));
+                  }}
+                  className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                >
+                  <option value="">Add someone with admin access…</option>
+                  {shareableAdmins
+                    .filter((m) => !sharedWith.includes(m.id))
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.full_name ?? "Unknown"}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
             {/* Publish options */}
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">
@@ -1286,8 +1399,15 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
         </div>
       )}
 
+      {/* ── Filters ───────────────────────────────────────────────────────────── */}
+      {!loading && <BroadcastFilters items={allOriginals} value={filters} onChange={setFilters} />}
+
+      {!loading && allOriginals.length > 0 && originals.length === 0 && (
+        <p className="text-sm text-stone py-8 text-center">Nothing matches these filters.</p>
+      )}
+
       {/* ── Empty state ───────────────────────────────────────────────────────── */}
-      {!loading && originals.length === 0 && (
+      {!loading && allOriginals.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-sm font-medium text-espresso">No broadcasts yet</p>
           <p className="mt-1 text-xs text-stone">
@@ -1308,6 +1428,16 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                 <div className="flex-1 min-w-0">
                   <h3 className="text-sm font-semibold text-espresso">{b.title}</h3>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                    {b.pinned && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-semibold text-amber">
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 17v5" />
+                          <path d="M9 10.76V6h6v4.76l2 2.24v2H7v-2z" />
+                          <path d="M8 6h8" />
+                        </svg>
+                        Pinned
+                      </span>
+                    )}
                     <span className="text-[11px] text-stone">{fmtDate(b.created_at)}</span>
                     {b.published_by_name && (
                       <span className="text-[11px] text-stone">
@@ -1343,23 +1473,47 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                       </span>
                     )}
                     <span className="text-[11px] text-stone">{recipientLabel(b.recipients)}</span>
+                    {isPrivateCategory(b.category) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-stone/10 px-2 py-0.5 text-[11px] font-semibold text-walnut">
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        {b.shared_with_names && b.shared_with_names.length > 0
+                          ? `Private · shared with ${b.shared_with_names.join(", ")}`
+                          : b.created_by === viewerId ? "Private · only you" : "Private"}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => openEdit(b)}
-                    className="text-[11px] text-walnut hover:text-espresso cursor-pointer px-2 py-1 rounded border border-sand hover:border-walnut transition-all"
-                  >
-                    Edit
-                  </button>
+                  {canChange(b) && (
+                    <button
+                      onClick={() => togglePin(b)}
+                      disabled={!!pinning[b.id]}
+                      className="text-[11px] text-walnut hover:text-espresso cursor-pointer px-2 py-1 rounded border border-sand hover:border-walnut transition-all disabled:opacity-50"
+                    >
+                      {pinning[b.id] ? "..." : b.pinned ? "Unpin" : "Pin"}
+                    </button>
+                  )}
+                  {canChange(b) && (
+                    <button
+                      onClick={() => openEdit(b)}
+                      className="text-[11px] text-walnut hover:text-espresso cursor-pointer px-2 py-1 rounded border border-sand hover:border-walnut transition-all"
+                    >
+                      Edit
+                    </button>
+                  )}
                   {b.status === "published" && <BroadcastCopyLinkButton category={b.category} id={b.id} />}
-                  <button
-                    onClick={() => handleDelete(b.id)}
-                    disabled={!!deleting[b.id]}
-                    className="text-[11px] text-terracotta hover:text-red-600 cursor-pointer px-2 py-1 rounded border border-sand hover:border-terracotta transition-all disabled:opacity-50"
-                  >
-                    {deleting[b.id] ? "..." : "Delete"}
-                  </button>
+                  {canChange(b) && (
+                    <button
+                      onClick={() => handleDelete(b.id)}
+                      disabled={!!deleting[b.id]}
+                      className="text-[11px] text-terracotta hover:text-red-600 cursor-pointer px-2 py-1 rounded border border-sand hover:border-terracotta transition-all disabled:opacity-50"
+                    >
+                      {deleting[b.id] ? "..." : "Delete"}
+                    </button>
+                  )}
                 </div>
               </div>
 

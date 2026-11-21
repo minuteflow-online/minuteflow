@@ -3,7 +3,12 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
-import { broadcastPortalPath } from "@/lib/broadcasts";
+import { broadcastPortalPath, compareBroadcastOrder } from "@/lib/broadcasts";
+import BroadcastFilters, {
+  applyBroadcastFilters,
+  EMPTY_BROADCAST_FILTERS,
+  type BroadcastFilterState,
+} from "@/components/BroadcastFilters";
 import { memoChatPath } from "@/lib/memoChat";
 import { broadcastDisplayHtml, handleDetailsButtonClick } from "@/lib/broadcastDisplay";
 import { magicWordsMatch, parseMagicWords } from "@/lib/magicWords";
@@ -31,6 +36,10 @@ interface Broadcast {
   created_by?: string | null;
   /** Who to ask about it. Null on your own broadcast or when the author has left. */
   author_name?: string | null;
+  /** Who published it (even if they've left) — for the Author filter. */
+  published_by_name?: string | null;
+  /** Always listed first. */
+  pinned?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -247,6 +256,7 @@ function BroadcastCard({
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
+            {broadcast.pinned && <PinnedBadge />}
             <CategoryBadge category={broadcast.category} />
             {broadcast.tags.map((tag) => (
               <span
@@ -519,16 +529,31 @@ function AskAuthor({
   );
 }
 
+function PinnedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-semibold text-amber">
+      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 17v5" />
+        <path d="M9 10.76V6h6v4.76l2 2.24v2H7v-2z" />
+        <path d="M8 6h8" />
+      </svg>
+      Pinned
+    </span>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────
 
-export default function VaBroadcastsPortalTab({ category }: { category?: Broadcast["category"] } = {}) {
+export default function VaBroadcastsPortalTab({
+  category,
+}: { category?: Broadcast["category"] | Broadcast["category"][] } = {}) {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const linkedId = useSearchParams().get("broadcast");
-  // "All" + a tab per tag actually in use here (Toni's call, 2026-11-04) —
-  // derived from what's loaded rather than a fixed list, so a brand-new tag
-  // shows up as its own tab the moment something is posted with it.
-  const [tagFilter, setTagFilter] = useState<string>("all");
+  // Type / Account / Author, each multi-select (Toni's call, 2026-11-20). The options
+  // come from what's loaded, so a brand-new tag or author shows up on its own.
+  const [filters, setFilters] = useState<BroadcastFilterState>(EMPTY_BROADCAST_FILTERS);
+  const categoryKey = Array.isArray(category) ? category.join(",") : category ?? "";
 
   const fetchBroadcasts = useCallback(async () => {
     setLoading(true);
@@ -537,17 +562,15 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
       const d = await res.json();
       const all: Broadcast[] = d.broadcasts || [];
       // Filter by category if specified
-      const filtered = category ? all.filter((b) => b.category === category) : all;
-      // Sort by sort_order ascending, then by created_at descending
-      filtered.sort((a, b) => {
-        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      });
+      const wanted = categoryKey ? categoryKey.split(",") : null;
+      const filtered = wanted ? all.filter((b) => wanted.includes(b.category)) : all;
+      // Pinned first, then sort_order ascending, then newest first
+      filtered.sort(compareBroadcastOrder);
       setBroadcasts(filtered);
     } finally {
       setLoading(false);
     }
-  }, [category]);
+  }, [categoryKey]);
 
   useEffect(() => {
     fetchBroadcasts();
@@ -572,40 +595,14 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
     });
   const originals = broadcasts.filter((b) => !b.parent_id);
 
-  const availableTags = Array.from(new Set(originals.flatMap((b) => b.tags))).sort((a, b) =>
-    a.localeCompare(b)
-  );
-  const visibleBroadcasts =
-    tagFilter === "all" ? originals : originals.filter((b) => b.tags.includes(tagFilter));
+  const visibleBroadcasts = applyBroadcastFilters(originals, filters);
   const linkFound =
     !!linkedId &&
     originals.some((b) => b.id === linkedId || (followUpsByParent.get(b.id) ?? []).some((f) => f.id === linkedId));
 
   return (
     <div className="max-w-4xl space-y-6">
-      {!loading && availableTags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            onClick={() => setTagFilter("all")}
-            className={`rounded-full px-3 py-1 text-[11px] font-semibold capitalize transition-colors cursor-pointer ${
-              tagFilter === "all" ? "bg-terracotta-soft text-terracotta" : "bg-stone/10 text-stone hover:bg-stone/20"
-            }`}
-          >
-            All
-          </button>
-          {availableTags.map((tag) => (
-            <button
-              key={tag}
-              onClick={() => setTagFilter(tag)}
-              className={`rounded-full px-3 py-1 text-[11px] font-semibold capitalize transition-colors cursor-pointer ${
-                tagFilter === tag ? "bg-terracotta-soft text-terracotta" : "bg-stone/10 text-stone hover:bg-stone/20"
-              }`}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-      )}
+      {!loading && <BroadcastFilters items={originals} value={filters} onChange={setFilters} />}
 
       {loading && (
         <div className="flex items-center gap-2 py-8 text-sm text-stone">
@@ -635,7 +632,7 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
       )}
 
       {!loading && originals.length > 0 && visibleBroadcasts.length === 0 && (
-        <p className="text-sm text-stone py-8 text-center">Nothing tagged &quot;{tagFilter}&quot; yet.</p>
+        <p className="text-sm text-stone py-8 text-center">Nothing matches these filters.</p>
       )}
 
       {!loading && visibleBroadcasts.length > 0 && (
