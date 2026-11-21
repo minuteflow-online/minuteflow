@@ -223,13 +223,12 @@ export default function SubmitWorkModal({
     "w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white";
   const labelClass = "mb-1 block text-[11px] font-bold uppercase tracking-wide text-walnut";
 
+  // No backdrop-close — this form carries a real submission (message, link,
+  // attachments), and a stray click just outside it used to discard all of
+  // it with no confirmation, the same flaw fixed on the Add Subtask modal
+  // (Flordeliz, 2026-11-20). Only the × and Cancel close this one now.
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !saving) onClose();
-      }}
-    >
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
       <div
         onPaste={handlePaste}
         className="relative mx-4 max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-sand bg-white shadow-xl"
