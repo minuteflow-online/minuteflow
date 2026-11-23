@@ -9,7 +9,7 @@ import {
 import { linkifyText } from "@/lib/linkify";
 import { answeredSubmission } from "@/lib/submissionThread";
 import { deadlineFor, isLate } from "@/lib/onTime";
-import { formatStamp, taskElapsedMs, workedSpanLabel, type TaskTime } from "@/lib/submissionTime";
+import { formatStamp, workedSpanLabel, type TaskTime } from "@/lib/submissionTime";
 import { buildShotSessions, type ReportLog } from "@/lib/screenshotReport";
 import { CaptureGapPills, CaptureStatePills } from "@/components/ScreenshotReportPills";
 import SubmissionAttachmentGallery from "@/components/SubmissionAttachmentGallery";
@@ -78,8 +78,6 @@ export default function ClientThreadCard({
   const [noteDraft, setNoteDraft] = useState("");
 
   const totalMs = taskTime?.totalMs ?? 0;
-  const elapsedMs = taskElapsedMs(taskTime?.firstStartMs ?? null, latest?.created_at ?? null);
-  void elapsedMs; // Not surfaced — see the "Parking" note in the session's build log.
 
   const progressStatusLatest = submissions[submissions.length - 1]?.progress_status ?? null;
   const inProgress = progressStatusLatest === "in_progress";
