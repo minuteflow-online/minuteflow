@@ -1,7 +1,10 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { sendResendEmailAlways } from "@/lib/sendEmail";
 import { createClient } from "@/lib/supabase/server";
+import { escapeHtml } from "@/lib/richText";
+import { notifyOne } from "@/lib/notifyOne";
 import { randomBytes } from "crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
@@ -46,10 +49,30 @@ async function verifyClient(): Promise<
 }
 
 /**
+ * Finds an auth user by email. listUsers() pages (50 by default), so a bare
+ * call only ever searched the first page and silently missed everyone else.
+ */
+async function findAuthUserByEmail(admin: SupabaseClient, email: string) {
+  const perPage = 1000;
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const users = data?.users ?? [];
+    const hit = users.find((u) => u.email?.toLowerCase() === email);
+    if (hit) return hit;
+    if (users.length < perPage) return null;
+  }
+  return null;
+}
+
+/**
  * POST /api/organization-invites
  * Body: { email: string }
- * Client only — adds an existing VA to the org immediately, or invites a new
- * one through the same account-creation flow staff invites use.
+ * Client only. An existing account is never added outright: only a plain VA
+ * account can be invited, and it joins as "invited" — the client gets no
+ * access to them until the VA accepts on their own dashboard
+ * (/api/organization-invites/respond). An email with no account gets a
+ * signup invite instead, through the same flow staff invites use.
  */
 export async function POST(request: Request) {
   const authResult = await verifyClient();
@@ -67,22 +90,44 @@ export async function POST(request: Request) {
   const adminClient = makeAdminClient();
 
   // Does this email already belong to an existing account?
-  const { data: authUsers } = await adminClient.auth.admin.listUsers();
-  const existingUser = authUsers?.users?.find(
-    (u) => u.email?.toLowerCase() === normalizedEmail
-  );
+  let existingUser: Awaited<ReturnType<typeof findAuthUserByEmail>>;
+  try {
+    existingUser = await findAuthUserByEmail(adminClient, normalizedEmail);
+  } catch {
+    return Response.json({ error: "Could not check that email right now. Try again." }, { status: 503 });
+  }
 
   if (existingUser) {
+    // Only a plain VA account can be invited — never staff (admin, manager,
+    // founder, …) or another client. Same wording either way, so the reply
+    // doesn't reveal what kind of account an email belongs to.
+    const { data: inviteeProfile } = await adminClient
+      .from("profiles")
+      .select("role")
+      .eq("id", existingUser.id)
+      .maybeSingle();
+    if (inviteeProfile?.role !== "va") {
+      return Response.json(
+        { error: "This account can't be invited to a client team. Ask them for a different email." },
+        { status: 409 }
+      );
+    }
+
     const { data: existingMember } = await adminClient
       .from("organization_members")
-      .select("id")
+      .select("id, status")
       .eq("organization_id", organizationId)
       .eq("va_id", existingUser.id)
       .maybeSingle();
 
     if (existingMember) {
       return Response.json(
-        { error: "This person is already on your team." },
+        {
+          error:
+            existingMember.status === "active"
+              ? "This person is already on your team."
+              : "You've already invited this person — they haven't accepted yet.",
+        },
         { status: 409 }
       );
     }
@@ -90,16 +135,24 @@ export async function POST(request: Request) {
     const { error: memberError } = await adminClient.from("organization_members").insert({
       organization_id: organizationId,
       va_id: existingUser.id,
-      status: "active",
+      status: "invited",
       invited_by: userId,
-      joined_at: new Date().toISOString(),
     });
 
     if (memberError) {
       return Response.json({ error: memberError.message }, { status: 500 });
     }
 
-    const html = buildAddedToTeamEmail({ orgName });
+    await notifyOne(adminClient, {
+      targetUserId: existingUser.id,
+      senderId: userId,
+      content: `${orgName || "A client"} invited you to join their team. Accept or decline it on your dashboard.`,
+      telegram: `${orgName || "A client"} invited you to join their team on MinuteFlow. Open your dashboard to accept or decline.`,
+      topic: "org_invite",
+      linkPath: "/dashboard",
+    });
+
+    const html = buildInvitedToTeamEmail({ orgName });
     await sendResendEmailAlways(
       {
         method: "POST",
@@ -110,14 +163,17 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           from: "MinuteFlow <noreply@minuteflow.click>",
           to: [normalizedEmail],
-          subject: `You've been added to ${orgName}'s team on MinuteFlow`,
+          subject: `${orgName} invited you to their team on MinuteFlow`,
           html,
         }),
       },
-      { type: "org_invite", label: normalizedEmail, sublabel: "Added existing user" }
+      { type: "org_invite", label: normalizedEmail, sublabel: "Invited existing user" }
     ).catch(() => {});
 
-    return Response.json({ success: true, message: `${email} added to your team.` });
+    return Response.json({
+      success: true,
+      message: `Invite sent to ${email}. They'll join your team once they accept.`,
+    });
   }
 
   // No existing account — invite through the normal signup wizard, tagged to this org.
@@ -194,16 +250,17 @@ export async function GET() {
   if (authResult instanceof Response) return authResult;
   const { organizationId } = authResult;
 
-  const supabase = await createClient();
+  // Service role, scoped to this org: a client can't read other profiles
+  // directly, so the member names come through here (name only).
+  const adminClient = makeAdminClient();
 
-  const { data: members } = await supabase
+  const { data: members } = await adminClient
     .from("organization_members")
     .select("id, status, va_id, profiles!organization_members_va_id_fkey(full_name)")
     .eq("organization_id", organizationId);
 
   // invitations has no client-readable RLS policy at all — every access goes
   // through the service role, same as the staff invite routes.
-  const adminClient = makeAdminClient();
   const { data: pendingInvites } = await adminClient
     .from("invitations")
     .select("id, email, created_at, expires_at")
@@ -214,7 +271,9 @@ export async function GET() {
   return Response.json({ members: members ?? [], pendingInvites: pendingInvites ?? [] });
 }
 
-function buildOrgInviteEmail({ orgName, inviteUrl }: { orgName: string; inviteUrl: string }): string {
+function buildOrgInviteEmail({ orgName: rawOrgName, inviteUrl }: { orgName: string; inviteUrl: string }): string {
+  // The org name is whatever the client typed at signup — escape it.
+  const orgName = escapeHtml(rawOrgName);
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
@@ -246,7 +305,8 @@ function buildOrgInviteEmail({ orgName, inviteUrl }: { orgName: string; inviteUr
 </html>`;
 }
 
-function buildAddedToTeamEmail({ orgName }: { orgName: string }): string {
+function buildInvitedToTeamEmail({ orgName: rawOrgName }: { orgName: string }): string {
+  const orgName = escapeHtml(rawOrgName);
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
@@ -255,12 +315,13 @@ function buildAddedToTeamEmail({ orgName }: { orgName: string }): string {
     <div style="background: #fff; border-radius: 12px; border: 1px solid #e8e0d4; overflow: hidden;">
       <div style="padding: 32px 36px 24px; border-bottom: 1px solid #e8e0d4;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #9e9080; margin-bottom: 6px;">MinuteFlow</div>
-        <div style="font-size: 24px; font-weight: 700; color: #c0704e;">You're on a new team!</div>
+        <div style="font-size: 24px; font-weight: 700; color: #c0704e;">You're invited to a team</div>
       </div>
       <div style="padding: 28px 36px;">
         <p style="font-size: 14px; color: #3d2b1f; line-height: 1.6; margin: 0;">
-          <strong>${orgName}</strong> has added you to their team on MinuteFlow. Just sign in as usual —
-          you'll see them listed as an account the next time you log time.
+          <strong>${orgName}</strong> has invited you to join their team on MinuteFlow. Sign in and
+          you'll see the invite at the top of your dashboard — accept it to start working with them,
+          or decline it. Nothing is shared with them unless you accept.
         </p>
       </div>
       <div style="padding: 16px 36px; background: #faf6f0; border-top: 1px solid #e8e0d4; text-align: center;">

@@ -274,7 +274,7 @@ export async function GET(request: Request) {
 
   // Used by both viewAsVa (admin impersonation) and the VA self-query below.
   const vaSelectString = `id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at, sort_order,
-     assigned_tasks(id, account, project, project_id, parent_task_id, category, recurring_template_id, spawned_template_id, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, paid_manually, assigned_by, instructions, instructions_locked, review_required, review_required_locked, revision_count, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name, kind), task_todos(id, text, sort_order))`;
+     assigned_tasks(id, account, project, project_id, parent_task_id, category, recurring_template_id, spawned_template_id, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, paid_manually, assigned_by, instructions, instructions_locked, review_required, review_required_locked, revision_count, organization_id, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name, kind), task_todos(id, text, sort_order))`;
 
   if ((isPermitted || isClientViewingOwnVa) && viewAsVaParam) {
     // Admin viewing a specific VA's task list — bypass RLS with serviceRoleClient
@@ -326,7 +326,17 @@ export async function GET(request: Request) {
       return { ...row, is_collaborative: false, collaborator_name: null };
     });
 
-    const vaFiltered = vaRows.filter((row) =>
+    // A client sees only the work their own organization gave this VA —
+    // never the VA's agency tasks or another client's.
+    const orgScopedRows =
+      isClientViewingOwnVa && !isPermitted
+        ? vaRows.filter(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (row) => ((row as any).assigned_tasks?.organization_id ?? null) === profile?.organization_id
+          )
+        : vaRows;
+
+    const vaFiltered = orgScopedRows.filter((row) =>
       matchesTaskView(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ((row as any).assigned_tasks as { archived_at?: string | null; deleted_at?: string | null }),

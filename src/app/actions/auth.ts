@@ -174,6 +174,19 @@ export async function signUpClient(
     return { error: SERVICE_UNAVAILABLE };
   }
 
+  // Mark the login itself as a client so the proxy can keep it off staff
+  // APIs without a profile lookup per request (see clientApiGuard.ts).
+  // app_metadata is only writable by the service role, never by the user.
+  const { error: metaError } = await adminClient.auth.admin.updateUserById(userId, {
+    app_metadata: { account_type: "client" },
+  });
+
+  if (metaError) {
+    await adminClient.from("organizations").delete().eq("id", org.id);
+    await adminClient.auth.admin.deleteUser(userId);
+    return { error: SERVICE_UNAVAILABLE };
+  }
+
   redirect("/dashboard");
 }
 

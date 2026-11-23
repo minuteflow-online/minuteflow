@@ -1,4 +1,4 @@
-import { requireClientOrgVaIds, serviceClient, isResponse } from "@/lib/clientAdminAccess";
+import { requireClientOrgVaIds, serviceClient, isResponse, isWorkingForOrg } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -6,14 +6,15 @@ export const dynamic = "force-dynamic";
  * POST /api/client-admin/force-clock-out
  * body: { targetUserId: string }
  * Same effect as admin's Force Clock Out — closes any open time log and
- * clears the session — only ever for a VA active in the caller's own org.
+ * clears the session — only ever for a VA active in the caller's own org,
+ * and only while they are working on one of this org's tasks.
  * auto_closed_reason is "client" rather than "admin" so anything reading
  * that field later can tell who ended the session.
  */
 export async function POST(request: Request) {
   const auth = await requireClientOrgVaIds();
   if (isResponse(auth)) return auth;
-  const { vaIds } = auth;
+  const { vaIds, organizationId } = auth;
 
   const { targetUserId } = (await request.json()) as { targetUserId?: string };
   if (!targetUserId || !vaIds.includes(targetUserId)) {
@@ -21,6 +22,14 @@ export async function POST(request: Request) {
   }
 
   const admin = serviceClient();
+  // Only while the VA is on this org's own task — never their agency or
+  // another client's work.
+  if (!(await isWorkingForOrg(admin, organizationId, targetUserId))) {
+    return Response.json(
+      { error: "You can only clock someone out while they're working on one of your tasks." },
+      { status: 409 }
+    );
+  }
   const now = new Date().toISOString();
   const nowMs = new Date(now).getTime();
 

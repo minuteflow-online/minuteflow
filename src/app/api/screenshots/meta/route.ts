@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
+import { orgVisibleShots } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
   const { data: rawRows, error } = await admin
     .from("task_screenshots")
     .select(
-      "id, user_id, log_id, filename, screenshot_type, failure_reason, created_at, drive_file_id, captured_at, image_hash"
+      "id, user_id, log_id, submission_id, filename, screenshot_type, failure_reason, created_at, drive_file_id, captured_at, image_hash"
     )
     .in("drive_file_id", driveIds);
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -62,17 +63,8 @@ export async function GET(request: Request) {
     if (!profile.organization_id) {
       rows = [];
     } else {
-      const shooterIds = Array.from(new Set(rows.map((r) => r.user_id as string)));
-      const { data: members } = shooterIds.length
-        ? await admin
-            .from("organization_members")
-            .select("va_id")
-            .eq("organization_id", profile.organization_id)
-            .eq("status", "active")
-            .in("va_id", shooterIds)
-        : { data: [] as Array<{ va_id: string }> };
-      const allowed = new Set((members ?? []).map((m) => m.va_id));
-      rows = rows.filter((r) => allowed.has(r.user_id as string));
+      // Only captures of work done for this org (see orgVisibleShots).
+      rows = await orgVisibleShots(admin, profile.organization_id, rows);
     }
   }
 

@@ -172,8 +172,10 @@ export default function ClientSubmissionsPanel({ refreshKey }: { refreshKey: num
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) setCurrentUserId(user.id);
-      const { data: org } = await supabase.from("organization_settings").select("timezone").limit(1).single();
-      if (org?.timezone) setOrgTimezone(org.timezone);
+      // From the server — a client can't read the company settings directly.
+      const res = await fetch("/api/client-admin/team-context", { cache: "no-store" });
+      const context = res.ok ? ((await res.json()) as { timezone?: string }) : {};
+      if (context.timezone) setOrgTimezone(context.timezone);
     })();
   }, [supabase]);
 

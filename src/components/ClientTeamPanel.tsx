@@ -116,9 +116,18 @@ export default function ClientTeamPanel() {
               <span className="text-[13px] font-semibold text-espresso">
                 {m.profiles?.full_name ?? "Unknown"}
               </span>
-              <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-sage-soft text-sage border border-sage/20">
-                Active
-              </span>
+              {m.status === "active" ? (
+                <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-sage-soft text-sage border border-sage/20">
+                  Active
+                </span>
+              ) : (
+                <span
+                  className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200"
+                  title="Waiting for them to accept your invite"
+                >
+                  Invited
+                </span>
+              )}
             </div>
           ))}
           {pendingInvites.map((inv) => (

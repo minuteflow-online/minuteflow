@@ -21,6 +21,7 @@ import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
+import OrgInviteBanner from "@/components/OrgInviteBanner";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords, isDuplicateActiveLogError } from "@/lib/utils";
 import { fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshots";
@@ -3317,6 +3318,9 @@ export default function DashboardPage() {
       project: detail.project || "",
       client_memo: detail.task_detail || "",
       internal_memo: "",
+      // A client-assigned task carries its org, so the time counts toward
+      // that client (their Insights / Activity Log read time_logs by org).
+      organization_id: detail.organization_id ?? null,
       _skipClockIn: isFixedPay,
       ...(isFixedPay
         ? {
@@ -3363,6 +3367,9 @@ export default function DashboardPage() {
       project: detail.project || "",
       client_memo: detail.task_detail || "",
       internal_memo: "",
+      // A client-assigned task carries its org, so the time counts toward
+      // that client (their Insights / Activity Log read time_logs by org).
+      organization_id: detail.organization_id ?? null,
       _assignedTaskId: task.assigned_tasks.id,
     };
 
@@ -3703,6 +3710,9 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* A client's team invite waiting on this person \u2014 renders nothing otherwise */}
+      <OrgInviteBanner />
 
       {/* Greeting \u2014 doubles as the Clock In prompt when idle, instead of a separate banner */}
       <div className="mb-7 flex flex-wrap items-end justify-between gap-4">

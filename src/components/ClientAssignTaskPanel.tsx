@@ -17,6 +17,9 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
   const [taskDetail, setTaskDetail] = useState("");
   const [category, setCategory] = useState("Task");
   const [dueDate, setDueDate] = useState("");
+  // Time-based tasks need a planned duration (or a time slot) — without one
+  // the VA's own task editor refuses to save any change to the task.
+  const [plannedHours, setPlannedHours] = useState("1");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -43,12 +46,18 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
     setTaskDetail("");
     setCategory("Task");
     setDueDate("");
+    setPlannedHours("1");
     setError("");
   };
 
   const handleAssign = async () => {
     if (!vaId || !taskName.trim()) {
       setError("Pick a VA and enter a task name.");
+      return;
+    }
+    const hours = Number(plannedHours);
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) {
+      setError("Enter the planned time in hours (for example 1 or 1.5).");
       return;
     }
     setSaving(true);
@@ -62,6 +71,10 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
         task_detail: taskDetail.trim() || null,
         category,
         due_date: dueDate || null,
+        // Starts today; the planned time is what puts it on the VA's
+        // schedule, same as a duration-only task from staff.
+        start_date: new Date().toLocaleDateString("en-CA"),
+        planned_minutes: Math.round(hours * 60),
         review_required: true,
         // A client names the VA directly — it's a firm assignment, not an
         // open-pool offer, so it lands straight in their Assigned Tasks
@@ -142,7 +155,7 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <div>
           <label className="block text-[11px] font-semibold text-walnut mb-1">Category</label>
           <select
@@ -161,6 +174,18 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
             type="date"
             value={dueDate}
             onChange={(e) => setDueDate(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-[11px] font-semibold text-walnut mb-1">Planned time (hours)</label>
+          <input
+            type="number"
+            min="0.25"
+            max="24"
+            step="0.25"
+            value={plannedHours}
+            onChange={(e) => setPlannedHours(e.target.value)}
             className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
           />
         </div>

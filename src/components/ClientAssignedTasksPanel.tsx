@@ -28,7 +28,7 @@ export default function ClientAssignedTasksPanel() {
         const supabase = createClient();
         const [rosterRes, tzResult, userResult] = await Promise.all([
           fetch("/api/organization-invites"),
-          supabase.from("organization_settings").select("timezone").limit(1).single(),
+          fetch("/api/client-admin/team-context", { cache: "no-store" }),
           supabase.auth.getUser(),
         ]);
         setViewerId(userResult.data.user?.id ?? null);
@@ -44,7 +44,9 @@ export default function ClientAssignedTasksPanel() {
           .sort((a, b) => a.full_name.localeCompare(b.full_name));
         setVas(active);
         setSelectedVaId((current) => current ?? active[0]?.id ?? null);
-        if (tzResult.data?.timezone) setOrgTimezone(tzResult.data.timezone);
+        // From the server — a client can't read the company settings directly.
+        const context = tzResult.ok ? ((await tzResult.json()) as { timezone?: string }) : {};
+        if (context.timezone) setOrgTimezone(context.timezone);
       } finally {
         setLoading(false);
       }

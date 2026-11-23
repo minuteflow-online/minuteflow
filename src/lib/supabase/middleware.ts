@@ -1,5 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  CLIENT_ACCOUNT_TYPE,
+  bearerAccountType,
+  isClientAllowedApi,
+} from "@/lib/clientApiGuard";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -59,6 +64,19 @@ export async function updateSession(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
+  }
+
+  // Client (employer) accounts may only reach the /api routes their own
+  // pages use — see clientApiGuard.ts. Checked for the cookie session and
+  // for a bearer token, since several routes accept either.
+  const pathname = request.nextUrl.pathname;
+  if (pathname.startsWith("/api/")) {
+    const isClient =
+      user?.app_metadata?.account_type === CLIENT_ACCOUNT_TYPE ||
+      bearerAccountType(request.headers.get("authorization")) === CLIENT_ACCOUNT_TYPE;
+    if (isClient && !isClientAllowedApi(pathname, request.method)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   return supabaseResponse;

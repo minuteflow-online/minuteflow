@@ -7,6 +7,8 @@ interface Member {
   profile: { id: string; full_name: string };
   status: "live" | "personal" | "break" | "off";
   currentTask: string;
+  /** True only while the VA is on one of this org's own tasks. */
+  workingForOrg?: boolean;
   latestScreenshot: { id: number; url: string; createdAt: string } | null;
   todayHoursMs: number;
   todayTasks: number;
@@ -120,7 +122,7 @@ function MemberCard({
         </div>
       </div>
 
-      {!isOffline && (
+      {!isOffline && member.workingForOrg && (
         <div className="flex flex-wrap gap-1.5 p-2.5">
           <button
             onClick={async () => {

@@ -1,6 +1,8 @@
 import { requireClientOrgVaIds, serviceClient, isResponse } from "@/lib/clientAdminAccess";
 import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
 import { notifyAssigneesOfApproval } from "@/lib/notifyApproval";
+import { notifyOne } from "@/lib/notifyOne";
+import { esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -57,24 +59,56 @@ export async function POST(request: Request) {
   // ever recorded. Caught live while building the client Submissions hub,
   // which is the first place that reads this table for display rather than
   // just the task's own status column.
-  const { error: insertError } = await admin.from("task_submissions").insert({
-    assigned_task_id: taskId,
-    user_id: userId,
-    message_type: cfg.entry,
-    content: note?.trim() || cfg.body,
-    submission_comment: note?.trim() || cfg.body,
-  });
+  const { data: entry, error: insertError } = await admin
+    .from("task_submissions")
+    .insert({
+      assigned_task_id: taskId,
+      user_id: userId,
+      message_type: cfg.entry,
+      content: note?.trim() || cfg.body,
+      submission_comment: note?.trim() || cfg.body,
+    })
+    .select("id")
+    .single();
   if (insertError) {
     return Response.json({ error: insertError.message }, { status: 500 });
   }
+
+  // Tell the VA, the same way a staff reviewer's decision does (bell +
+  // private Telegram). This used to pass no reviewer, which skips the bell
+  // entirely, and a revision request notified nobody at all — the VA only
+  // found out by stumbling on the task's status.
+  const { data: me } = await admin.from("profiles").select("full_name, username").eq("id", userId).single();
+  const reviewerName = me?.full_name || me?.username || "Your client";
+  const trimmedNote = note?.trim() || null;
 
   if (action === "approve") {
     await notifyAssigneesOfApproval(admin, {
       taskId,
       taskName: task.task_name,
-      reviewerId: null,
-      reviewerName: null,
+      reviewerId: userId,
+      reviewerName,
+      note: trimmedNote,
+      submissionId: entry?.id as number | undefined,
     });
+  } else {
+    const { data: assignees } = await admin
+      .from("assigned_task_assignees")
+      .select("va_id")
+      .eq("assigned_task_id", taskId);
+    const snippet = trimmedNote && trimmedNote.length > 160 ? `${trimmedNote.slice(0, 160)}…` : trimmedNote;
+    for (const a of assignees ?? []) {
+      if (!a.va_id || a.va_id === userId) continue;
+      await notifyOne(admin, {
+        targetUserId: a.va_id as string,
+        senderId: userId,
+        content: `${reviewerName} requested a revision on “${task.task_name ?? "a task"}”${snippet ? `: ${snippet}` : ""}`,
+        telegram: `🔁 <b>${esc(reviewerName)}</b> requested a revision on <b>${esc(task.task_name ?? "a task")}</b>${snippet ? `\n\n${esc(snippet)}` : ""}`,
+        topic: "submissions",
+        assignedTaskId: taskId,
+        submissionId: entry?.id as number | undefined,
+      });
+    }
   }
 
   return Response.json({ success: true });

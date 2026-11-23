@@ -17,11 +17,16 @@ export default function ClientBoardPanel() {
         const supabase = createClient();
         const [rosterRes, tzResult, userResult] = await Promise.all([
           fetch("/api/organization-invites"),
-          supabase.from("organization_settings").select("timezone").limit(1).single(),
+          fetch("/api/client-admin/team-context", { cache: "no-store" }),
           supabase.auth.getUser(),
         ]);
         setViewerId(userResult.data.user?.id ?? null);
-        if (tzResult.data?.timezone) setOrgTimezone(tzResult.data.timezone);
+        // Timezone + VA names from the server — a client can't read other
+        // people's profiles or the company settings directly.
+        const context = tzResult.ok
+          ? ((await tzResult.json()) as { timezone?: string; people?: Profile[] })
+          : {};
+        if (context.timezone) setOrgTimezone(context.timezone);
 
         const rosterData = await rosterRes.json();
         interface MemberRow {
@@ -32,13 +37,8 @@ export default function ClientBoardPanel() {
           .filter((m) => m.status === "active")
           .map((m) => m.va_id);
 
-        if (activeVaIds.length > 0) {
-          const { data: profiles } = await supabase
-            .from("profiles")
-            .select("*")
-            .in("id", activeVaIds);
-          setTeamMembers((profiles ?? []) as Profile[]);
-        }
+        const activeSet = new Set(activeVaIds);
+        setTeamMembers((context.people ?? []).filter((p) => activeSet.has(p.id)));
       } finally {
         setLoading(false);
       }

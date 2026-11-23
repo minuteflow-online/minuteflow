@@ -49,3 +49,129 @@ export async function requireClientOrgVaIds(): Promise<
 export function isResponse(x: unknown): x is Response {
   return x instanceof Response;
 }
+
+type AdminClient = ReturnType<typeof serviceClient>;
+
+/**
+ * Being in a client's org does NOT open up a VA's whole history to that
+ * client — most of their time is usually agency work, or another client's.
+ * A client only ever sees work done *for their org*: a time log tagged with
+ * their organization_id, or tied to (or submitted on) an assigned task their
+ * org owns. These helpers are that one rule, shared by every client route.
+ */
+
+/** Of these assigned task ids, the ones that belong to this org. */
+export async function orgOwnedTaskIds(
+  admin: AdminClient,
+  organizationId: string,
+  taskIds: number[]
+): Promise<Set<number>> {
+  const owned = new Set<number>();
+  const unique = Array.from(new Set(taskIds));
+  for (let i = 0; i < unique.length; i += 200) {
+    const { data } = await admin
+      .from("assigned_tasks")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .in("id", unique.slice(i, i + 200));
+    for (const row of data ?? []) owned.add(row.id as number);
+  }
+  return owned;
+}
+
+/** Of these time log ids, the ones that were work for this org. */
+export async function orgOwnedLogIds(
+  admin: AdminClient,
+  organizationId: string,
+  logIds: number[]
+): Promise<Set<number>> {
+  const unique = Array.from(new Set(logIds));
+  const logs: Array<{ id: number; organization_id: string | null; assigned_task_id: number | null }> = [];
+  for (let i = 0; i < unique.length; i += 200) {
+    const { data } = await admin
+      .from("time_logs")
+      .select("id, organization_id, assigned_task_id")
+      .in("id", unique.slice(i, i + 200));
+    logs.push(...((data ?? []) as typeof logs));
+  }
+  const tasks = await orgOwnedTaskIds(
+    admin,
+    organizationId,
+    logs.map((l) => l.assigned_task_id).filter((v): v is number => v != null)
+  );
+  return new Set(
+    logs
+      .filter((l) => l.organization_id === organizationId || (l.assigned_task_id != null && tasks.has(l.assigned_task_id)))
+      .map((l) => l.id)
+  );
+}
+
+/**
+ * Of these screenshots, the ones this org's client may see: taken by an
+ * active member of the org, during a log that was org work or as part of a
+ * submission on one of the org's tasks.
+ */
+export async function orgVisibleShots<
+  T extends { user_id: string | null; log_id: number | null; submission_id?: number | null }
+>(admin: AdminClient, organizationId: string, shots: T[]): Promise<T[]> {
+  if (shots.length === 0) return [];
+  const shooterIds = Array.from(new Set(shots.map((s) => s.user_id).filter((v): v is string => Boolean(v))));
+  const { data: members } = shooterIds.length
+    ? await admin
+        .from("organization_members")
+        .select("va_id")
+        .eq("organization_id", organizationId)
+        .eq("status", "active")
+        .in("va_id", shooterIds)
+    : { data: [] as Array<{ va_id: string }> };
+  const memberIds = new Set((members ?? []).map((m) => m.va_id as string));
+
+  const candidates = shots.filter((s) => s.user_id && memberIds.has(s.user_id));
+  const okLogs = await orgOwnedLogIds(
+    admin,
+    organizationId,
+    candidates.map((s) => s.log_id).filter((v): v is number => v != null)
+  );
+
+  const submissionIds = Array.from(
+    new Set(candidates.map((s) => s.submission_id).filter((v): v is number => v != null))
+  );
+  const submissionTask = new Map<number, number>();
+  for (let i = 0; i < submissionIds.length; i += 200) {
+    const { data } = await admin
+      .from("task_submissions")
+      .select("id, assigned_task_id")
+      .in("id", submissionIds.slice(i, i + 200));
+    for (const row of data ?? []) {
+      if (row.assigned_task_id != null) submissionTask.set(row.id as number, row.assigned_task_id as number);
+    }
+  }
+  const okTasks = await orgOwnedTaskIds(admin, organizationId, Array.from(submissionTask.values()));
+
+  return candidates.filter(
+    (s) =>
+      (s.log_id != null && okLogs.has(s.log_id)) ||
+      (s.submission_id != null && okTasks.has(submissionTask.get(s.submission_id) ?? -1))
+  );
+}
+
+/**
+ * Whether this VA's current active task is work for this org — the gate on
+ * a client's Capture Now and Force Clock Out, so a client can never grab a
+ * screen or end a shift while the VA is working for someone else.
+ */
+export async function isWorkingForOrg(
+  admin: AdminClient,
+  organizationId: string,
+  vaId: string
+): Promise<boolean> {
+  const { data: session } = await admin
+    .from("sessions")
+    .select("clocked_in, active_task")
+    .eq("user_id", vaId)
+    .maybeSingle();
+  const logId = Number((session?.active_task as { logId?: unknown } | null)?.logId);
+  if (!session?.clocked_in || !Number.isFinite(logId)) return false;
+  const owned = await orgOwnedLogIds(admin, organizationId, [logId]);
+  return owned.has(logId);
+}

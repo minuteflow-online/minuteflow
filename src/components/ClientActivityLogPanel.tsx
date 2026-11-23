@@ -24,8 +24,10 @@ export default function ClientActivityLogPanel() {
     async function load() {
       try {
         const supabase = createClient();
-        const [tzResult, userResult, logsResult] = await Promise.all([
-          supabase.from("organization_settings").select("timezone").limit(1).single(),
+        // Names + timezone come from the server: a client can't read other
+        // people's profiles (or the company settings) directly.
+        const [contextRes, userResult, logsResult] = await Promise.all([
+          fetch("/api/client-admin/team-context", { cache: "no-store" }),
           supabase.auth.getUser(),
           supabase
             .from("time_logs")
@@ -33,19 +35,14 @@ export default function ClientActivityLogPanel() {
             .gte("start_time", activityLogFloorIso())
             .order("start_time", { ascending: false }),
         ]);
-        if (tzResult.data?.timezone) setOrgTimezone(tzResult.data.timezone);
+        const context = contextRes.ok
+          ? ((await contextRes.json()) as { timezone?: string; people?: Profile[] })
+          : {};
+        if (context.timezone) setOrgTimezone(context.timezone);
         setViewerId(userResult.data.user?.id ?? "");
         const rows = (logsResult.data ?? []) as TimeLog[];
         setLogs(rows);
-
-        const vaIds = [...new Set(rows.map((l) => l.user_id))];
-        if (vaIds.length > 0) {
-          const { data: profileRows } = await supabase
-            .from("profiles")
-            .select("*")
-            .in("id", vaIds);
-          setProfiles((profileRows ?? []) as Profile[]);
-        }
+        setProfiles(context.people ?? []);
       } finally {
         setLoading(false);
       }
