@@ -566,7 +566,7 @@ export async function POST(request: Request) {
 
     const { data: parent } = await supabase
       .from("broadcasts")
-      .select("id, title, category, status, tags, parent_id, created_by, shared_with")
+      .select("*")
       .eq("id", body.parent_id)
       .single();
     if (!parent || !adminCanSee(parent, user.id)) {
@@ -640,6 +640,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "recipients is required and must be a non-empty array" }, { status: 400 });
   }
 
+  // pinned and shared_with are written only when they say something; otherwise the
+  // column defaults (false / empty) apply. A plain broadcast never names them.
+  const sharedWith = isPrivateCategory(category) ? await cleanSharedWith(body.shared_with, user.id) : [];
+
   const { data: broadcast, error: broadcastError } = await supabase
     .from("broadcasts")
     .insert({
@@ -655,9 +659,9 @@ export async function POST(request: Request) {
       image_url: image_url?.trim() || null,
       sort_order: typeof sort_order === "number" ? sort_order : 0,
       tags: normalizeTags(tags),
-      pinned: body.pinned === true,
+      ...(body.pinned === true ? { pinned: true } : {}),
       // Only a private note (coaching note) is shared; everything else every admin sees anyway.
-      shared_with: isPrivateCategory(category) ? await cleanSharedWith(body.shared_with, user.id) : [],
+      ...(sharedWith.length ? { shared_with: sharedWith } : {}),
     })
     .select()
     .single();
@@ -732,12 +736,16 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const fields: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
-  if (body.pinned !== undefined) fields.pinned = body.pinned === true;
+  // Only written when they actually change, so an ordinary edit never names them.
+  if (body.pinned !== undefined && (body.pinned === true) !== !!current.pinned) fields.pinned = body.pinned === true;
+  const currentShared: string[] = current.shared_with ?? [];
   const nextCategory = body.category !== undefined ? body.category : current.category;
   if (!isPrivateCategory(nextCategory)) {
-    if ((current.shared_with ?? []).length) fields.shared_with = [];
+    if (currentShared.length) fields.shared_with = [];
   } else if (body.shared_with !== undefined) {
-    fields.shared_with = await cleanSharedWith(body.shared_with, current.created_by ?? user.id);
+    const next = await cleanSharedWith(body.shared_with, current.created_by ?? user.id);
+    const same = next.length === currentShared.length && next.every((id) => currentShared.includes(id));
+    if (!same) fields.shared_with = next;
   }
 
   if (body.title !== undefined) fields.title = body.title;
