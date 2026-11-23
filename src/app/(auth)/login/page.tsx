@@ -94,12 +94,12 @@ export default function LoginPage() {
       </div>
 
       <p className="mt-6 text-center text-sm text-bark">
-        Don&apos;t have an account?{" "}
+        Signing up as a client?{" "}
         <Link
-          href="/register"
+          href="/signup-client"
           className="font-medium text-terracotta hover:underline"
         >
-          Register
+          Create a client account
         </Link>
       </p>
     </>
