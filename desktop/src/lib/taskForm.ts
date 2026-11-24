@@ -70,6 +70,15 @@ export function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// Mirrors web's isReservedTaskName (src/lib/utils.ts) — "Clock In"/"Clock
+// Out" are the system's own zero-duration boundary markers, never a real
+// task. A VA typing a real task to one of these makes it look like an
+// automated placeholder to anyone reviewing the Timeline later (Toni
+// flagged it, 2026-11-19).
+export function isReservedTaskName(taskName: string): boolean {
+  return ["clock in", "clocked in", "clock out", "clocked out"].includes(taskName.trim().toLowerCase());
+}
+
 export function limitToWords(text: string, limit: number): string {
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length <= limit) return text;

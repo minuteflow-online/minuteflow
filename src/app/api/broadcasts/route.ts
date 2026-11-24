@@ -5,7 +5,15 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { broadcastDisplayHtml } from "@/lib/broadcastDisplay";
 import { parseMagicWords } from "@/lib/magicWords";
-import { isAudience, isRecipient, broadcastPortalPath, followUpTitle, type RecipientRow } from "@/lib/broadcasts";
+import {
+  adminCanSee,
+  isAudience,
+  isPrivateCategory,
+  isRecipient,
+  broadcastPortalPath,
+  followUpTitle,
+  type RecipientRow,
+} from "@/lib/broadcasts";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { esc } from "@/lib/telegram";
 
@@ -24,6 +32,21 @@ type Profile = {
   is_active: boolean;
   full_name: string | null;
 };
+
+/**
+ * The admins a private note may be shared with: active people with admin access,
+ * never its author. Anything else in the list is dropped.
+ */
+async function cleanSharedWith(raw: unknown, authorId: string): Promise<string[]> {
+  if (!Array.isArray(raw)) return [];
+  const ids = Array.from(new Set(raw.filter((v): v is string => typeof v === "string" && v !== authorId)));
+  if (ids.length === 0) return [];
+  const adminClient = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { data } = await adminClient.from("profiles").select("id, role, is_active").in("id", ids);
+  return (data || []).filter((p) => p.is_active !== false && hasBroadAdminAccess(p)).map((p) => p.id);
+}
 
 type BroadcastRecipient = {
   id: string;
@@ -401,10 +424,21 @@ export async function GET(request: Request) {
         author_name: b.created_by && b.created_by !== user.id ? memberName.get(b.created_by) ?? null : null,
         // Who published it, including you — shown on the admin card
         published_by_name: b.created_by ? memberName.get(b.created_by) ?? null : null,
+        shared_with_names: (b.shared_with ?? []).map((id: string) => memberName.get(id) ?? "Unknown"),
       };
     });
 
-    return Response.json({ broadcasts: result });
+    // Private notes (coaching notes) only reach their author, the admins they're shared
+    // with, and an admin they're addressed to. A follow-up goes with its original.
+    const byId = new Map(broadcasts.map((b) => [b.id, b]));
+    const addressedToMe = (id: string) =>
+      (recipientsByBroadcast[id] || []).some((r) => r.recipient_type === "individual" && r.recipient_value === user.id);
+    const visible = result.filter((b) => {
+      const root = (b.parent_id && byId.get(b.parent_id)) || b;
+      return adminCanSee(root, user.id) || addressedToMe(root.id);
+    });
+
+    return Response.json({ broadcasts: visible, viewer_id: user.id });
   }
 
   // VA: return published broadcasts AND scheduled broadcasts whose scheduled_at <= now
@@ -473,6 +507,8 @@ export async function GET(request: Request) {
   // Authors' names, for the "Ask <author> a question" button on each broadcast
   const authorIds = Array.from(new Set(visibleBroadcasts.map((b) => b.created_by).filter(Boolean))) as string[];
   const authorName = new Map<string, string>();
+  // Every author, including people who've left — for the Author filter
+  const publishedByName = new Map<string, string>();
   if (authorIds.length) {
     const adminClient = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
@@ -481,16 +517,19 @@ export async function GET(request: Request) {
       .from("profiles")
       .select("id, full_name, username, is_active")
       .in("id", authorIds);
+    (authors || []).forEach((a) => publishedByName.set(a.id, a.full_name || a.username || "Unknown"));
     // An author who has left can't answer, so they get no button.
     (authors || [])
       .filter((a) => a.is_active !== false)
       .forEach((a) => authorName.set(a.id, a.full_name || a.username || "the author"));
   }
 
-  const result = visibleBroadcasts.map((b) => {
+  const result = visibleBroadcasts.map(({ shared_with: _sharedWith, ...b }) => {
+    void _sharedWith; // which admins can see a note is none of the reader's business
     const myRead = myReadMap.get(b.id);
     return {
       ...b,
+      published_by_name: b.created_by ? publishedByName.get(b.created_by) ?? null : null,
       confirmed_by_me: myRead?.confirmed ?? false,
       word_entered_by_me: myRead?.word_entered ?? null,
       recipients: recipientsByBroadcast[b.id] || [],
@@ -527,10 +566,12 @@ export async function POST(request: Request) {
 
     const { data: parent } = await supabase
       .from("broadcasts")
-      .select("id, title, category, status, tags, parent_id")
+      .select("*")
       .eq("id", body.parent_id)
       .single();
-    if (!parent) return Response.json({ error: "Original broadcast not found" }, { status: 404 });
+    if (!parent || !adminCanSee(parent, user.id)) {
+      return Response.json({ error: "Original broadcast not found" }, { status: 404 });
+    }
     if (parent.parent_id) {
       return Response.json({ error: "Post the follow-up on the original, not on another follow-up" }, { status: 400 });
     }
@@ -599,6 +640,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "recipients is required and must be a non-empty array" }, { status: 400 });
   }
 
+  // pinned and shared_with are written only when they say something; otherwise the
+  // column defaults (false / empty) apply. A plain broadcast never names them.
+  const sharedWith = isPrivateCategory(category) ? await cleanSharedWith(body.shared_with, user.id) : [];
+
   const { data: broadcast, error: broadcastError } = await supabase
     .from("broadcasts")
     .insert({
@@ -614,6 +659,9 @@ export async function POST(request: Request) {
       image_url: image_url?.trim() || null,
       sort_order: typeof sort_order === "number" ? sort_order : 0,
       tags: normalizeTags(tags),
+      ...(body.pinned === true ? { pinned: true } : {}),
+      // Only a private note (coaching note) is shared; everything else every admin sees anyway.
+      ...(sharedWith.length ? { shared_with: sharedWith } : {}),
     })
     .select()
     .single();
@@ -677,12 +725,28 @@ export async function PATCH(request: Request) {
     .eq("id", id)
     .single();
 
-  if (fetchError || !current) {
+  if (fetchError || !current || !adminCanSee(current, user.id)) {
     return Response.json({ error: "Broadcast not found" }, { status: 404 });
+  }
+  // A private note is changed only by the admin who wrote it; the people it's shared with just read it.
+  if (isPrivateCategory(current.category) && current.created_by !== user.id) {
+    return Response.json({ error: "Only the person who wrote this note can change it" }, { status: 403 });
   }
 
   const body = await request.json();
   const fields: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  // Only written when they actually change, so an ordinary edit never names them.
+  if (body.pinned !== undefined && (body.pinned === true) !== !!current.pinned) fields.pinned = body.pinned === true;
+  const currentShared: string[] = current.shared_with ?? [];
+  const nextCategory = body.category !== undefined ? body.category : current.category;
+  if (!isPrivateCategory(nextCategory)) {
+    if (currentShared.length) fields.shared_with = [];
+  } else if (body.shared_with !== undefined) {
+    const next = await cleanSharedWith(body.shared_with, current.created_by ?? user.id);
+    const same = next.length === currentShared.length && next.every((id) => currentShared.includes(id));
+    if (!same) fields.shared_with = next;
+  }
 
   if (body.title !== undefined) fields.title = body.title;
   if (body.body !== undefined) fields.body = body.body;
@@ -768,6 +832,12 @@ export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id required" }, { status: 400 });
+
+  // A private note (coaching note) is deleted only by the admin who wrote it.
+  const { data: target } = await supabase.from("broadcasts").select("category, created_by").eq("id", id).single();
+  if (target && isPrivateCategory(target.category) && target.created_by !== user.id) {
+    return Response.json({ error: "Only the person who wrote this note can delete it" }, { status: 403 });
+  }
 
   // Cascade delete: the broadcast's follow-ups go with it. Recipients and reads first, then broadcasts.
   const { data: followUps } = await supabase.from("broadcasts").select("id").eq("parent_id", id);

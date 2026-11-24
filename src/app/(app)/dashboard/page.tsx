@@ -86,15 +86,25 @@ function formatDateLong(timezone?: string): string {
 // treated as a real overnight continuation (kept on the Clock In day, per
 // policy). Anything older than that is stale and gets today's real date
 // instead, so a missed Clock Out can only ever corrupt one day, not several.
+//
+// The overnight rule only applies while the VA is still clocked in. Once they
+// clock out, the shift is over: the stored session_date is just the leftover
+// from that finished shift, and anything they start next is a new day. Without
+// this check, a VA who clocked out at 11:22 PM and started a task at 4:53 AM
+// had that task filed under the previous day (Neil, Nov 17 2026).
 const OVERNIGHT_CUTOFF_HOUR = 6;
 
 function getCorrectSessionDate(
-  session: { session_date?: string | null } | null | undefined,
+  session: { session_date?: string | null; clocked_in?: boolean | null } | null | undefined,
   orgTimezone: string
 ): string {
   const now = new Date();
   const todayStr = now.toLocaleDateString("en-CA", { timeZone: orgTimezone });
   const storedDate = session?.session_date;
+
+  if (session?.clocked_in === false) {
+    return todayStr; // previous shift already ended — this starts a new day
+  }
 
   if (!storedDate || storedDate === todayStr) {
     return storedDate || todayStr;

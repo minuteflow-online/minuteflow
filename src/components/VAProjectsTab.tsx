@@ -88,7 +88,13 @@ const VA_WORKING_STATUSES = ["on_queue", "in_progress", "submitted"];
 function vaStatusOptionsFor(status: string): string[] | null {
   if (status === "approved") return ["approved", "completed"];
   if (["pending", "on_queue", "in_progress", "submitted", "revision_needed"].includes(status)) {
-    return Array.from(new Set([status, ...VA_WORKING_STATUSES]));
+    const options = [status, ...VA_WORKING_STATUSES];
+    // On Queue hasn't actually been started yet, so it can still go back to
+    // Pending (which drops it off the dashboard — Toni's call, 2026-11-19).
+    // In Progress/Submitted/Revision mean real work has happened, so Pending
+    // stays out of reach for those.
+    if (status === "pending" || status === "on_queue") options.push("pending");
+    return Array.from(new Set(options));
   }
   return null;
 }
@@ -1953,15 +1959,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             bottom of the card, so it doesn't get buried under a long list.
             Landing (no selectedProject): TaskEditor gets no lockedProjectId,
             so it falls back to its own open project picker instead of one
-            fixed objective — there's no single project to lock to here. */}
+            fixed objective — there's no single project to lock to here.
+            Unlike viewOperation's read-only modal, this one has real data
+            entry across six sections — a backdrop click used to discard it
+            all instantly with no confirmation, which read as "the screen
+            refreshed and lost my data" (Flordeliz, 2026-11-20). Only the ×
+            or Cancel button closes this one now. */}
         {showAddSubtask && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
-            onClick={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
-          >
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4">
             <div
               className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl border border-sand bg-white p-5 shadow-lg space-y-3"
-              onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-bold text-espresso">Add Subtask</h3>

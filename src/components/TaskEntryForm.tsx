@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { BillingType } from "@/types/database";
-import { countWords } from "@/lib/utils";
+import { countWords, isReservedTaskName } from "@/lib/utils";
 import { autoCategoryForTask } from "@/lib/taskSchedule";
 import {
   isCategoryBlocked,
@@ -296,6 +296,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const getValidationErrors = (): string[] => {
     const errors: string[] = [];
     if (!taskName.trim()) errors.push("Task is required");
+    else if (isReservedTaskName(taskName)) errors.push('"Clock In"/"Clock Out" are reserved for the system\'s own markers — please use a different task name');
     if (!category || isCategoryBlocked(category, selectedBillingType === "fixed")) errors.push("Category is required");
     if (!isPersonalOrBreak) {
       if (!account) errors.push("Account is required");

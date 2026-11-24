@@ -11,6 +11,7 @@ import {
   countWords,
   limitToWords,
   fetchProjectTags,
+  isReservedTaskName,
   type ProjectTag,
 } from "../lib/taskForm";
 import type { AdHocTaskInput, CloseOldTaskInput } from "../lib/clock";
@@ -73,6 +74,7 @@ export default function LogActivityPanel({ hasActiveTask, submitting, onSubmit }
 
   const validationErrors: string[] = [];
   if (!taskName.trim()) validationErrors.push("Task is required");
+  else if (isReservedTaskName(taskName)) validationErrors.push('"Clock In"/"Clock Out" are reserved for the system\'s own markers — please use a different task name');
   if (!category || category === "Task") validationErrors.push("Category is required");
   if (!isPersonalOrBreak) {
     if (!account) validationErrors.push("Account is required");

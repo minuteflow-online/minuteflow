@@ -45,7 +45,11 @@ export async function POST(request: Request, { params }: RouteContext) {
     .maybeSingle();
   if (!message) return Response.json({ error: "Message not found" }, { status: 404 });
 
-  if (!(await canAccessProject(supabase, profile, user.id, message.project_id))) {
+  // A general topic hangs off no project, so there is no project membership
+  // to check — same exemption /api/project-messages's own GET/POST already
+  // carry. Missing here meant any non-admin replying to a General-board
+  // topic got a silent 403 (Rexinne's "won't send," 2026-11-19).
+  if (message.project_id && !(await canAccessProject(supabase, profile, user.id, message.project_id))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

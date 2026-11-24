@@ -36,6 +36,7 @@ import {
   formatStamp,
   roundDays,
   splitAcrossDays,
+  taskElapsedMs,
   workedSpanLabel,
   type RoundTime,
   type TaskTime,
@@ -233,6 +234,7 @@ const CARD_FIELDS: ColumnDef[] = [
   { key: "submitter", label: "Submitted by", defaultWidth: 0 },
   { key: "count", label: "Submission count", defaultWidth: 0 },
   { key: "total_time", label: "Total time", defaultWidth: 0 },
+  { key: "elapsed_time", label: "Parking time", defaultWidth: 0 },
 ];
 
 /**
@@ -288,6 +290,18 @@ function formatDuration(ms: number): string {
   if (totalMinutes < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+/** "2d 6h" / "6h 20m" / "45m" — day-aware since this measures calendar span, not worked time. */
+function formatElapsed(ms: number): string {
+  if (!ms || ms <= 0) return "0m";
+  const totalMinutes = Math.floor(ms / 60000);
+  if (totalMinutes < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
@@ -3183,6 +3197,18 @@ function ThreadCard({
   // anything logged since the latest submission. Each round's own figure sits
   // on its entry below.
   const totalMs = taskTime?.totalMs ?? 0;
+  // First log start to last log end, across every submitted round — same
+  // "Processed" span each entry below already shows for its own round, just
+  // rolled up for the whole task so it's visible without opening the dropdown
+  // (Toni's call, 2026-11-17). Doesn't cover not-yet-submitted work, which
+  // has no individual sessions to span — same limitation the dropdown's own
+  // "Not yet submitted" line already carries.
+  const allSessions = Object.values(taskTime?.bySubmission ?? {}).flatMap((r) => r.sessions);
+  const workedSpan = workedSpanLabel(allSessions, timezone);
+  // Calendar time elapsed: first log on the task to the latest submission —
+  // the one that completed it, or just the most recent round if it's still
+  // open. Gaps between sessions count, unlike totalMs.
+  const elapsedMs = taskElapsedMs(taskTime?.firstStartMs ?? null, latest?.created_at);
 
   const fieldValue = (key: string): string | null => {
     switch (key) {
@@ -3212,6 +3238,9 @@ function ThreadCard({
         return head.profiles?.full_name || head.profiles?.username || null;
       case "total_time":
         return totalMs > 0 ? formatDuration(totalMs) : null;
+      case "elapsed_time":
+        // Labelled so it isn't mistaken for a second total (Toni's call, 2026-11-18).
+        return elapsedMs != null && elapsedMs > 0 ? `Parking ${formatElapsed(elapsedMs)}` : null;
       case "count":
         return expanded
           ? null
@@ -3504,6 +3533,15 @@ function ThreadCard({
             viewDay={viewDay}
             timezone={timezone}
           />
+        )}
+
+        {workedSpan && (
+          <span
+            className="shrink-0 rounded-full border border-sand bg-parchment/60 px-2 py-[2px] text-[10px] font-semibold text-walnut"
+            title="When this work happened — first log start to last log end"
+          >
+            {workedSpan}
+          </span>
         )}
 
         {/* Buttons exist only while there's a decision to make. Once reviewed,

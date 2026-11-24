@@ -119,6 +119,8 @@ export default function EmailStatusTab() {
         .from("broadcasts")
         .select("id, title, created_at, resend_message_id")
         .eq("status", "published")
+        // Coaching notes are private to their author and the admins they share them with
+        .neq("category", "coaching_notes")
         .order("created_at", { ascending: false }),
       sb
         .from("invitations")

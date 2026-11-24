@@ -121,3 +121,38 @@ describe("collapsible sections from an uploaded page", () => {
     expect(out).not.toMatch(/onclick|alert/);
   });
 });
+
+describe("private notes, pinning and filters", () => {
+  it("shows a coaching note only to its author and the admins it's shared with", async () => {
+    const { adminCanSee } = await import("./broadcasts");
+    const note = { category: "coaching_notes", created_by: "toni", shared_with: ["neil"] };
+    expect(adminCanSee(note, "toni")).toBe(true);
+    expect(adminCanSee(note, "neil")).toBe(true);
+    expect(adminCanSee(note, "king")).toBe(false);
+    expect(adminCanSee({ category: "memo", created_by: "toni" }, "king")).toBe(true);
+  });
+
+  it("lists pinned first, then sort order, then newest", async () => {
+    const { compareBroadcastOrder } = await import("./broadcasts");
+    const items = [
+      { id: "old", created_at: "2026-11-01", sort_order: 0 },
+      { id: "new", created_at: "2026-11-10", sort_order: 0 },
+      { id: "pin", created_at: "2026-10-01", sort_order: 5, pinned: true },
+    ];
+    expect(items.sort(compareBroadcastOrder).map((i) => i.id)).toEqual(["pin", "new", "old"]);
+  });
+
+  it("matches any pick within a filter group and every group across them", async () => {
+    const { applyBroadcastFilters } = await import("@/components/BroadcastFilters");
+    const items = [
+      { id: "1", category: "memo", tags: ["minuteflow"], published_by_name: "Toni" },
+      { id: "2", category: "announcement", tags: ["covap"], published_by_name: "Neil" },
+      { id: "3", category: "memo", tags: ["covap"], published_by_name: "Neil" },
+    ];
+    const ids = (f: { types: string[]; tags: string[]; authors: string[] }) =>
+      applyBroadcastFilters(items, f).map((i) => i.id);
+    expect(ids({ types: [], tags: [], authors: [] })).toEqual(["1", "2", "3"]);
+    expect(ids({ types: ["memo", "announcement"], tags: [], authors: ["Neil"] })).toEqual(["2", "3"]);
+    expect(ids({ types: ["memo"], tags: ["covap", "minuteflow"], authors: [] })).toEqual(["1", "3"]);
+  });
+});

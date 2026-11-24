@@ -26,10 +26,14 @@ function addOneMonthClamped(dateStr: string): string {
  * more than once in the same month is a no-op, not a duplicate.
  */
 export async function runRecurringExpenseGeneration(admin: AnySupabase): Promise<ExpenseGenResult> {
-  const { data: rows } = await admin
+  const { data: rows, error: selectError } = await admin
     .from("financial_expenses")
     .select("id, account, description, amount, category, is_reimbursable, expense_date, is_recurring, recurrence_source_id, recurrence_end_date")
     .eq("is_recurring", true);
+  if (selectError) {
+    // Used to be ignored, which made a broken query look like "nothing due".
+    throw new Error(`[recurring-expenses] could not read recurring expenses: ${selectError.message}`);
+  }
 
   const all = (rows ?? []) as {
     id: number; account: string | null; description: string; amount: number; category: string | null;
@@ -61,7 +65,11 @@ export async function runRecurringExpenseGeneration(admin: AnySupabase): Promise
       continue;
     }
 
-    const nextDate = addOneMonthClamped(latest.expense_date);
+    // If a month was missed, land on this month rather than the month after the
+    // last occurrence — otherwise the series stays a month behind forever.
+    // Missed months are not back-filled here; add those by hand if wanted.
+    let nextDate = addOneMonthClamped(latest.expense_date);
+    while (nextDate.slice(0, 7) < currentMonthKey) nextDate = addOneMonthClamped(nextDate);
     if (latest.recurrence_end_date && nextDate > latest.recurrence_end_date) {
       skipped++;
       continue;

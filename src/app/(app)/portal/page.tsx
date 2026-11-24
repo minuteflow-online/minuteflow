@@ -2238,7 +2238,7 @@ export default function VaPortalPage() {
           <VaBroadcastsPortalTab category="training" />
         )}
         {activeTab === "memos" && (
-          <VaBroadcastsPortalTab category="memo" />
+          <VaBroadcastsPortalTab category={["memo", "announcement"]} />
         )}
         {activeTab === "coaching_notes" && (
           <VaBroadcastsPortalTab category="coaching_notes" />
