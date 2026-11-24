@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { requireClientOrgVaIds, isResponse, serviceClient } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,22 @@ export async function GET(request: Request) {
     data: { user },
   } = await supabase.auth.getUser(bearerToken);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  // A client (employer) gets their own org's active VAs only, with work
+  // fields — never pay type or budget limits. The staff screens they reuse
+  // (Assignment, Calendar) build their VA lists from this.
+  if (user.app_metadata?.account_type === "client") {
+    const auth = await requireClientOrgVaIds();
+    if (isResponse(auth)) return auth;
+    if (auth.vaIds.length === 0) return Response.json({ members: [] });
+    const { data: orgVas, error: orgError } = await serviceClient()
+      .from("profiles")
+      .select("id, full_name, username, avatar_url, position, role, work_days, shift_hours, shift_start, shift_end")
+      .in("id", auth.vaIds)
+      .order("full_name");
+    if (orgError) return Response.json({ error: orgError.message }, { status: 500 });
+    return Response.json({ members: orgVas ?? [] });
+  }
 
   const includeAll = new URL(request.url).searchParams.get("all") === "true";
 

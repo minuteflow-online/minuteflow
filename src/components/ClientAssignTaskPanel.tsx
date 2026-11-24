@@ -9,9 +9,19 @@ interface VaOption {
 
 const CATEGORIES = ["Task", "Communication", "Planning", "Collaboration"];
 
-export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () => void }) {
+export default function ClientAssignTaskPanel({
+  onAssigned,
+  startOpen = false,
+  onClose,
+}: {
+  onAssigned?: () => void;
+  /** Open the form straight away (e.g. from a "+ Create Task" button elsewhere). */
+  startOpen?: boolean;
+  /** Called when the form's × is pressed, for a host that controls visibility. */
+  onClose?: () => void;
+}) {
   const [vas, setVas] = useState<VaOption[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(startOpen);
   const [vaId, setVaId] = useState("");
   const [taskName, setTaskName] = useState("");
   const [taskDetail, setTaskDetail] = useState("");
@@ -120,7 +130,7 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Assign a Task</h3>
-        <button onClick={() => setOpen(false)} className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer">&times;</button>
+        <button onClick={() => { setOpen(false); onClose?.(); }} className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer">&times;</button>
       </div>
 
       <div>

@@ -149,14 +149,20 @@ export async function GET(request: Request) {
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
+  // A client (employer) account: everything below is limited to their own
+  // org's tasks — they must never see the agency's pool or anyone else's work.
+  const clientOrgId =
+    profile?.role === "client" && profile.organization_id ? (profile.organization_id as string) : null;
+
   if (unassignedOnly) {
     // Use service-role client so VAs can read the open task pool.
     // RLS on assigned_tasks only lets VAs see tasks they're already assigned to,
     // which means unassigned tasks (no assignees yet) would return empty for VAs.
-    const { data, error } = await serviceRoleClient
-      .from("assigned_tasks")
-      .select(taskSelect)
-      .order("created_at", { ascending: false });
+    const poolQuery = serviceRoleClient.from("assigned_tasks").select(taskSelect);
+    const { data, error } = await (clientOrgId ? poolQuery.eq("organization_id", clientOrgId) : poolQuery).order(
+      "created_at",
+      { ascending: false }
+    );
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -173,11 +179,14 @@ export async function GET(request: Request) {
     // Fetch all tasks this admin assigned — filter on the assignee level,
     // not the task level, because VAs update assigned_task_assignees.status,
     // not assigned_tasks.status.
-    const { data, error } = await serviceRoleClient
-      .from("assigned_tasks")
-      .select(taskSelect)
-      .eq("assigned_by", user.id)
-      .order("created_at", { ascending: false });
+    // A client reviews everything their org assigned, whichever co-admin
+    // assigned it — never anything outside their org.
+    const isClientReviewer = profile?.role === "client" && Boolean(profile.organization_id);
+    const reviewerQuery = serviceRoleClient.from("assigned_tasks").select(taskSelect);
+    const { data, error } = await (isClientReviewer
+      ? reviewerQuery.eq("organization_id", profile!.organization_id as string)
+      : reviewerQuery.eq("assigned_by", user.id)
+    ).order("created_at", { ascending: false });
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -347,7 +356,9 @@ export async function GET(request: Request) {
     return Response.json({ tasks: vaFiltered });
   }
 
-  if (isPermitted && !selfOnly) {
+  // A client gets the same all-tasks list an admin does (the staff Calendar's
+  // "everyone" view), limited to tasks their own org assigned.
+  if ((isPermitted || clientOrgId) && !selfOnly) {
     // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
     // RLS check (role stays "va"), so use the service-role client here once
     // the app-layer permission check above has already cleared them. This
@@ -356,6 +367,7 @@ export async function GET(request: Request) {
       .from("assigned_tasks")
       .select(taskSelect)
       .order("created_at", { ascending: false });
+    if (!isPermitted && clientOrgId) query = query.eq("organization_id", clientOrgId);
 
     if (projectIdList && projectIdList.length > 0) {
       query = query.in("project_id", projectIdList);

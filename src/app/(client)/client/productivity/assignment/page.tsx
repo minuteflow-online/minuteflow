@@ -1,16 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import ClientAssignTaskPanel from "@/components/ClientAssignTaskPanel";
-import ClientOrgTasksPanel from "@/components/ClientOrgTasksPanel";
+// The same Assignment screen staff use (table, filters, Active / Archived /
+// Trash, Needs Revision, Submitted, columns). It recognises a client login
+// and shows only their own team's work — see the client-mode notes in the
+// staff page and the client branches in /api/assigned-tasks and
+// /api/team-members.
+import TaskListPage from "@/app/(app)/productivity/assignment/page";
 
 export default function ClientAssignmentPage() {
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  return (
-    <div className="space-y-5">
-      <ClientAssignTaskPanel onAssigned={() => setRefreshKey((k) => k + 1)} />
-      <ClientOrgTasksPanel key={refreshKey} />
-    </div>
-  );
+  return <TaskListPage />;
 }

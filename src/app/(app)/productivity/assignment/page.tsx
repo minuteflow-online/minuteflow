@@ -17,6 +17,7 @@ import ConfirmModal from "@/components/ConfirmModal";
 import { useToast } from "@/contexts/ToastProvider";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
+import ClientAssignTaskPanel from "@/components/ClientAssignTaskPanel";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import TeamWorkloadView from "@/components/TeamWorkloadView";
 import ObjectiveProgressView from "@/components/ObjectiveProgressView";
@@ -575,9 +576,18 @@ export default function TaskListPage() {
         // fetched, plus one ?viewAsVa= request per additionally selected VA,
         // merged below (no multi-id version of that param exists).
         const mergeVaIds = mode === "my_tasks" && taskView === "active" ? assignedToFilterIds : [];
+        // A client (employer) has no tasks of their own — their list is the
+        // work their org gave each of its VAs, one ?viewAsVa= per VA (the
+        // route returns only that org's tasks), narrowed by "Assigned To".
+        const clientVaIds =
+          currentRole === "client"
+            ? (assignedToFilterIds.length > 0 ? assignedToFilterIds : assignedByProfiles.map((p) => p.id))
+            : null;
         const endpoints =
           mode === "submitted"
             ? ["/api/assigned-tasks?asReviewer=true"]
+            : clientVaIds
+            ? clientVaIds.map((id) => `/api/assigned-tasks?viewAsVa=${id}&view=${taskView}`)
             : mergeVaIds.length > 0
               ? [
                   `/api/assigned-tasks?selfOnly=true&view=${taskView}`,
@@ -631,7 +641,7 @@ export default function TaskListPage() {
         setLoading(false);
       }
     },
-    [activeView, taskView, selectedVaId, assignedToFilterIds]
+    [activeView, taskView, selectedVaId, assignedToFilterIds, currentRole, assignedByProfiles]
   );
 
   const fetchHourlyPool = useCallback(async () => {
@@ -741,9 +751,15 @@ export default function TaskListPage() {
 
   const isSubmittedView = activeView === "submitted";
   const isAdmin = hasBroadAdminAccess({ role: currentRole });
+  // Client (employer) accounts see this same page for their own team only —
+  // see /client/productivity/assignment. Agency-only parts are hidden below.
+  const isClient = currentRole === "client";
+  const [showClientAssign, setShowClientAssign] = useState(false);
   const isPerTaskVa = normalizePosition(currentPosition) === "Output Based";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
-  const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
+  // A client sees their own org's unassigned tasks here (the route scopes the
+  // pool for them) — view only, no Grab.
+  const canShowHourlyPool = isAdmin || isClient || (currentRole === "va" && !isPerTaskVa);
 
 
   const fetchPanelScreenshots = useCallback(async (taskId: number, taskName: string) => {
@@ -1134,7 +1150,7 @@ export default function TaskListPage() {
   // sent them to the Calendar to change a due date. The real boundary is the
   // API, which checks assignee membership and refuses instructions and a locked
   // review answer from a VA — the form doesn't need to guess at it.
-  const panelCanEditFields = Boolean(selectedTask) && !profileLoading;
+  const panelCanEditFields = Boolean(selectedTask) && !profileLoading && currentRole !== "client";
 
   const panelAssignedByOptions = useMemo(() => {
     if (assignedByProfiles.length > 0) return assignedByProfiles;
@@ -1385,9 +1401,11 @@ export default function TaskListPage() {
     (e: React.MouseEvent, taskId: number, field: InlineEditField, value: string) => {
       e.stopPropagation();
       if (inlineSaving) return;
+      // A client views tasks here; editing a task stays with staff for now.
+      if (currentRole === "client") return;
       setInlineEdit({ taskId, field, value });
     },
-    [inlineSaving]
+    [inlineSaving, currentRole]
   );
 
   const commitInlineEdit = useCallback(
@@ -2231,7 +2249,7 @@ export default function TaskListPage() {
                     Output Based Tasks
                   </button>
                 )}
-                {!isPerTaskVa && (
+                {!isPerTaskVa && !isClient && (
                   <button
                     type="button"
                     onClick={() => { setActiveView("recurring"); void fetchRecurringTemplates(); }}
@@ -2240,6 +2258,7 @@ export default function TaskListPage() {
                     Recurring
                   </button>
                 )}
+                {!isClient && (
                 <button
                   type="button"
                   onClick={() => { setActiveView("objective"); void fetchTasks(); }}
@@ -2247,6 +2266,7 @@ export default function TaskListPage() {
                 >
                   Objective
                 </button>
+                )}
                 {isAdmin && (
                   <button
                     type="button"
@@ -2287,7 +2307,7 @@ export default function TaskListPage() {
           </div>
         </div>
 
-        {currentUserId && (
+        {currentUserId && !isClient && (
           <div className="px-5 pt-4">
             <JobOrdersSection currentUserId={currentUserId} currentRole={currentRole} teamMembers={allTeamMembers} accounts={accountOptions} />
           </div>
@@ -2388,15 +2408,19 @@ export default function TaskListPage() {
                                   </div>
                                 </div>
                               )}
-                              <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
-                              <button
-                                type="button"
-                                onClick={() => void handleHourlyGrab(task.id)}
-                                disabled={isGrabbing}
-                                className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {isGrabbing ? "Grabbing..." : "Grab"}
-                              </button>
+                              {!isClient && (
+                                <>
+                                  <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleHourlyGrab(task.id)}
+                                    disabled={isGrabbing}
+                                    className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {isGrabbing ? "Grabbing..." : "Grab"}
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
                         );
@@ -2495,7 +2519,7 @@ export default function TaskListPage() {
                   {taskView === "active" && activeView === "my_tasks" && (
                     <button
                       type="button"
-                      onClick={openCreate}
+                      onClick={isClient ? () => setShowClientAssign((v) => !v) : openCreate}
                       className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
                     >
                       + Create Task
@@ -2503,6 +2527,17 @@ export default function TaskListPage() {
                   )}
                 </div>
               </div>
+
+              {isClient && showClientAssign && (
+                <ClientAssignTaskPanel
+                  startOpen
+                  onClose={() => setShowClientAssign(false)}
+                  onAssigned={() => {
+                    setShowClientAssign(false);
+                    void fetchTasks();
+                  }}
+                />
+              )}
 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
@@ -3216,10 +3251,13 @@ export default function TaskListPage() {
               ) : (
                 <>
                   <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
-                    {([
-                      ["details", "Details"],
-                      ["edit", "Edit Task"],
-                    ] as const).map(([tab, label]) => (
+                    {(isClient
+                      ? ([["details", "Details"]] as const)
+                      : ([
+                          ["details", "Details"],
+                          ["edit", "Edit Task"],
+                        ] as const)
+                    ).map(([tab, label]) => (
                       <button
                         key={tab}
                         type="button"
@@ -3237,7 +3275,7 @@ export default function TaskListPage() {
                     <TaskDetailsView
                       task={selectedTask.assigned_tasks as unknown as TaskEditorInitialTask}
                       people={assignedByProfiles}
-                      onEdit={() => setPanelTab("edit")}
+                      onEdit={isClient ? undefined : () => setPanelTab("edit")}
                     />
                   ) : (
                     <TaskEditor
@@ -3406,14 +3444,16 @@ export default function TaskListPage() {
                 <button type="button" onClick={closePanel} className="cursor-pointer text-xs text-stone hover:text-espresso">
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleSaveAll()}
-                  disabled={panelSaving}
-                  className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {panelSaving ? "Saving..." : "Save Changes"}
-                </button>
+                {!isClient && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveAll()}
+                    disabled={panelSaving}
+                    className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {panelSaving ? "Saving..." : "Save Changes"}
+                  </button>
+                )}
               </div>
             </div>
           </div>

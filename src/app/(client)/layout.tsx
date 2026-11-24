@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import ClientTopNav from "@/components/ClientTopNav";
 import ClientMainFrame from "@/components/ClientMainFrame";
+import { ToastProvider } from "@/contexts/ToastProvider";
 
 export default async function ClientLayout({
   children,
@@ -37,9 +38,11 @@ export default async function ClientLayout({
   const fullName = profile.full_name || user.email?.split("@")[0] || "Client";
 
   return (
-    <div className="min-h-screen bg-cream">
-      <ClientTopNav fullName={fullName} avatarUrl={profile.avatar_url ?? null} roleLabel={roleLabel} />
-      <ClientMainFrame>{children}</ClientMainFrame>
-    </div>
+    <ToastProvider>
+      <div className="min-h-screen bg-cream">
+        <ClientTopNav fullName={fullName} avatarUrl={profile.avatar_url ?? null} roleLabel={roleLabel} />
+        <ClientMainFrame>{children}</ClientMainFrame>
+      </div>
+    </ToastProvider>
   );
 }

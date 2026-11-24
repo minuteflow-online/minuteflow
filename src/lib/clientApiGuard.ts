@@ -24,6 +24,9 @@ const CLIENT_API_ALLOWLIST: Rule[] = [
   { pattern: /^\/api\/organization-invites$/ },
   // Assign work to an org VA (POST) and "View as VA" (GET ?viewAsVa=).
   { pattern: /^\/api\/assigned-tasks$/, methods: ["GET", "POST"] },
+  // Their own org's VAs (the route returns nothing else to a client) — used by
+  // the staff Assignment / Calendar screens clients reuse.
+  { pattern: /^\/api\/team-members$/, methods: ["GET"] },
   // Direct messages with the org's own VAs.
   { pattern: /^\/api\/conversations(\/.*)?$/ },
   // Screenshot images + details — both check the shooter is in the client's org.
