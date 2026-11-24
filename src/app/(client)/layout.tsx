@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "@/app/actions/auth";
 import ClientHeaderActions from "@/components/ClientHeaderActions";
+import ClientMainFrame from "@/components/ClientMainFrame";
 
 export default async function ClientLayout({
   children,
@@ -83,9 +84,7 @@ export default async function ClientLayout({
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">
-        {children}
-      </main>
+      <ClientMainFrame>{children}</ClientMainFrame>
     </div>
   );
 }
