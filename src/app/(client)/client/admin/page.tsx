@@ -148,7 +148,7 @@ export default function ClientAdminPage() {
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-69px)]">
+    <div className="flex min-h-[calc(100vh-57px)]">
       {/* ── Left Sidebar (same as the real Admin panel) ── */}
       <aside className="w-[220px] shrink-0 bg-[#3d2b1f] flex flex-col">
         <div className="px-4 py-4 border-b border-white/10">

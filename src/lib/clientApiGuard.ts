@@ -32,6 +32,9 @@ const CLIENT_API_ALLOWLIST: Rule[] = [
   // Report Bug / Idea in the client header.
   { pattern: /^\/api\/bug-reports$/, methods: ["POST"] },
   { pattern: /^\/api\/bug-reports\/upload$/, methods: ["POST"] },
+  // Their own profile photo, from the name chip in the top bar (the route
+  // only ever writes the caller's own avatar).
+  { pattern: /^\/api\/upload-avatar$/, methods: ["POST"] },
   // Budget tab (read-only) — the route returns only the caller's own rows.
   { pattern: /^\/api\/budget-requests$/, methods: ["GET"] },
 ];

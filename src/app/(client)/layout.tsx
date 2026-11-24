@@ -1,8 +1,6 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { signOut } from "@/app/actions/auth";
-import ClientHeaderActions from "@/components/ClientHeaderActions";
+import ClientTopNav from "@/components/ClientTopNav";
 import ClientMainFrame from "@/components/ClientMainFrame";
 
 export default async function ClientLayout({
@@ -21,7 +19,7 @@ export default async function ClientLayout({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, full_name, avatar_url, organization_id")
     .eq("id", user.id)
     .single();
 
@@ -30,60 +28,17 @@ export default async function ClientLayout({
     redirect("/dashboard");
   }
 
+  // Shown under the name in the top bar, the way staff see their role.
+  const { data: org } = profile.organization_id
+    ? await supabase.from("organizations").select("owner_profile_id").eq("id", profile.organization_id).maybeSingle()
+    : { data: null };
+  const roleLabel = org?.owner_profile_id === user.id ? "Team owner" : "Co-admin";
+
+  const fullName = profile.full_name || user.email?.split("@")[0] || "Client";
+
   return (
     <div className="min-h-screen bg-cream">
-      <header className="border-b border-sand bg-white px-6 py-4">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between">
-          <div className="flex items-center gap-6">
-            <h1 className="font-serif text-xl font-bold text-ink">
-              Minute<span className="italic text-terracotta">Flow</span>
-            </h1>
-            <nav className="flex items-center gap-1">
-              <Link
-                href="/client"
-                className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/client/productivity"
-                className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
-              >
-                Productivity
-              </Link>
-              <Link
-                href="/client/insights"
-                className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
-              >
-                Insights
-              </Link>
-              <Link
-                href="/client/admin"
-                className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
-              >
-                Admin
-              </Link>
-              <Link
-                href="/client/portal"
-                className="rounded-md px-3 py-1.5 text-sm font-medium text-bark hover:bg-parchment hover:text-espresso transition-colors"
-              >
-                Portal
-              </Link>
-            </nav>
-          </div>
-          <div className="flex items-center gap-4">
-            <ClientHeaderActions />
-            <form action={signOut}>
-              <button
-                type="submit"
-                className="text-sm font-medium text-bark hover:text-terracotta hover:underline"
-              >
-                Sign Out
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
+      <ClientTopNav fullName={fullName} avatarUrl={profile.avatar_url ?? null} roleLabel={roleLabel} />
       <ClientMainFrame>{children}</ClientMainFrame>
     </div>
   );
