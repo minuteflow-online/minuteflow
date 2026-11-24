@@ -697,7 +697,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       .eq("status", "active")
       .eq("role", "manager");
     const targets = new Map<string, string>();
-    if (clientId) targets.set(clientId, "/client/productivity");
+    if (clientId) targets.set(clientId, "/client/productivity/submissions");
     for (const m of managers ?? []) {
       // No review screen for them yet (Phase 2), so no deep link.
       if (m.va_id && !targets.has(m.va_id as string)) targets.set(m.va_id as string, "");

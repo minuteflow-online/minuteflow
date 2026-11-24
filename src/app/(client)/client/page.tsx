@@ -28,14 +28,7 @@ export default async function ClientDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="font-serif text-2xl font-bold text-ink">
-          Welcome, {profile?.full_name}
-        </h2>
-        <p className="mt-1 text-sm text-bark">{org?.name}</p>
-      </div>
-
-      <ClientClockWidget />
+      <ClientClockWidget fullName={profile?.full_name ?? ""} orgName={org?.name ?? ""} />
 
       {/* Same 3-column shape as the main MinuteFlow dashboard — Messages,
           then the flexible middle column, then Quick Pick + Team on the
