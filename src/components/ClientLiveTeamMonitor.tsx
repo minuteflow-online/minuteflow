@@ -36,6 +36,9 @@ function MemberCard({
 }) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [isForcing, setIsForcing] = useState(false);
+  // On-page confirm instead of window.confirm(), which some browsers and
+  // embedded views silently cancel — the button then looks dead.
+  const [confirmForce, setConfirmForce] = useState(false);
   const prevShotId = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -135,17 +138,39 @@ function MemberCard({
           >
             {isCapturing ? "Requesting…" : "Capture Now"}
           </button>
-          <button
-            onClick={async () => {
-              setIsForcing(true);
-              await onForceClockOut(profile.id);
-              setIsForcing(false);
-            }}
-            disabled={isForcing}
-            className="w-full rounded-md border border-terracotta/30 bg-terracotta-soft py-1.5 text-center text-[11px] font-semibold text-terracotta transition-all hover:bg-terracotta hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {isForcing ? "Clocking out…" : "Force Clock Out"}
-          </button>
+          {confirmForce ? (
+            <div className="w-full space-y-1.5 rounded-md bg-terracotta-soft px-2.5 py-2">
+              <p className="text-[11px] text-terracotta">Clock them out now? Any task they&apos;re running will be closed.</p>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => setConfirmForce(false)}
+                  disabled={isForcing}
+                  className="flex-1 rounded-md bg-stone/10 py-1.5 text-center text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setIsForcing(true);
+                    await onForceClockOut(profile.id);
+                    setIsForcing(false);
+                    setConfirmForce(false);
+                  }}
+                  disabled={isForcing}
+                  className="flex-1 rounded-md bg-terracotta py-1.5 text-center text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:opacity-60"
+                >
+                  {isForcing ? "Clocking out…" : "Yes, clock out"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmForce(true)}
+              className="w-full rounded-md border border-terracotta/30 bg-terracotta-soft py-1.5 text-center text-[11px] font-semibold text-terracotta transition-all hover:bg-terracotta hover:text-white"
+            >
+              Force Clock Out
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -183,7 +208,6 @@ export default function ClientLiveTeamMonitor() {
 
   const handleForceClockOut = useCallback(
     async (targetUserId: string) => {
-      if (!confirm("Force clock out this VA? Any task they're running will be closed.")) return;
       await fetch("/api/client-admin/force-clock-out", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

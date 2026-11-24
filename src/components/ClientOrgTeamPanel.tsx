@@ -80,6 +80,10 @@ export default function ClientOrgTeamPanel() {
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
   const [openNotesFor, setOpenNotesFor] = useState<string | null>(null);
+  // Which removal is waiting for a second click. An on-page confirm rather
+  // than window.confirm(), which some browsers and embedded views silently
+  // cancel — the button then looks dead.
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/client-admin/team", { cache: "no-store" });
@@ -143,7 +147,7 @@ export default function ClientOrgTeamPanel() {
 
         <div className="space-y-1.5">
           {data.admins.map((a) => (
-            <div key={a.id} className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white">
+            <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white">
               <div className="flex min-w-0 items-center gap-2.5">
                 <Avatar name={a.fullName} url={a.avatarUrl} seed={a.id} />
                 <span className="truncate text-[13px] font-semibold text-espresso">
@@ -161,19 +165,27 @@ export default function ClientOrgTeamPanel() {
                 >
                   {a.orgRole === "owner" ? "Owner" : "Co-admin"}
                 </span>
-                {data.viewerIsOwner && a.orgRole !== "owner" && (
+                {data.viewerIsOwner && a.orgRole !== "owner" && confirming !== `admin-${a.id}` && (
                   <button
                     disabled={busy === `admin-${a.id}`}
-                    onClick={() => {
-                      if (!confirm(`Remove ${a.fullName} as a co-admin? They lose access to this team.`)) return;
-                      call(`admin-${a.id}`, "/api/client-admin/team/admins", "DELETE", { adminId: a.id }, "Co-admin removed.");
-                    }}
+                    onClick={() => setConfirming(`admin-${a.id}`)}
                     className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-50"
                   >
                     Remove
                   </button>
                 )}
               </div>
+              {confirming === `admin-${a.id}` && (
+                <ConfirmRow
+                  text={`Remove ${a.fullName} as a co-admin? They lose access to this team.`}
+                  busy={busy === `admin-${a.id}`}
+                  onCancel={() => setConfirming(null)}
+                  onConfirm={async () => {
+                    await call(`admin-${a.id}`, "/api/client-admin/team/admins", "DELETE", { adminId: a.id }, "Co-admin removed.");
+                    setConfirming(null);
+                  }}
+                />
+              )}
             </div>
           ))}
 
@@ -267,18 +279,29 @@ export default function ClientOrgTeamPanel() {
                         Invited
                       </span>
                     )}
-                    <button
-                      disabled={busy === `remove-${va.id}`}
-                      onClick={() => {
-                        if (!confirm(`Take ${va.fullName} off your team? They'll also be taken off any of your tasks that aren't finished yet, and you'll lose access to their work for you.`)) return;
-                        call(`remove-${va.id}`, "/api/client-admin/team", "DELETE", { vaId: va.id }, "Removed from your team.");
-                      }}
-                      className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-50"
-                    >
-                      Remove
-                    </button>
+                    {confirming !== `remove-${va.id}` && (
+                      <button
+                        disabled={busy === `remove-${va.id}`}
+                        onClick={() => setConfirming(`remove-${va.id}`)}
+                        className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {confirming === `remove-${va.id}` && (
+                  <ConfirmRow
+                    text={`Take ${va.fullName} off your team? They'll also come off any of your tasks that aren't finished yet, and you'll lose access to their work for you.`}
+                    busy={busy === `remove-${va.id}`}
+                    onCancel={() => setConfirming(null)}
+                    onConfirm={async () => {
+                      await call(`remove-${va.id}`, "/api/client-admin/team", "DELETE", { vaId: va.id }, "Removed from your team.");
+                      setConfirming(null);
+                    }}
+                  />
+                )}
 
                 <div className="text-[11px] text-stone/80">
                   Schedule: {scheduleLine(va)} ·{" "}
@@ -304,6 +327,40 @@ export default function ClientOrgTeamPanel() {
           A Manager is one of your VAs you trust to help run this team; they get your team&apos;s submission alerts.
           Their MinuteFlow account itself doesn&apos;t change.
         </p>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmRow({
+  text,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  text: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="w-full flex flex-wrap items-center justify-between gap-2 rounded-lg bg-terracotta-soft px-3 py-2">
+      <span className="text-[11px] text-terracotta">{text}</span>
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={busy}
+          className="px-3 py-1 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-terracotta/90 transition-colors disabled:opacity-50"
+        >
+          {busy ? "Removing…" : "Yes, remove"}
+        </button>
       </div>
     </div>
   );
