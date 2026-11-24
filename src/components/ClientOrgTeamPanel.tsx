@@ -270,7 +270,7 @@ export default function ClientOrgTeamPanel() {
                     <button
                       disabled={busy === `remove-${va.id}`}
                       onClick={() => {
-                        if (!confirm(`Take ${va.fullName} off your team? You'll lose access to their work for you.`)) return;
+                        if (!confirm(`Take ${va.fullName} off your team? They'll also be taken off any of your tasks that aren't finished yet, and you'll lose access to their work for you.`)) return;
                         call(`remove-${va.id}`, "/api/client-admin/team", "DELETE", { vaId: va.id }, "Removed from your team.");
                       }}
                       className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-50"
