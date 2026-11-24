@@ -70,7 +70,19 @@ export async function GET() {
     })
     .sort((a, b) => a.fullName.localeCompare(b.fullName));
 
-  const admins = (clientUsers ?? [])
+  // The owner is whoever organizations.owner_profile_id names — list them
+  // even if their own profile points somewhere else.
+  const people = [...(clientUsers ?? [])];
+  if (ownerId && !people.some((p) => p.id === ownerId)) {
+    const { data: owner } = await admin
+      .from("profiles")
+      .select("id, full_name, username, avatar_url, is_active")
+      .eq("id", ownerId)
+      .maybeSingle();
+    if (owner) people.push(owner);
+  }
+
+  const admins = people
     .filter((p) => p.is_active !== false)
     .map((p) => ({
       id: p.id as string,

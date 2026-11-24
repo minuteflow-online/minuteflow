@@ -219,7 +219,9 @@ export default function ClientOrgTeamPanel() {
           </button>
         </form>
         <p className="text-[11px] text-stone/80">
-          Co-admins can do everything you can here. Only you, as owner, can remove one.
+          {data.viewerIsOwner
+            ? "Co-admins can do everything you can here. Only you, as owner, can remove one."
+            : "Co-admins can do everything the owner can here, except remove another co-admin."}
         </p>
       </div>
 
