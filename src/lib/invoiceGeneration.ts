@@ -97,6 +97,71 @@ export interface InvoiceGenResult {
   results: { series: string; invoice_number?: string; type?: string; total?: number; hours?: number; skipped?: string }[];
 }
 
+interface ExpenseRow {
+  id: number;
+  description: string;
+  amount: number;
+  account: string | null;
+  expense_date: string | null;
+  notes: string | null;
+}
+
+// Reimbursable expenses not yet billed on a live invoice, for the account — or
+// every account linked to the client. Same rules as the manual invoice builder.
+async function fetchUnbilledExpenses(
+  supabase: AnySupabase,
+  source: { account_name: string | null; client_id: number | null }
+): Promise<ExpenseRow[]> {
+  let accounts: string[] = [];
+  if (source.account_name) {
+    accounts = [source.account_name];
+  } else if (source.client_id != null) {
+    const { data: maps } = await supabase
+      .from("account_client_map")
+      .select("account_id")
+      .eq("client_id", source.client_id);
+    const ids = (maps ?? []).map((m: { account_id: number }) => m.account_id);
+    if (ids.length > 0) {
+      const { data: accs } = await supabase.from("accounts").select("name").in("id", ids);
+      accounts = (accs ?? []).map((a: { name: string }) => a.name);
+    }
+  }
+  if (accounts.length === 0) return [];
+
+  const { data: expData, error } = await supabase
+    .from("financial_expenses")
+    .select("id, description, amount, account, expense_date, notes")
+    .eq("is_reimbursable", true)
+    .eq("reimbursed", false)
+    .in("account", accounts);
+  if (error) {
+    console.error("[invoiceGeneration] expense lookup failed:", error.message);
+    return [];
+  }
+  const candidates = (expData ?? []) as ExpenseRow[];
+  if (candidates.length === 0) return [];
+
+  // Skip anything already on a live invoice so a client is never billed twice.
+  const { data: billedRows } = await supabase
+    .from("invoice_line_items")
+    .select("expense_id, invoice_id")
+    .in("expense_id", candidates.map((e) => e.id));
+  const billedInvoiceIds = [...new Set((billedRows ?? []).map((r: { invoice_id: number }) => r.invoice_id))];
+  const billed = new Set<number>();
+  if (billedInvoiceIds.length > 0) {
+    const { data: live } = await supabase
+      .from("invoices")
+      .select("id")
+      .in("id", billedInvoiceIds)
+      .not("status", "in", '("trash","cancelled")');
+    const liveIds = new Set((live ?? []).map((i: { id: number }) => i.id));
+    (billedRows ?? []).forEach((r: { expense_id: number; invoice_id: number }) => {
+      if (liveIds.has(r.invoice_id)) billed.add(r.expense_id);
+    });
+  }
+  return candidates.filter((e) => !billed.has(e.id));
+}
+
 export async function runRecurringInvoiceGeneration(
   supabase: AnySupabase,
   opts: { notifyEmail: string | null; orgName: string | null; timeZone: string }
@@ -226,7 +291,25 @@ export async function runRecurringInvoiceGeneration(
       subtotal = Math.round(totalHours * rate * 100) / 100;
     } else {
       subtotal = Number(source.subtotal) || 0;
+      // A custom invoice's saved subtotal includes any expenses billed on it;
+      // strip those so last month's expenses aren't copied into this month's base.
+      const { data: srcExpenseLines } = await supabase
+        .from("invoice_line_items")
+        .select("amount")
+        .eq("invoice_id", source.id)
+        .not("expense_id", "is", null);
+      const srcExpenseTotal = (srcExpenseLines ?? []).reduce(
+        (s: number, l: { amount: number }) => s + (Number(l.amount) || 0),
+        0
+      );
+      subtotal = Math.max(0, subtotal - srcExpenseTotal);
     }
+
+    // Reimbursable expenses (e.g. a recurring Claude subscription) ride along
+    // on the generated draft, the same as on a hand-built invoice.
+    const expenses = await fetchUnbilledExpenses(supabase, source);
+    const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    subtotal = Math.round((subtotal + expenseTotal) * 100) / 100;
 
     const finalTotal = Math.round(subtotal * 100) / 100;
 
@@ -304,6 +387,29 @@ export async function runRecurringInvoiceGeneration(
           sort_order: idx,
         }))
       );
+    }
+
+    if (expenses.length > 0) {
+      const { error: expErr } = await supabase.from("invoice_line_items").insert(
+        expenses.map((exp, idx) => ({
+          invoice_id: created!.id,
+          log_id: null,
+          expense_id: exp.id,
+          description: exp.description,
+          va_name: null,
+          account_name: exp.account || null,
+          category: "expense",
+          project: null,
+          client_memo: exp.notes || null,
+          quantity: 1,
+          unit_price: Number(exp.amount),
+          amount: Number(exp.amount),
+          service_date: exp.expense_date || null,
+          start_time: null,
+          sort_order: timelogItems.length + idx,
+        }))
+      );
+      if (expErr) console.error("[invoiceGeneration] expense line insert failed:", expErr.message);
     }
 
     results.push({
