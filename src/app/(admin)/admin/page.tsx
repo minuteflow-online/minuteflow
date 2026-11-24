@@ -8045,6 +8045,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   // Tracks settled status for expense line items in detail view
   const [expenseSettledMap, setExpenseSettledMap] = useState<Record<number, boolean>>({});
 
+  // "+ Add Expense" picker in the invoice detail view: reimbursable expenses for
+  // this invoice's account(s) that aren't on any live invoice yet.
+  const [expensePickerOpen, setExpensePickerOpen] = useState(false);
+  const [expensePickerItems, setExpensePickerItems] = useState<
+    { id: number; description: string; amount: number; account: string | null; expense_date: string | null; notes: string | null }[]
+  >([]);
+  const [expensePickerLoading, setExpensePickerLoading] = useState(false);
+  const [expenseBusyId, setExpenseBusyId] = useState<number | null>(null);
+
   // "Uncheck All" sentinel booleans for Step 3 filters
   const [filterVANone, setFilterVANone] = useState(false);
   const [filterTaskNone, setFilterTaskNone] = useState(false);
@@ -9057,7 +9066,125 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   /* ── View invoice detail ──────────────────────────────────── */
 
+  // Accounts whose expenses belong on this invoice: its own account, or every
+  // account linked to its client — the same scope the invoice builder uses.
+  const invoiceExpenseAccounts = (invoice: Invoice): string[] =>
+    invoice.account_name
+      ? [invoice.account_name]
+      : Object.keys(accountToClientMap).filter((acc) => accountToClientMap[acc] === invoice.client_id);
+
+  const loadExpensePicker = async (invoice: Invoice) => {
+    setExpensePickerOpen(true);
+    setExpensePickerLoading(true);
+    const accounts = invoiceExpenseAccounts(invoice);
+    if (accounts.length === 0) {
+      setExpensePickerItems([]);
+      setExpensePickerLoading(false);
+      return;
+    }
+    const { data: expData } = await supabase
+      .from("financial_expenses")
+      .select("id, description, amount, account, expense_date, notes")
+      .eq("is_reimbursable", true)
+      .eq("reimbursed", false)
+      .in("account", accounts)
+      .order("expense_date", { ascending: true });
+    const candidates = (expData ?? []) as { id: number; description: string; amount: number; account: string | null; expense_date: string | null; notes: string | null }[];
+
+    // Hide anything already on a live invoice so it can't be billed twice.
+    const billed = new Set<number>();
+    if (candidates.length > 0) {
+      const { data: billedRows } = await supabase
+        .from("invoice_line_items")
+        .select("expense_id, invoice_id")
+        .in("expense_id", candidates.map((e) => e.id));
+      const invIds = [...new Set((billedRows ?? []).map((r: { invoice_id: number }) => r.invoice_id))];
+      if (invIds.length > 0) {
+        const { data: live } = await supabase
+          .from("invoices")
+          .select("id")
+          .in("id", invIds)
+          .not("status", "in", '("trash","cancelled")');
+        const liveIds = new Set((live ?? []).map((i: { id: number }) => i.id));
+        (billedRows ?? []).forEach((r: { expense_id: number; invoice_id: number }) => {
+          if (liveIds.has(r.invoice_id)) billed.add(r.expense_id);
+        });
+      }
+    }
+    setExpensePickerItems(candidates.filter((e) => !billed.has(e.id)));
+    setExpensePickerLoading(false);
+  };
+
+  // Adding/removing an expense moves the stored subtotal and total by exactly
+  // the expense amount — the expense is part of the subtotal, as on invoices
+  // built with expenses (see openInvoiceDetail's timeSubtotal back-calc).
+  const shiftInvoiceTotals = async (invoice: Invoice, delta: number) => {
+    const subtotal = Math.round((Number(invoice.subtotal) + delta) * 100) / 100;
+    const total = Math.round((Number(invoice.total) + delta) * 100) / 100;
+    const { data: updated, error } = await supabase
+      .from("invoices")
+      .update({ subtotal, total })
+      .eq("id", invoice.id)
+      .select()
+      .single();
+    if (error || !updated) return null;
+    if (Number(invoice.amount_paid || 0) > 0) await syncInvoicePaymentState(supabase, invoice.id);
+    return updated as Invoice;
+  };
+
+  const addExpenseToInvoice = async (
+    invoice: Invoice,
+    exp: { id: number; description: string; amount: number; account: string | null; expense_date: string | null; notes: string | null }
+  ) => {
+    setExpenseBusyId(exp.id);
+    const nextSort = selectedLineItems.reduce((m, li) => Math.max(m, Number(li.sort_order ?? 0)), -1) + 1;
+    const { error } = await supabase.from("invoice_line_items").insert({
+      invoice_id: invoice.id,
+      log_id: null,
+      expense_id: exp.id,
+      description: exp.description,
+      va_name: null,
+      account_name: exp.account || null,
+      category: "expense",
+      project: null,
+      client_memo: exp.notes || null,
+      quantity: 1,
+      unit_price: Number(exp.amount),
+      amount: Number(exp.amount),
+      service_date: exp.expense_date || null,
+      start_time: null,
+      sort_order: nextSort,
+    });
+    if (error) {
+      setExpenseBusyId(null);
+      alert("Couldn't add the expense. Please try again.");
+      return;
+    }
+    const updated = await shiftInvoiceTotals(invoice, Number(exp.amount));
+    setExpenseBusyId(null);
+    setExpensePickerOpen(false);
+    if (updated) await openInvoiceDetail(updated);
+    else alert("The expense was added but the invoice total didn't update. Please refresh and check the total.");
+    fetchInvoices();
+  };
+
+  const removeExpenseFromInvoice = async (invoice: Invoice, li: InvoiceLineItem) => {
+    if (!confirm(`Remove "${li.description}" (${formatCurrency(Number(li.amount), invoice.currency)}) from this invoice?`)) return;
+    setExpenseBusyId(li.expense_id as number);
+    const { error } = await supabase.from("invoice_line_items").delete().eq("id", li.id);
+    if (error) {
+      setExpenseBusyId(null);
+      alert("Couldn't remove the expense. Please try again.");
+      return;
+    }
+    const updated = await shiftInvoiceTotals(invoice, -Number(li.amount));
+    setExpenseBusyId(null);
+    if (updated) await openInvoiceDetail(updated);
+    fetchInvoices();
+  };
+
   const openInvoiceDetail = async (invoice: Invoice) => {
+    setExpensePickerOpen(false);
     setSelectedInvoice(invoice);
     setSendError("");
     setSendSuccess("");
@@ -12314,11 +12441,56 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             </div>
 
             {/* Reimbursable Expenses Section */}
-            {selectedLineItems.some((li) => li.expense_id) && (
+            {(selectedLineItems.some((li) => li.expense_id) || !["paid", "trash", "cancelled", "archived"].includes(inv.status)) && (
               <div className="mb-6 rounded-lg border border-amber-200 overflow-hidden">
-                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200">
+                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-2">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Reimbursable Expenses</p>
+                  {!["paid", "trash", "cancelled", "archived"].includes(inv.status) && (
+                    <button
+                      type="button"
+                      onClick={() => (expensePickerOpen ? setExpensePickerOpen(false) : loadExpensePicker(inv))}
+                      className="flex items-center gap-1 rounded-lg border border-sand bg-white px-3 py-1 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                    >{expensePickerOpen ? "Close" : "+ Add Expense"}</button>
+                  )}
                 </div>
+                {expensePickerOpen && (
+                  <div className="border-b border-amber-200 bg-white px-4 py-3">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                      Unbilled expenses for {invoiceExpenseAccounts(inv).join(", ") || "this invoice"}
+                    </p>
+                    {expensePickerLoading ? (
+                      <p className="text-[11px] text-stone">Loading…</p>
+                    ) : expensePickerItems.length === 0 ? (
+                      <p className="text-[11px] text-stone">
+                        No unbilled reimbursable expenses. Add one in Financial Summary → Expenses with the right account and Reimbursable ticked.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {expensePickerItems.map((exp) => (
+                          <div key={exp.id} className="flex items-center justify-between gap-2 rounded-lg border border-sand px-3 py-2 hover:bg-cream transition-colors">
+                            <div className="min-w-0">
+                              <span className="text-[12px] font-semibold text-espresso">{exp.description}</span>
+                              <span className="ml-2 text-[11px] text-stone">{exp.expense_date || "—"} · {exp.account || "—"}</span>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                              <span className="text-[12px] font-medium text-espresso">{formatCurrency(Number(exp.amount), inv.currency)}</span>
+                              <button
+                                type="button"
+                                disabled={expenseBusyId !== null}
+                                onClick={() => addExpenseToInvoice(inv, exp)}
+                                className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 cursor-pointer"
+                              >{expenseBusyId === exp.id ? "Adding…" : "Add"}</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!selectedLineItems.some((li) => li.expense_id) && !expensePickerOpen && (
+                  <p className="px-4 py-3 text-[11px] text-stone">No expenses on this invoice.</p>
+                )}
+                {selectedLineItems.some((li) => li.expense_id) && (
                 <table className="w-full text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-amber-100 bg-amber-50/50 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
@@ -12383,12 +12555,22 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 Mark Settled
                               </button>
                             )}
+                            {!["paid", "trash", "cancelled", "archived"].includes(inv.status) && (
+                              <button
+                                type="button"
+                                disabled={expenseBusyId !== null}
+                                onClick={() => removeExpenseFromInvoice(inv, li)}
+                                title="Remove from this invoice"
+                                className="ml-2 inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-terracotta-soft hover:text-terracotta disabled:opacity-50 cursor-pointer"
+                              >&times;</button>
+                            )}
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
+                )}
               </div>
             )}
 

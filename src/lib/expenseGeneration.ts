@@ -65,11 +65,10 @@ export async function runRecurringExpenseGeneration(admin: AnySupabase): Promise
       continue;
     }
 
-    // If a month was missed, land on this month rather than the month after the
-    // last occurrence — otherwise the series stays a month behind forever.
-    // Missed months are not back-filled here; add those by hand if wanted.
-    let nextDate = addOneMonthClamped(latest.expense_date);
-    while (nextDate.slice(0, 7) < currentMonthKey) nextDate = addOneMonthClamped(nextDate);
+    // Always exactly one month after the latest occurrence, so no month is ever
+    // skipped. A series dated mid-month (e.g. the 21st) runs one month behind
+    // the 1st-of-month cron, which lines it up with the invoice for that month.
+    const nextDate = addOneMonthClamped(latest.expense_date);
     if (latest.recurrence_end_date && nextDate > latest.recurrence_end_date) {
       skipped++;
       continue;
