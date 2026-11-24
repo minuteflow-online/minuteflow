@@ -17,7 +17,16 @@ export function serviceClient() {
  * VA who isn't theirs, no matter what id a request names.
  */
 export async function requireClientOrgVaIds(): Promise<
-  { userId: string; organizationId: string; vaIds: string[] } | Response
+  | {
+      userId: string;
+      organizationId: string;
+      vaIds: string[];
+      /** The org's owner (the client who signed up and created it). */
+      ownerId: string | null;
+      /** Whether the caller is that owner rather than a co-admin. */
+      isOwner: boolean;
+    }
+  | Response
 > {
   const supabase = await createClient();
   const {
@@ -36,14 +45,18 @@ export async function requireClientOrgVaIds(): Promise<
   }
 
   const admin = serviceClient();
-  const { data: members } = await admin
-    .from("organization_members")
-    .select("va_id")
-    .eq("organization_id", profile.organization_id)
-    .eq("status", "active");
+  const [{ data: members }, { data: org }] = await Promise.all([
+    admin
+      .from("organization_members")
+      .select("va_id")
+      .eq("organization_id", profile.organization_id)
+      .eq("status", "active"),
+    admin.from("organizations").select("owner_profile_id").eq("id", profile.organization_id).maybeSingle(),
+  ]);
 
   const vaIds = (members ?? []).map((m) => m.va_id as string);
-  return { userId: user.id, organizationId: profile.organization_id, vaIds };
+  const ownerId = (org?.owner_profile_id as string | null) ?? null;
+  return { userId: user.id, organizationId: profile.organization_id, vaIds, ownerId, isOwner: ownerId === user.id };
 }
 
 export function isResponse(x: unknown): x is Response {

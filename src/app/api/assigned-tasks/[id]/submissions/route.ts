@@ -689,19 +689,35 @@ export async function POST(request: Request, { params }: RouteContext) {
   const clientOrgTask = Boolean(task.organization_id);
   if (messageType === "submission" && clientOrgTask) {
     const clientId = (task.assigned_by || task.created_by) as string | null;
-    if (clientId && clientId !== user.id) {
+    // The org's Managers (VAs the client promoted) hear about it too.
+    const { data: managers } = await admin
+      .from("organization_members")
+      .select("va_id")
+      .eq("organization_id", task.organization_id as string)
+      .eq("status", "active")
+      .eq("role", "manager");
+    const targets = new Map<string, string>();
+    if (clientId) targets.set(clientId, "/client/productivity");
+    for (const m of managers ?? []) {
+      // No review screen for them yet (Phase 2), so no deep link.
+      if (m.va_id && !targets.has(m.va_id as string)) targets.set(m.va_id as string, "");
+    }
+    targets.delete(user.id);
+    if (targets.size > 0) {
       const { data: sProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
       const submitter = sProf?.full_name || sProf?.username || "Your VA";
-      await notifyOne(admin, {
-        targetUserId: clientId,
-        senderId: user.id,
-        content: `${submitter} submitted: ${task.task_name ?? "a task"}`,
-        telegram: `📤 <b>New submission</b> from ${esc(submitter)}\n\nTask: ${esc(task.task_name ?? "a task")}`,
-        topic: "submissions",
-        assignedTaskId: Number(id),
-        submissionId: submission.id as number,
-        linkPath: "/client/productivity",
-      });
+      for (const [targetUserId, linkPath] of targets) {
+        await notifyOne(admin, {
+          targetUserId,
+          senderId: user.id,
+          content: `${submitter} submitted: ${task.task_name ?? "a task"}`,
+          telegram: `📤 <b>New submission</b> from ${esc(submitter)}\n\nTask: ${esc(task.task_name ?? "a task")}`,
+          topic: "submissions",
+          assignedTaskId: Number(id),
+          submissionId: submission.id as number,
+          linkPath: linkPath || null,
+        });
+      }
     }
   }
   if (messageType === "submission" && !clientOrgTask) {

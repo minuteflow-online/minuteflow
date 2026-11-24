@@ -4,8 +4,17 @@ import { useState } from "react";
 import ClientAdminOverview from "@/components/ClientAdminOverview";
 import ClientLiveTeamMonitor from "@/components/ClientLiveTeamMonitor";
 import ClientScreenshotsPanel from "@/components/ClientScreenshotsPanel";
+import ClientOrgTeamPanel from "@/components/ClientOrgTeamPanel";
+import ClientOrgTasksPanel from "@/components/ClientOrgTasksPanel";
 
-type Tab = "overview" | "screenshots";
+type Tab = "overview" | "team" | "tasks" | "screenshots";
+
+const TAB_LABELS: Record<Tab, string> = {
+  overview: "Live Team Monitor",
+  team: "Team",
+  tasks: "Tasks",
+  screenshots: "Screenshots",
+};
 
 export default function ClientAdminPage() {
   const [tab, setTab] = useState<Tab>("overview");
@@ -29,7 +38,7 @@ export default function ClientAdminPage() {
       <ClientAdminOverview refreshKey={refreshKey} />
 
       <div className="flex border-b border-parchment">
-        {(["overview", "screenshots"] as const).map((t) => (
+        {(["overview", "team", "tasks", "screenshots"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -39,12 +48,15 @@ export default function ClientAdminPage() {
                 : "text-stone hover:text-espresso border-b-2 border-transparent"
             }`}
           >
-            {t === "overview" ? "Live Team Monitor" : "Screenshots"}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>
 
-      {tab === "overview" ? <ClientLiveTeamMonitor key={refreshKey} /> : <ClientScreenshotsPanel key={refreshKey} />}
+      {tab === "overview" && <ClientLiveTeamMonitor key={refreshKey} />}
+      {tab === "team" && <ClientOrgTeamPanel key={refreshKey} />}
+      {tab === "tasks" && <ClientOrgTasksPanel key={refreshKey} />}
+      {tab === "screenshots" && <ClientScreenshotsPanel key={refreshKey} />}
     </div>
   );
 }

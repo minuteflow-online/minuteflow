@@ -20,6 +20,8 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
   // Time-based tasks need a planned duration (or a time slot) — without one
   // the VA's own task editor refuses to save any change to the task.
   const [plannedHours, setPlannedHours] = useState("1");
+  // Whether a submission waits for the client's approval or closes on submit.
+  const [reviewRequired, setReviewRequired] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,6 +49,7 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
     setCategory("Task");
     setDueDate("");
     setPlannedHours("1");
+    setReviewRequired(true);
     setError("");
   };
 
@@ -75,7 +78,7 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
         // schedule, same as a duration-only task from staff.
         start_date: new Date().toLocaleDateString("en-CA"),
         planned_minutes: Math.round(hours * 60),
-        review_required: true,
+        review_required: reviewRequired,
         // A client names the VA directly — it's a firm assignment, not an
         // open-pool offer, so it lands straight in their Assigned Tasks
         // rather than the claimable pool "pending" would put it in.
@@ -190,6 +193,16 @@ export default function ClientAssignTaskPanel({ onAssigned }: { onAssigned?: () 
           />
         </div>
       </div>
+
+      <label className="flex items-center gap-2 text-[11px] text-espresso">
+        <input
+          type="checkbox"
+          checked={reviewRequired}
+          onChange={(e) => setReviewRequired(e.target.checked)}
+          className="accent-sage"
+        />
+        Review required — submissions wait for your approval
+      </label>
 
       {error && <p className="text-xs text-terracotta">{error}</p>}
 

@@ -115,6 +115,12 @@ export async function signUpClient(
   const fullName = (formData.get("full_name") as string)?.trim();
   const email = (formData.get("email") as string)?.trim().toLowerCase();
   const password = formData.get("password") as string;
+  const inviteCode = (formData.get("code") as string | null)?.trim() || null;
+
+  // A co-admin invite joins an existing org instead of creating one.
+  if (inviteCode) {
+    return joinOrgAsCoAdmin({ code: inviteCode, fullName, email, password });
+  }
 
   if (!orgName || !fullName || !email || !password) {
     return { error: "All fields are required." };
@@ -188,6 +194,94 @@ export async function signUpClient(
   }
 
   redirect("/dashboard");
+}
+
+/**
+ * Sign up through a client co-admin invite (invitations.org_role = 'admin',
+ * sent from the client's Team page). The new login becomes a client of the
+ * inviting org — it never gets an org of its own and never becomes staff.
+ * The email is the invite's, not whatever was typed, so a code can't be
+ * spent on a different address.
+ */
+async function joinOrgAsCoAdmin({
+  code,
+  fullName,
+  email,
+  password,
+}: {
+  code: string;
+  fullName: string;
+  email: string;
+  password: string;
+}): Promise<{ error: string }> {
+  if (!fullName || !password) {
+    return { error: "All fields are required." };
+  }
+  if (password.length < 6) {
+    return { error: "Password must be at least 6 characters." };
+  }
+
+  const adminClient = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
+  const { data: invite } = await adminClient
+    .from("invitations")
+    .select("id, email, expires_at, used_at, organization_id, org_role")
+    .eq("code", code)
+    .maybeSingle();
+
+  if (!invite || invite.org_role !== "admin" || !invite.organization_id) {
+    return { error: "This invite link isn't valid." };
+  }
+  if (invite.used_at) {
+    return { error: "This invite has already been used. Sign in instead." };
+  }
+  if ((invite.expires_at as string) < new Date().toISOString()) {
+    return { error: "This invite has expired. Ask for a new one." };
+  }
+  const inviteEmail = (invite.email as string).toLowerCase();
+  if (email && email !== inviteEmail) {
+    return { error: `This invite is for ${inviteEmail}. Use that email address.` };
+  }
+
+  const { data: created, error: createError } = await adminClient.auth.admin.createUser({
+    email: inviteEmail,
+    password,
+    // The invite link went to this address, which verifies it.
+    email_confirm: true,
+    user_metadata: { full_name: fullName },
+    app_metadata: { account_type: "client" },
+  });
+  if (createError || !created.user) {
+    return { error: createError?.message ?? SERVICE_UNAVAILABLE };
+  }
+  const userId = created.user.id;
+
+  // handle_new_user() inserts the profile as role 'va' — make it a client of
+  // the inviting org (service role; the user can't grant themselves this).
+  const { error: profileError } = await adminClient
+    .from("profiles")
+    .update({ role: "client", organization_id: invite.organization_id, full_name: fullName })
+    .eq("id", userId);
+  if (profileError) {
+    await adminClient.auth.admin.deleteUser(userId);
+    return { error: SERVICE_UNAVAILABLE };
+  }
+
+  await adminClient
+    .from("invitations")
+    .update({ used_at: new Date().toISOString(), used_by: userId })
+    .eq("id", invite.id);
+
+  const supabase = await createClient();
+  const { error: signInError } = await supabase.auth.signInWithPassword({ email: inviteEmail, password });
+  if (signInError) {
+    redirect("/login");
+  }
+  redirect("/client");
 }
 
 export async function resetPassword(

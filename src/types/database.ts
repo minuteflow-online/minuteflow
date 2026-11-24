@@ -24,6 +24,21 @@ export interface OrganizationMember {
   invited_by: string | null;
   created_at: string;
   joined_at: string | null;
+  /** Their role inside this client's org only — never their profiles.role.
+   *  A 'manager' is a VA the client trusts to help run the team. */
+  role: 'va' | 'manager';
+}
+
+/** The org's own client users are profiles with role 'client' and this
+ *  organization_id; the owner is organizations.owner_profile_id, every other
+ *  one is a co-admin (invited via invitations.org_role = 'admin'). */
+export interface OrganizationMemberNote {
+  id: number;
+  organization_id: string;
+  va_id: string;
+  author_id: string | null;
+  body: string;
+  created_at: string;
 }
 
 export const VA_POSITION_OPTIONS = [

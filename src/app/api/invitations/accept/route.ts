@@ -82,11 +82,13 @@ export async function POST(request: Request) {
   // 1. Look up and validate the invitation
   const { data: invite, error: inviteError } = await adminClient
     .from("invitations")
-    .select("id, email, expires_at, used_at, employment_type, requires_extension, organization_id, invited_by")
+    .select("id, email, expires_at, used_at, employment_type, requires_extension, organization_id, invited_by, org_role")
     .eq("code", code)
     .single();
 
-  if (inviteError || !invite) {
+  // A client co-admin invite (org_role set) must never create a staff
+  // account — those sign up through /signup-client instead.
+  if (inviteError || !invite || invite.org_role) {
     return Response.json({ error: "Invalid invite code" }, { status: 400 });
   }
 
