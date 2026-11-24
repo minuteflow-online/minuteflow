@@ -1290,6 +1290,9 @@ export default function DashboardPage() {
           project: lastLog.project || null,
           account: lastLog.account || null,
           client_name: lastLog.client_name || null,
+          // Keep a client-org task's time with that client — without this
+          // the resumed log silently became agency time. Null for agency work.
+          organization_id: lastLog.organization_id ?? null,
           start_time: now,
           billable: isBillable,
           billing_type: lastLog.billing_type || "hourly",
@@ -1933,6 +1936,12 @@ export default function DashboardPage() {
 
     const isBillable = isBillableCategory(preBreakTask.category);
 
+    // The resumed log stays with the same client org as the pre-break one
+    // (null for agency work) — the session's active_task doesn't carry it.
+    const { data: preBreakLog } = preBreakTask.logId
+      ? await supabase.from("time_logs").select("organization_id").eq("id", Number(preBreakTask.logId)).maybeSingle()
+      : { data: null };
+
     const { data: logData, error: resumeLogError } = await supabase
       .from("time_logs")
       .insert({
@@ -1946,6 +1955,7 @@ export default function DashboardPage() {
         project: preBreakTask.project || null,
         account: preBreakTask.account || null,
         client_name: preBreakTask.client_name || null,
+        organization_id: (preBreakLog?.organization_id as string | null | undefined) ?? null,
         start_time: now,
         billable: isBillable,
         billing_type: preBreakTask.billing_type || "hourly",
