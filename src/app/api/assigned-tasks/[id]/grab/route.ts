@@ -1,3 +1,4 @@
+import { vaWorkScope } from "@/lib/clientAdminAccess";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
@@ -67,9 +68,11 @@ export async function POST(_request: Request, { params }: RouteContext) {
   }
 
   const typedTask = task as TaskRow;
-  // A client org's task is never in the agency's open pool, so it can't be
-  // grabbed by id either.
-  if ((task as { organization_id?: string | null }).organization_id) {
+  // Same rule as the open pool: an agency task is for agency VAs (never a
+  // client-only VA), and a client org's task only for that org's members.
+  const taskOrg = (task as { organization_id?: string | null }).organization_id ?? null;
+  const scope = await vaWorkScope(adminSupabase, user.id);
+  if (taskOrg ? !scope.orgIds.includes(taskOrg) : scope.clientOnly) {
     return Response.json({ error: "Task not found" }, { status: 404 });
   }
   if ((typedTask.assigned_task_assignees ?? []).length > 0) {

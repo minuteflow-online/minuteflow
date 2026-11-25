@@ -1,3 +1,4 @@
+import { vaWorkScope } from "@/lib/clientAdminAccess";
 import { createClient } from "@/lib/supabase/server";
 import { canAccessProject, serviceClient } from "@/lib/projectAccess";
 import { notifyMentions } from "@/lib/notifyMentions";
@@ -42,8 +43,9 @@ export async function GET(request: Request) {
   }
 
   const supabase = serviceClient();
-  // The General board is the agency team's — never shown to a client (employer).
-  if (!projectId && profile?.role === "client") {
+  // The General board is the agency team's — never shown to a client
+  // (employer) or to a VA who works only for a client.
+  if (!projectId && (profile?.role === "client" || (await vaWorkScope(supabase, user.id)).clientOnly)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   // A general topic hangs off no project, so there is no project membership to
@@ -125,8 +127,9 @@ export async function POST(request: Request) {
   if (!content) return Response.json({ error: "body is required" }, { status: 400 });
 
   const supabase = serviceClient();
-  // A client (employer) can't post to the agency's General board.
-  if (!projectId && profile?.role === "client") {
+  // A client (employer), or a VA who works only for a client, can't post to
+  // the agency's General board.
+  if (!projectId && (profile?.role === "client" || (await vaWorkScope(supabase, user.id)).clientOnly)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   if (projectId && !(await canAccessProject(supabase, profile, user.id, projectId))) {

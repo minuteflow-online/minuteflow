@@ -202,3 +202,34 @@ export async function clientOwnsTask(userId: string, taskId: string | number): P
   ]);
   return Boolean(me?.organization_id && task?.organization_id === me.organization_id);
 }
+
+/**
+ * Where a VA's work comes from. `clientOnly` is a VA who joined MinuteFlow
+ * through a client's VA invite (an invitations row with organization_id set
+ * and no org_role) — they work for that client, not the agency, so agency-only
+ * spaces (the open task pools, the General board) are not theirs. A VA who was
+ * already agency staff and later joined a client team is NOT client-only.
+ * `orgIds` are the client orgs the VA is an active member of. The database
+ * mirrors this rule in is_client_only_va() for the RLS policies.
+ */
+export async function vaWorkScope(
+  admin: AdminClient,
+  userId: string
+): Promise<{ clientOnly: boolean; orgIds: string[] }> {
+  const [{ data: profile }, { data: invite }, { data: memberships }] = await Promise.all([
+    admin.from("profiles").select("role").eq("id", userId).maybeSingle(),
+    admin
+      .from("invitations")
+      .select("id")
+      .eq("used_by", userId)
+      .not("organization_id", "is", null)
+      .is("org_role", null)
+      .limit(1)
+      .maybeSingle(),
+    admin.from("organization_members").select("organization_id").eq("va_id", userId).eq("status", "active"),
+  ]);
+  return {
+    clientOnly: profile?.role === "va" && Boolean(invite),
+    orgIds: (memberships ?? []).map((m) => m.organization_id as string),
+  };
+}

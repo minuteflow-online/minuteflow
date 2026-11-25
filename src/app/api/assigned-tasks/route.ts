@@ -1,3 +1,4 @@
+import { vaWorkScope } from "@/lib/clientAdminAccess";
 import { createClient } from "@/lib/supabase/server";
 import { notifyTaskAssigned } from "@/lib/taskAssigned";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
@@ -161,10 +162,23 @@ export async function GET(request: Request) {
     const poolQuery = serviceRoleClient.from("assigned_tasks").select(taskSelect);
     // Agency staff get agency tasks only — a client org's unassigned work stays
     // with that org (Neil, 2026-11-25: client work never mixes into agency views).
-    const { data, error } = await (clientOrgId
-      ? poolQuery.eq("organization_id", clientOrgId)
-      : poolQuery.is("organization_id", null)
-    ).order(
+    // A VA also sees the pools of the client orgs they're an active member of,
+    // and a client-only VA sees only those — never the agency's pool.
+    let scopedPool;
+    if (clientOrgId) {
+      scopedPool = poolQuery.eq("organization_id", clientOrgId);
+    } else {
+      const scope = await vaWorkScope(serviceRoleClient, user.id);
+      if (scope.clientOnly) {
+        if (scope.orgIds.length === 0) return Response.json({ tasks: [] });
+        scopedPool = poolQuery.in("organization_id", scope.orgIds);
+      } else if (scope.orgIds.length > 0) {
+        scopedPool = poolQuery.or(`organization_id.is.null,organization_id.in.(${scope.orgIds.join(",")})`);
+      } else {
+        scopedPool = poolQuery.is("organization_id", null);
+      }
+    }
+    const { data, error } = await scopedPool.order(
       "created_at",
       { ascending: false }
     );

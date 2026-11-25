@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canAccessProject, serviceClient } from "@/lib/projectAccess";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { notifyMentions } from "@/lib/notifyMentions";
+import { vaWorkScope } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   }
   // The General board is the agency's team board — a client (employer) only
   // ever talks on their own org's projects.
-  if (!message.project_id && profile?.role === "client") {
+  if (!message.project_id && (profile?.role === "client" || (await vaWorkScope(supabase, user.id)).clientOnly)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
