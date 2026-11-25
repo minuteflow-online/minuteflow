@@ -119,3 +119,28 @@ export function compareBroadcastOrder(
   if (so !== 0) return so;
   return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 }
+
+/** Whether a broadcast is out (published, or scheduled and its time has come). */
+export function isBroadcastLive(
+  b: { status: string; scheduled_at?: string | null },
+  now: Date = new Date()
+): boolean {
+  if (b.status === "published") return true;
+  return b.status === "scheduled" && !!b.scheduled_at && new Date(b.scheduled_at) <= now;
+}
+
+/**
+ * Whether someone may read a broadcast (and so its comments). Its audience sees
+ * it once it's out; admins see what the admin list shows them, private notes
+ * included only for their author and whoever they're shared with.
+ */
+export function canReadBroadcast(
+  b: { status: string; scheduled_at?: string | null; category: string; created_by?: string | null; shared_with?: string[] | null },
+  rows: RecipientRow[],
+  member: BroadcastMember,
+  isAdmin: boolean,
+  now: Date = new Date()
+): boolean {
+  if (isAdmin && adminCanSee(b, member.id)) return true;
+  return isBroadcastLive(b, now) && isRecipient(rows, member);
+}
