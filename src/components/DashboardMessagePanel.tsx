@@ -193,6 +193,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
   const [composingTopic, setComposingTopic] = useState(false);
+  // False when the server refuses this user the agency's General board (a VA
+  // who works only for a client) — "+ New topic" only ever posts there.
+  const [generalOpen, setGeneralOpen] = useState(true);
   const [topicTitle, setTopicTitle] = useState("");
   const [topicBody, setTopicBody] = useState("");
   const topicComposer = useAttachmentComposer();
@@ -537,7 +540,10 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                 .catch(() => ({}))
             : Promise.resolve({}),
           fetch("/api/project-messages?general=1", { cache: "no-store" })
-            .then((r) => r.json())
+            .then((r) => {
+              setGeneralOpen(r.status !== 403);
+              return r.json();
+            })
             .catch(() => ({})),
         ]);
         if (cancelled) return;
@@ -1132,7 +1138,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                     </button>
                   </div>
                 </div>
-              ) : (
+              ) : generalOpen && (
                 <button
                   type="button"
                   onClick={() => setComposingTopic(true)}
