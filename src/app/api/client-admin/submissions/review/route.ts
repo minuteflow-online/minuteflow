@@ -46,6 +46,17 @@ export async function POST(request: Request) {
     return Response.json({ error: "That task isn't yours to review." }, { status: 403 });
   }
 
+  // Only work that's been handed in can be approved or sent back — never a
+  // task nobody has submitted yet, nor one already approved, completed or paid.
+  const { data: assigneeRows } = await admin
+    .from("assigned_task_assignees")
+    .select("status")
+    .eq("assigned_task_id", taskId);
+  const waitingForReview = (assigneeRows ?? []).some((a) => a.status === "submitted" || a.status === "reviewing");
+  if (!waitingForReview) {
+    return Response.json({ error: "There's no submitted work on this task to review right now." }, { status: 409 });
+  }
+
   const cfg = ACTIONS[action];
   const stamp = new Date().toISOString();
 

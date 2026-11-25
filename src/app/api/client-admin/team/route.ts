@@ -43,11 +43,22 @@ export async function GET() {
       .gt("expires_at", now),
   ]);
 
-  const vaIds = (memberRows ?? []).map((m) => m.va_id as string);
-  const { data: vaProfiles } = vaIds.length
-    ? await admin.from("profiles").select(VA_WORK_COLUMNS).in("id", vaIds)
+  // Work details only for VAs who accepted. Until then the client has typed
+  // an email and nothing more — they see that email back, never the VA's
+  // name, photo, position or schedule (the invite is the VA's to accept).
+  const activeIds = (memberRows ?? []).filter((m) => m.status === "active").map((m) => m.va_id as string);
+  const invitedIds = (memberRows ?? []).filter((m) => m.status !== "active").map((m) => m.va_id as string);
+  const { data: vaProfiles } = activeIds.length
+    ? await admin.from("profiles").select(VA_WORK_COLUMNS).in("id", activeIds)
     : { data: [] as Record<string, unknown>[] };
   const profileById = new Map((vaProfiles ?? []).map((p) => [p.id as string, p]));
+  const invitedEmail = new Map<string, string>();
+  await Promise.all(
+    invitedIds.map(async (id) => {
+      const { data } = await admin.auth.admin.getUserById(id);
+      if (data?.user?.email) invitedEmail.set(id, data.user.email);
+    })
+  );
 
   const vas = (memberRows ?? [])
     .map((m) => {
@@ -58,7 +69,7 @@ export async function GET() {
         orgRole: (m.role as "va" | "manager") ?? "va",
         joinedAt: (m.joined_at as string | null) ?? null,
         invitedAt: m.created_at as string,
-        fullName: (p?.full_name as string | null) ?? "Unknown",
+        fullName: (p?.full_name as string | null) ?? invitedEmail.get(m.va_id as string) ?? "Invited VA",
         avatarUrl: (p?.avatar_url as string | null) ?? null,
         position: (p?.position as string | null) ?? null,
         department: (p?.department as string | null) ?? null,

@@ -271,7 +271,9 @@ export default function ClientOrgTeamPanel() {
                     <div className="min-w-0">
                       <div className="truncate text-[13px] font-semibold text-espresso leading-tight">{va.fullName}</div>
                       <div className="text-[11px] text-stone/80">
-                        {[va.position, va.department].filter(Boolean).join(" · ") || "No position set"}
+                        {va.status === "active"
+                          ? [va.position, va.department].filter(Boolean).join(" · ") || "No position set"
+                          : "Invite sent"}
                       </div>
                     </div>
                   </div>
@@ -319,8 +321,11 @@ export default function ClientOrgTeamPanel() {
                 )}
 
                 <div className="text-[11px] text-stone/80">
-                  Schedule: {scheduleLine(va)} ·{" "}
-                  {va.status === "active" ? `on your team since ${shortDate(va.joinedAt)}` : `invited ${shortDate(va.invitedAt)}`}
+                  {/* Nothing about an invited VA is shown until they accept —
+                      the API only returns the email the client typed. */}
+                  {va.status === "active"
+                    ? <>Schedule: {scheduleLine(va)} · on your team since {shortDate(va.joinedAt)}</>
+                    : `Invited ${shortDate(va.invitedAt)} — waiting for them to accept`}
                 </div>
 
                 {va.status === "active" && (

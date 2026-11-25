@@ -84,8 +84,10 @@ export async function POST(request: Request) {
     admin.from("organizations").select("name").eq("id", organizationId).maybeSingle(),
     admin.from("profiles").select("full_name, username").eq("id", userId).maybeSingle(),
   ]);
-  const orgName = escapeHtml((org?.name as string | null) || "a team");
-  const inviterName = escapeHtml(inviter?.full_name || inviter?.username || "A colleague");
+  const rawOrgName = (org?.name as string | null) || "a team";
+  const rawInviterName = inviter?.full_name || inviter?.username || "A colleague";
+  const orgName = escapeHtml(rawOrgName);
+  const inviterName = escapeHtml(rawInviterName);
   const inviteUrl = `${SITE_URL}/signup-client?code=${code}`;
 
   const res = await sendResendEmailAlways(
@@ -95,7 +97,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         from: "MinuteFlow <noreply@minuteflow.click>",
         to: [normalizedEmail],
-        subject: `${inviterName} invited you to help run ${orgName} on MinuteFlow`,
+        subject: `${rawInviterName} invited you to help run ${rawOrgName} on MinuteFlow`,
         html: buildCoAdminEmail({ orgName, inviterName, inviteUrl }),
       }),
     },

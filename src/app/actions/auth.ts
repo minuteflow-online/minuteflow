@@ -141,6 +141,13 @@ export async function signUpClient(
     if (result.error) {
       return { error: result.error.message };
     }
+    // An email that already has an account comes back as an "obfuscated"
+    // user with no identities instead of an error (email confirmation is on).
+    // Never treat that as a new signup — the code below would otherwise turn
+    // the existing account (staff included) into this new org's client.
+    if (result.data.user && (result.data.user.identities?.length ?? 0) === 0) {
+      return { error: "An account with this email already exists. Sign in instead, or use a different email." };
+    }
     userId = result.data.user?.id;
   } catch {
     return { error: SERVICE_UNAVAILABLE };
