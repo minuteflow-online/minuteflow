@@ -8045,6 +8045,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   // Tracks settled status for expense line items in detail view
   const [expenseSettledMap, setExpenseSettledMap] = useState<Record<number, boolean>>({});
 
+  // "+ Add Expense" picker in the invoice detail view: reimbursable expenses for
+  // this invoice's account(s) that aren't on any live invoice yet.
+  const [expensePickerOpen, setExpensePickerOpen] = useState(false);
+  const [expensePickerItems, setExpensePickerItems] = useState<
+    { id: number; description: string; amount: number; account: string | null; expense_date: string | null; notes: string | null }[]
+  >([]);
+  const [expensePickerLoading, setExpensePickerLoading] = useState(false);
+  const [expenseBusyId, setExpenseBusyId] = useState<number | null>(null);
+  const [invoiceUpdating, setInvoiceUpdating] = useState(false);
+
   // "Uncheck All" sentinel booleans for Step 3 filters
   const [filterVANone, setFilterVANone] = useState(false);
   const [filterTaskNone, setFilterTaskNone] = useState(false);
@@ -9057,7 +9067,234 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   /* ── View invoice detail ──────────────────────────────────── */
 
+  // Accounts whose expenses belong on this invoice: its own account, or every
+  // account linked to its client — the same scope the invoice builder uses.
+  const invoiceExpenseAccounts = (invoice: Invoice): string[] =>
+    invoice.account_name
+      ? [invoice.account_name]
+      : Object.keys(accountToClientMap).filter((acc) => accountToClientMap[acc] === invoice.client_id);
+
+  const loadExpensePicker = async (invoice: Invoice) => {
+    setExpensePickerOpen(true);
+    setExpensePickerLoading(true);
+    setExpensePickerItems(await fetchUnbilledInvoiceExpenses(invoice));
+    setExpensePickerLoading(false);
+  };
+
+  // Reimbursable expenses for this invoice's account(s) not on any live invoice.
+  const fetchUnbilledInvoiceExpenses = async (invoice: Invoice) => {
+    const accounts = invoiceExpenseAccounts(invoice);
+    if (accounts.length === 0) return [];
+    const { data: expData } = await supabase
+      .from("financial_expenses")
+      .select("id, description, amount, account, expense_date, notes")
+      .eq("is_reimbursable", true)
+      .eq("reimbursed", false)
+      .in("account", accounts)
+      .order("expense_date", { ascending: true });
+    const candidates = (expData ?? []) as { id: number; description: string; amount: number; account: string | null; expense_date: string | null; notes: string | null }[];
+
+    // Hide anything already on a live invoice so it can't be billed twice.
+    const billed = new Set<number>();
+    if (candidates.length > 0) {
+      const { data: billedRows } = await supabase
+        .from("invoice_line_items")
+        .select("expense_id, invoice_id")
+        .in("expense_id", candidates.map((e) => e.id));
+      const invIds = [...new Set((billedRows ?? []).map((r: { invoice_id: number }) => r.invoice_id))];
+      if (invIds.length > 0) {
+        const { data: live } = await supabase
+          .from("invoices")
+          .select("id")
+          .in("id", invIds)
+          .not("status", "in", '("trash","cancelled")');
+        const liveIds = new Set((live ?? []).map((i: { id: number }) => i.id));
+        (billedRows ?? []).forEach((r: { expense_id: number; invoice_id: number }) => {
+          if (liveIds.has(r.invoice_id)) billed.add(r.expense_id);
+        });
+      }
+    }
+    return candidates.filter((e) => !billed.has(e.id));
+  };
+
+  // "Update Invoice": pull in everything added since the invoice was built —
+  // unbilled reimbursable expenses, and (hourly invoices) billable time logged
+  // in the billing period that isn't on this or any active invoice. Same
+  // selection rules as the recurring generator and the invoice builder.
+  const updateInvoiceFromSources = async (invoice: Invoice) => {
+    setInvoiceUpdating(true);
+    try {
+      const expenses = await fetchUnbilledInvoiceExpenses(invoice);
+
+      type NewLog = { id: number; task_name: string; username: string | null; account: string | null; category: string | null; project: string | null; client_memo: string | null; duration_ms: number; start_time: string };
+      let logs: NewLog[] = [];
+      if (invoice.invoice_type === "timelog" && invoice.period_start && invoice.period_end) {
+        const { data: activeInv } = await supabase
+          .from("invoices")
+          .select("id")
+          .in("status", ["sent", "paid", "partially_paid", "overdue", "ready_to_send"]);
+        const activeIds = new Set((activeInv ?? []).map((i: { id: number }) => i.id));
+        activeIds.add(invoice.id);
+        const { data: usedItems } = await supabase
+          .from("invoice_line_items")
+          .select("log_id, invoice_id")
+          .not("log_id", "is", null);
+        const usedLogIds = new Set(
+          (usedItems ?? [])
+            .filter((it: { invoice_id: number }) => activeIds.has(it.invoice_id))
+            .map((it: { log_id: number }) => it.log_id)
+        );
+        let q = supabase
+          .from("time_logs")
+          .select("id, task_name, username, account, category, project, client_memo, duration_ms, start_time")
+          .eq("billable", true)
+          .is("deleted_at", null)
+          .gte("start_time", new Date(invoice.period_start).toISOString())
+          .lte("start_time", new Date(invoice.period_end + "T23:59:59").toISOString())
+          .order("start_time", { ascending: true });
+        let scoped = true;
+        if (invoice.account_name) {
+          q = q.eq("account", invoice.account_name);
+        } else {
+          const clientName = clients.find((c) => c.id === invoice.client_id)?.name;
+          if (clientName) q = q.eq("client_name", clientName);
+          else scoped = false;
+        }
+        if (scoped) {
+          const { data: logRows } = await q;
+          logs = ((logRows ?? []) as NewLog[]).filter((l) => !usedLogIds.has(l.id) && l.duration_ms > 0);
+        }
+      }
+
+      const expenseTotal = Math.round(expenses.reduce((s, e) => s + Number(e.amount), 0) * 100) / 100;
+      const addHours = Math.round(logs.reduce((s, l) => s + l.duration_ms / 3600000, 0) * 100) / 100;
+      // Hourly rate: the saved one, or back-calculated from the current time
+      // portion of the subtotal (subtotal minus expense lines) over its hours.
+      const curTimeItems = selectedLineItems.filter((li) => !li.expense_id);
+      const curHours = curTimeItems.reduce((s, li) => s + Number(li.quantity), 0) - Number(invoice.hours_not_billed || 0);
+      const curExpense = selectedLineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0);
+      const rate = invoice.rate_amount != null
+        ? Number(invoice.rate_amount)
+        : curHours > 0 ? (Number(invoice.subtotal) - curExpense) / curHours : 0;
+      const timeAmount = Math.round(addHours * rate * 100) / 100;
+
+      if (expenses.length === 0 && logs.length === 0) {
+        alert("This invoice is up to date — no new expenses or time entries to add.");
+        return;
+      }
+      if (logs.length > 0 && rate <= 0) {
+        alert(`Found ${logs.length} new time entries but this invoice has no hourly rate to price them. Set the rate in Edit, then try again.`);
+        return;
+      }
+
+      const lines: string[] = [];
+      expenses.forEach((e) => lines.push(`• ${e.description} (${e.expense_date || "no date"}) — ${formatCurrency(Number(e.amount), invoice.currency)}`));
+      if (logs.length > 0) lines.push(`• ${logs.length} time ${logs.length === 1 ? "entry" : "entries"}, ${addHours.toFixed(2)} hrs × ${formatCurrency(rate, invoice.currency)} — ${formatCurrency(timeAmount, invoice.currency)}`);
+      const delta = Math.round((expenseTotal + timeAmount) * 100) / 100;
+      const newTotal = Math.round((Number(invoice.total) + delta) * 100) / 100;
+      if (!confirm(`Add to ${invoice.invoice_number}:\n\n${lines.join("\n")}\n\nTotal ${formatCurrency(Number(invoice.total), invoice.currency)} → ${formatCurrency(newTotal, invoice.currency)}`)) return;
+
+      let nextSort = selectedLineItems.reduce((m, li) => Math.max(m, Number(li.sort_order ?? 0)), -1) + 1;
+      const rows = [
+        ...logs.map((l) => ({
+          invoice_id: invoice.id, log_id: l.id, expense_id: null, description: l.task_name,
+          va_name: l.username, account_name: l.account || null, category: l.category || null,
+          project: l.project || null, client_memo: l.client_memo || null,
+          quantity: Math.round((l.duration_ms / 3600000) * 100) / 100, unit_price: 0, amount: 0,
+          service_date: new Date(l.start_time).toISOString().split("T")[0], start_time: l.start_time,
+          sort_order: nextSort++,
+        })),
+        ...expenses.map((e) => ({
+          invoice_id: invoice.id, log_id: null, expense_id: e.id, description: e.description,
+          va_name: null, account_name: e.account || null, category: "expense", project: null,
+          client_memo: e.notes || null, quantity: 1, unit_price: Number(e.amount), amount: Number(e.amount),
+          service_date: e.expense_date || null, start_time: null, sort_order: nextSort++,
+        })),
+      ];
+      const { error } = await supabase.from("invoice_line_items").insert(rows);
+      if (error) {
+        alert("Couldn't update the invoice. Nothing was changed — please try again.");
+        return;
+      }
+      const updated = await shiftInvoiceTotals(invoice, delta);
+      if (updated) await openInvoiceDetail(updated);
+      else alert("Items were added but the invoice total didn't update. Please refresh and check the total.");
+      fetchInvoices();
+    } finally {
+      setInvoiceUpdating(false);
+    }
+  };
+
+  // Adding/removing an expense moves the stored subtotal and total by exactly
+  // the expense amount — the expense is part of the subtotal, as on invoices
+  // built with expenses (see openInvoiceDetail's timeSubtotal back-calc).
+  const shiftInvoiceTotals = async (invoice: Invoice, delta: number) => {
+    const subtotal = Math.round((Number(invoice.subtotal) + delta) * 100) / 100;
+    const total = Math.round((Number(invoice.total) + delta) * 100) / 100;
+    const { data: updated, error } = await supabase
+      .from("invoices")
+      .update({ subtotal, total })
+      .eq("id", invoice.id)
+      .select()
+      .single();
+    if (error || !updated) return null;
+    if (Number(invoice.amount_paid || 0) > 0) await syncInvoicePaymentState(supabase, invoice.id);
+    return updated as Invoice;
+  };
+
+  const addExpenseToInvoice = async (
+    invoice: Invoice,
+    exp: { id: number; description: string; amount: number; account: string | null; expense_date: string | null; notes: string | null }
+  ) => {
+    setExpenseBusyId(exp.id);
+    const nextSort = selectedLineItems.reduce((m, li) => Math.max(m, Number(li.sort_order ?? 0)), -1) + 1;
+    const { error } = await supabase.from("invoice_line_items").insert({
+      invoice_id: invoice.id,
+      log_id: null,
+      expense_id: exp.id,
+      description: exp.description,
+      va_name: null,
+      account_name: exp.account || null,
+      category: "expense",
+      project: null,
+      client_memo: exp.notes || null,
+      quantity: 1,
+      unit_price: Number(exp.amount),
+      amount: Number(exp.amount),
+      service_date: exp.expense_date || null,
+      start_time: null,
+      sort_order: nextSort,
+    });
+    if (error) {
+      setExpenseBusyId(null);
+      alert("Couldn't add the expense. Please try again.");
+      return;
+    }
+    const updated = await shiftInvoiceTotals(invoice, Number(exp.amount));
+    setExpenseBusyId(null);
+    setExpensePickerOpen(false);
+    if (updated) await openInvoiceDetail(updated);
+    else alert("The expense was added but the invoice total didn't update. Please refresh and check the total.");
+    fetchInvoices();
+  };
+
+  const removeExpenseFromInvoice = async (invoice: Invoice, li: InvoiceLineItem) => {
+    if (!confirm(`Remove "${li.description}" (${formatCurrency(Number(li.amount), invoice.currency)}) from this invoice?`)) return;
+    setExpenseBusyId(li.expense_id as number);
+    const { error } = await supabase.from("invoice_line_items").delete().eq("id", li.id);
+    if (error) {
+      setExpenseBusyId(null);
+      alert("Couldn't remove the expense. Please try again.");
+      return;
+    }
+    const updated = await shiftInvoiceTotals(invoice, -Number(li.amount));
+    setExpenseBusyId(null);
+    if (updated) await openInvoiceDetail(updated);
+    fetchInvoices();
+  };
+
   const openInvoiceDetail = async (invoice: Invoice) => {
+    setExpensePickerOpen(false);
     setSelectedInvoice(invoice);
     setSendError("");
     setSendSuccess("");
@@ -9507,6 +9744,22 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           ? { ...prev, amount_paid: synced.amount_paid, status: synced.status as Invoice["status"], paid_date: synced.paid_date }
           : null
       );
+    }
+
+    // Same paid-in-full receipt "Record Payment" sends (fire-and-forget). Only
+    // when a balancing payment was actually recorded — an invoice that was
+    // already settled gets no new email.
+    if (remaining > 0 && invoice.to_email) {
+      fetch("/api/invoices/send-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          amountPaid: remaining,
+          newAmountPaid: synced?.amount_paid ?? Number(invoice.amount_paid || 0) + remaining,
+          newStatus: synced?.status ?? "paid",
+        }),
+      }).catch(() => {/* non-fatal */});
     }
     fetchInvoices();
   };
@@ -11114,6 +11367,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </button>
               );
             })()}
+            {!["paid", "trash", "cancelled", "archived"].includes(inv.status) && (
+              <button
+                onClick={() => updateInvoiceFromSources(inv)}
+                disabled={invoiceUpdating}
+                title="Add any expenses or time entries recorded since this invoice was built"
+                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer disabled:opacity-50"
+              >
+                {invoiceUpdating ? "Updating…" : "↻ Update Invoice"}
+              </button>
+            )}
             {inv.status === "draft" && (
               <button
                 onClick={() => handleMarkReadyToSend(inv)}
@@ -12314,11 +12577,56 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             </div>
 
             {/* Reimbursable Expenses Section */}
-            {selectedLineItems.some((li) => li.expense_id) && (
+            {(selectedLineItems.some((li) => li.expense_id) || !["paid", "trash", "cancelled", "archived"].includes(inv.status)) && (
               <div className="mb-6 rounded-lg border border-amber-200 overflow-hidden">
-                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200">
+                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-2">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Reimbursable Expenses</p>
+                  {!["paid", "trash", "cancelled", "archived"].includes(inv.status) && (
+                    <button
+                      type="button"
+                      onClick={() => (expensePickerOpen ? setExpensePickerOpen(false) : loadExpensePicker(inv))}
+                      className="flex items-center gap-1 rounded-lg border border-sand bg-white px-3 py-1 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                    >{expensePickerOpen ? "Close" : "+ Add Expense"}</button>
+                  )}
                 </div>
+                {expensePickerOpen && (
+                  <div className="border-b border-amber-200 bg-white px-4 py-3">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                      Unbilled expenses for {invoiceExpenseAccounts(inv).join(", ") || "this invoice"}
+                    </p>
+                    {expensePickerLoading ? (
+                      <p className="text-[11px] text-stone">Loading…</p>
+                    ) : expensePickerItems.length === 0 ? (
+                      <p className="text-[11px] text-stone">
+                        No unbilled reimbursable expenses. Add one in Financial Summary → Expenses with the right account and Reimbursable ticked.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {expensePickerItems.map((exp) => (
+                          <div key={exp.id} className="flex items-center justify-between gap-2 rounded-lg border border-sand px-3 py-2 hover:bg-cream transition-colors">
+                            <div className="min-w-0">
+                              <span className="text-[12px] font-semibold text-espresso">{exp.description}</span>
+                              <span className="ml-2 text-[11px] text-stone">{exp.expense_date || "—"} · {exp.account || "—"}</span>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                              <span className="text-[12px] font-medium text-espresso">{formatCurrency(Number(exp.amount), inv.currency)}</span>
+                              <button
+                                type="button"
+                                disabled={expenseBusyId !== null}
+                                onClick={() => addExpenseToInvoice(inv, exp)}
+                                className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 cursor-pointer"
+                              >{expenseBusyId === exp.id ? "Adding…" : "Add"}</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!selectedLineItems.some((li) => li.expense_id) && !expensePickerOpen && (
+                  <p className="px-4 py-3 text-[11px] text-stone">No expenses on this invoice.</p>
+                )}
+                {selectedLineItems.some((li) => li.expense_id) && (
                 <table className="w-full text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-amber-100 bg-amber-50/50 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
@@ -12383,12 +12691,22 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 Mark Settled
                               </button>
                             )}
+                            {!["paid", "trash", "cancelled", "archived"].includes(inv.status) && (
+                              <button
+                                type="button"
+                                disabled={expenseBusyId !== null}
+                                onClick={() => removeExpenseFromInvoice(inv, li)}
+                                title="Remove from this invoice"
+                                className="ml-2 inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-terracotta-soft hover:text-terracotta disabled:opacity-50 cursor-pointer"
+                              >&times;</button>
+                            )}
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
+                )}
               </div>
             )}
 
