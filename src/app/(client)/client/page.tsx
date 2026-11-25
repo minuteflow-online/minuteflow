@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import ClientTeamPanel from "@/components/ClientTeamPanel";
+import ClientTeamSidebar from "@/components/ClientTeamSidebar";
 import ClientAssignedTasksPanel from "@/components/ClientAssignedTasksPanel";
 import ClientBoardPanel from "@/components/ClientBoardPanel";
 import ClientActivityLogPanel from "@/components/ClientActivityLogPanel";
@@ -50,8 +50,8 @@ export default async function ClientDashboardPage() {
         <ClientAssignedTasksPanel />
         <div className="space-y-5">
           <ClientChecklistPanel />
-          <ClientQuickPickPanel />
-          <ClientTeamPanel />
+          <ClientQuickPickPanel orgId={profile?.organization_id ?? null} orgName={org?.name ?? ""} />
+          <ClientTeamSidebar />
         </div>
       </div>
 

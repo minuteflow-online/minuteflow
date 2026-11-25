@@ -3,94 +3,87 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-        on ? "bg-sage" : "bg-stone/30"
-      }`}
-    >
-      <span
-        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-          on ? "translate-x-3.5" : "translate-x-0.5"
-        }`}
-      />
-    </button>
-  );
-}
-
-export default function ClientQuickPickPanel() {
-  const [orgId, setOrgId] = useState<string | null>(null);
+/**
+ * The client's Quick Pick — the same card and buttons the VA's own Quick Pick
+ * (ProjectSidebar) shows, labelled exactly as the VA sees them. A client
+ * doesn't log time from these; each button switches that action on or off on
+ * their VAs' Quick Pick (organizations.quick_pick_message / _planning).
+ */
+export default function ClientQuickPickPanel({ orgId, orgName }: { orgId: string | null; orgName: string }) {
   const [message, setMessage] = useState(false);
   const [planning, setPlanning] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const supabase = createClient();
-        const { data: userResult } = await supabase.auth.getUser();
-        const userId = userResult.user?.id;
-        if (!userId) return;
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("organization_id")
-          .eq("id", userId)
-          .single();
-        if (!profile?.organization_id) return;
-        setOrgId(profile.organization_id);
-        const { data: org } = await supabase
-          .from("organizations")
-          .select("quick_pick_message, quick_pick_planning")
-          .eq("id", profile.organization_id)
-          .single();
-        setMessage(Boolean(org?.quick_pick_message));
-        setPlanning(Boolean(org?.quick_pick_planning));
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
-
-  const update = useCallback(async (field: "quick_pick_message" | "quick_pick_planning", value: boolean) => {
     if (!orgId) return;
     const supabase = createClient();
-    await supabase.from("organizations").update({ [field]: value }).eq("id", orgId);
+    void supabase
+      .from("organizations")
+      .select("quick_pick_message, quick_pick_planning")
+      .eq("id", orgId)
+      .single()
+      .then(({ data }) => {
+        setMessage(Boolean(data?.quick_pick_message));
+        setPlanning(Boolean(data?.quick_pick_planning));
+      });
   }, [orgId]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-6 text-sm text-stone">
-        <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
-        Loading...
-      </div>
-    );
-  }
+  const update = useCallback(
+    async (field: "quick_pick_message" | "quick_pick_planning", value: boolean) => {
+      if (!orgId) return;
+      const supabase = createClient();
+      await supabase.from("organizations").update({ [field]: value }).eq("id", orgId);
+    },
+    [orgId]
+  );
+
+  const name = orgName || "you";
+  const actions = [
+    {
+      key: "quick_pick_planning" as const,
+      on: planning,
+      set: setPlanning,
+      label: `🗂️ Planning/Sorting for ${name}`,
+      onClass: "bg-amber text-white",
+    },
+    {
+      key: "quick_pick_message" as const,
+      on: message,
+      set: setMessage,
+      label: `💬 Message ${name}`,
+      onClass: "bg-slate-blue text-white",
+    },
+  ];
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
-      <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Quick Pick</h3>
-      <p className="text-xs text-stone">
-        Add quick actions to your VA&apos;s Quick Pick menu, so they can log time working for you with one click.
-      </p>
-      <div className="space-y-2">
-        <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-sand">
-          <div>
-            <p className="text-[13px] font-semibold text-espresso">💬 Message Me</p>
-            <p className="text-[11px] text-stone">Lets your VA log time messaging you with one click.</p>
-          </div>
-          <Toggle on={message} onClick={() => { setMessage((v) => !v); void update("quick_pick_message", !message); }} />
+    <div className="rounded-xl border border-sand bg-white overflow-hidden">
+      <div className="border-b border-parchment px-4 py-3">
+        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Quick Pick</h3>
+      </div>
+      <div className="px-4 py-3">
+        <div className="text-[9px] font-bold text-bark uppercase tracking-wider mb-2">Quick Actions</div>
+        <div className="flex flex-col gap-2">
+          {actions.map((a) => (
+            <button
+              key={a.key}
+              type="button"
+              disabled={!orgId}
+              onClick={() => {
+                a.set(!a.on);
+                void update(a.key, !a.on);
+              }}
+              title={a.on ? "On your VAs' Quick Pick — click to turn off" : "Off — click to add it to your VAs' Quick Pick"}
+              className={`w-full py-3 px-4 rounded-xl text-[12px] font-semibold cursor-pointer transition-all text-left leading-tight flex items-center justify-between gap-2 ${
+                a.on ? a.onClass : "bg-stone/10 text-stone border border-dashed border-clay"
+              }`}
+            >
+              <span>{a.label}</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{a.on ? "On" : "Off"}</span>
+            </button>
+          ))}
         </div>
-        <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-sand">
-          <div>
-            <p className="text-[13px] font-semibold text-espresso">🗂️ Planning/Sorting</p>
-            <p className="text-[11px] text-stone">Lets your VA log time planning or sorting work for you.</p>
-          </div>
-          <Toggle on={planning} onClick={() => { setPlanning((v) => !v); void update("quick_pick_planning", !planning); }} />
-        </div>
+        <p className="mt-2 text-[10px] text-stone">
+          These show on your VAs&apos; Quick Pick so they can log time for you in one click. Click one to turn it on or off.
+        </p>
       </div>
     </div>
   );

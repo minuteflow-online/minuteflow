@@ -79,6 +79,21 @@ export default function ClientOrgTeamPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
+  // VA invites live here now (moved off the dashboard's Your Team card, which
+  // is the read-only staff TeamSidebar). New-account invites aren't org
+  // members yet, so they come from /api/organization-invites.
+  const [vaInviteEmail, setVaInviteEmail] = useState("");
+  const [pendingVaInvites, setPendingVaInvites] = useState<{ id: string; email: string }[]>([]);
+  const loadVaInvites = useCallback(async () => {
+    const res = await fetch("/api/organization-invites", { cache: "no-store" });
+    if (res.ok) {
+      const json = (await res.json()) as { pendingInvites?: { id: string; email: string }[] };
+      setPendingVaInvites(json.pendingInvites ?? []);
+    }
+  }, []);
+  useEffect(() => {
+    void loadVaInvites();
+  }, [loadVaInvites]);
   const [openNotesFor, setOpenNotesFor] = useState<string | null>(null);
   // Which removal is waiting for a second click. An on-page confirm rather
   // than window.confirm(), which some browsers and embedded views silently
@@ -241,7 +256,7 @@ export default function ClientOrgTeamPanel() {
       <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">VAs</h3>
-          <span className="text-[11px] text-stone">Invite VAs from Your Team on the Dashboard</span>
+          <span className="text-[11px] text-stone">The VAs who work for your team</span>
         </div>
 
         {data.vas.length === 0 ? (
@@ -323,6 +338,46 @@ export default function ClientOrgTeamPanel() {
             ))}
           </div>
         )}
+        {pendingVaInvites.length > 0 && (
+          <div className="space-y-1.5">
+            {pendingVaInvites.map((inv) => (
+              <div key={inv.id} className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white">
+                <span className="truncate text-[13px] font-semibold text-espresso leading-tight">{inv.email}</span>
+                <span className={`${BADGE} bg-amber-50 text-amber-500 border-amber-200`} title="Waiting for them to sign up">
+                  Invited
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!vaInviteEmail.trim()) return;
+            const ok = await call("invite-va", "/api/organization-invites", "POST", { email: vaInviteEmail.trim() });
+            if (ok) {
+              setVaInviteEmail("");
+              await loadVaInvites();
+            }
+          }}
+          className="flex items-center gap-2"
+        >
+          <input
+            type="email"
+            value={vaInviteEmail}
+            onChange={(e) => setVaInviteEmail(e.target.value)}
+            placeholder="VA's email address"
+            className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+          />
+          <button
+            type="submit"
+            disabled={busy === "invite-va" || !vaInviteEmail.trim()}
+            className="shrink-0 px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+          >
+            Invite VA
+          </button>
+        </form>
         <p className="text-[11px] text-stone/80">
           A Manager is one of your VAs you trust to help run this team; they get your team&apos;s submission alerts.
           Their MinuteFlow account itself doesn&apos;t change.

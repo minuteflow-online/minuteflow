@@ -37,7 +37,7 @@ export async function GET() {
       admin.from("sessions").select("user_id, clocked_in, active_task").in("user_id", vaIds),
       admin
         .from("time_logs")
-        .select("id, user_id, task_name, category, duration_ms, start_time, form_fill_ms")
+        .select("id, user_id, task_name, category, duration_ms, start_time, end_time, form_fill_ms")
         .in("user_id", vaIds)
         .gte("start_time", since)
         .order("start_time", { ascending: false }),
@@ -113,6 +113,16 @@ export async function GET() {
         .reduce((sum, l) => sum + ((l.duration_ms as number) || 0), 0),
       todayTasks: userLogsToday.filter((l) => l.category !== "Break" && l.category !== "Clock Out").length,
       todayScreenshots: userShotsToday.length,
+      // This org's own work today (never another account's) — the dashboard's
+      // Your Team "Show tasks" list.
+      todayLogs: userLogsToday.map((l) => ({
+        id: l.id,
+        task_name: l.task_name,
+        category: l.category,
+        start_time: l.start_time,
+        end_time: l.end_time,
+        duration_ms: l.duration_ms,
+      })),
     };
   });
 

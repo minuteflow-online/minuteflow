@@ -233,3 +233,58 @@ export async function vaWorkScope(
     orgIds: (memberships ?? []).map((m) => m.organization_id as string),
   };
 }
+
+/**
+ * Everyone on one client team: its owner, its co-admins (client accounts tied
+ * to the org) and its active VAs. Who an @everyone / @mention on that team's
+ * boards can reach — never the agency at large.
+ */
+export async function orgPeopleIds(admin: AdminClient, organizationId: string): Promise<string[]> {
+  const [{ data: org }, { data: clients }, { data: members }] = await Promise.all([
+    admin.from("organizations").select("owner_profile_id").eq("id", organizationId).maybeSingle(),
+    admin.from("profiles").select("id").eq("role", "client").eq("organization_id", organizationId),
+    admin.from("organization_members").select("va_id").eq("organization_id", organizationId).eq("status", "active"),
+  ]);
+  const ids = new Set<string>();
+  if (org?.owner_profile_id) ids.add(org.owner_profile_id as string);
+  for (const c of clients ?? []) ids.add(c.id as string);
+  for (const m of members ?? []) ids.add(m.va_id as string);
+  return [...ids];
+}
+
+/**
+ * Which General boards a user reads and posts on. The agency's board
+ * (project_messages.organization_id NULL) is for agency staff; each client
+ * team has its own (organization_id = that org) for its client accounts and
+ * its VAs. A client sees only their own team's; a client-only VA only their
+ * teams'; an agency VA on a client team sees both.
+ */
+export async function generalBoardScope(
+  admin: AdminClient,
+  userId: string,
+  profile: { role?: string | null; organization_id?: string | null } | null | undefined
+): Promise<{ agency: boolean; orgIds: string[] }> {
+  if (profile?.role === "client") {
+    let orgId = profile.organization_id ?? null;
+    if (!orgId) {
+      const { data: me } = await admin.from("profiles").select("organization_id").eq("id", userId).maybeSingle();
+      orgId = (me?.organization_id as string | null) ?? null;
+    }
+    return { agency: false, orgIds: orgId ? [orgId] : [] };
+  }
+  const scope = await vaWorkScope(admin, userId);
+  return { agency: !scope.clientOnly, orgIds: scope.orgIds };
+}
+
+/** Whether a General topic (organization_id or NULL for the agency's) is on a board this user can use. */
+export function onGeneralBoard(scope: { agency: boolean; orgIds: string[] }, organizationId: string | null): boolean {
+  return organizationId ? scope.orgIds.includes(organizationId) : scope.agency;
+}
+
+/** The people an @mention in a project's thread may reach: that client team's, or undefined (agency-wide) for an agency project. */
+export async function mentionScopeForProject(admin: AdminClient, projectId: string | null): Promise<string[] | undefined> {
+  if (!projectId) return undefined;
+  const { data: project } = await admin.from("projects").select("organization_id").eq("id", projectId).maybeSingle();
+  const orgId = (project?.organization_id as string | null) ?? null;
+  return orgId ? orgPeopleIds(admin, orgId) : undefined;
+}
