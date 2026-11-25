@@ -57,7 +57,7 @@ export async function POST(_request: Request, { params }: RouteContext) {
   const { data: task, error: fetchError } = await adminSupabase
     .from("assigned_tasks")
     .select(
-      "id, account, project, task_name, task_detail, task_notes, due_date, instructions, instructions_locked, created_at, updated_at, assigned_task_assignees(id)"
+      "id, account, project, task_name, task_detail, task_notes, due_date, instructions, instructions_locked, created_at, updated_at, organization_id, assigned_task_assignees(id)"
     )
     .eq("id", id)
     .single();
@@ -67,6 +67,11 @@ export async function POST(_request: Request, { params }: RouteContext) {
   }
 
   const typedTask = task as TaskRow;
+  // A client org's task is never in the agency's open pool, so it can't be
+  // grabbed by id either.
+  if ((task as { organization_id?: string | null }).organization_id) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
   if ((typedTask.assigned_task_assignees ?? []).length > 0) {
     return Response.json({ error: "Task already claimed" }, { status: 409 });
   }

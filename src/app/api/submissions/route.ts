@@ -545,7 +545,7 @@ async function loadExpectedWork(
     admin
       .from("assigned_tasks")
       .select(
-        "id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
+        "id, organization_id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, category, review_required, assigned_by, fixed_pay_task_id, " +
           "assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), " +
           "projects(id, name, kind), assigned_task_assignees(id, va_id, status)"
       )
@@ -589,6 +589,11 @@ async function loadExpectedWork(
         t.assigned_by === userId ||
         (t.assigned_task_assignees ?? []).some((a) => a.va_id === userId)
     );
+  }
+
+  // Agency reviewers don't see a client org's owed work.
+  if (isAdminEquivalent) {
+    dueRows = dueRows.filter((t) => !(t as { organization_id?: string | null }).organization_id);
   }
 
   if (isAdminEquivalent && va && va !== "all") {
@@ -760,7 +765,7 @@ export async function GET(request: Request) {
       .select(
         "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, no_fault, progress_status, review_requested, filed_to_project, " +
           "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-          "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
+          "assigned_tasks!task_submissions_assigned_task_id_fkey(id, organization_id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
       )
       // The whole thread, not just submissions: revision notes, approvals and
       // added notes all belong in the timeline alongside the work.
@@ -881,7 +886,11 @@ export async function GET(request: Request) {
         r.assigned_tasks?.assigned_by === user.id ||
         (r.assigned_tasks && myTaskIds.has(r.assigned_tasks.id))
     );
-  } else if (va && va !== "all") {
+  } else {
+    // Agency reviewers: a client org's threads stay with that org.
+    rows = rows.filter((r) => !(r.assigned_tasks as { organization_id?: string | null } | null)?.organization_id);
+  }
+  if (isAdminEquivalent && va && va !== "all") {
     // Previously a query-side .eq(), which needed `profile` before the query
     // could even be built. Applied here instead so the query and the profile
     // lookup above can run concurrently — see the Promise.all note.

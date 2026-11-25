@@ -108,7 +108,7 @@ export async function GET(request: Request) {
   const assigneeSelect =
     "id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at, sort_order, instructions, instructions_locked";
   const taskSelect =
-    `id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, paid_manually, assigned_by, instructions, instructions_locked, review_required, review_required_locked, revision_count, fixed_pay_task_id, recurring_template_id, spawned_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username), projects(id, name, kind), task_todos(id, text, sort_order),
+    `id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, paid_manually, assigned_by, instructions, instructions_locked, review_required, review_required_locked, revision_count, organization_id, fixed_pay_task_id, recurring_template_id, spawned_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username), projects(id, name, kind), task_todos(id, text, sort_order),
          assigned_task_assignees(${assigneeSelect})`;
 
   const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
@@ -159,7 +159,12 @@ export async function GET(request: Request) {
     // RLS on assigned_tasks only lets VAs see tasks they're already assigned to,
     // which means unassigned tasks (no assignees yet) would return empty for VAs.
     const poolQuery = serviceRoleClient.from("assigned_tasks").select(taskSelect);
-    const { data, error } = await (clientOrgId ? poolQuery.eq("organization_id", clientOrgId) : poolQuery).order(
+    // Agency staff get agency tasks only — a client org's unassigned work stays
+    // with that org (Neil, 2026-11-25: client work never mixes into agency views).
+    const { data, error } = await (clientOrgId
+      ? poolQuery.eq("organization_id", clientOrgId)
+      : poolQuery.is("organization_id", null)
+    ).order(
       "created_at",
       { ascending: false }
     );
@@ -248,12 +253,15 @@ export async function GET(request: Request) {
     const task = rows[0];
     if (!task) return Response.json({ tasks: [] });
 
+    const assignees = (task.assigned_task_assignees ?? []) as Array<{ va_id: string | null }>;
+    const mine =
+      assignees.some((a) => a.va_id === user.id) ||
+      (task as { assigned_by?: string | null }).assigned_by === user.id;
     if (!isPermitted) {
-      const assignees = (task.assigned_task_assignees ?? []) as Array<{ va_id: string | null }>;
-      const mine =
-        assignees.some((a) => a.va_id === user.id) ||
-        (task as { assigned_by?: string | null }).assigned_by === user.id;
       if (!mine) return Response.json({ error: "Forbidden" }, { status: 403 });
+    } else if ((task as { organization_id?: string | null }).organization_id && !mine) {
+      // A client org's task is not part of the agency's views.
+      return Response.json({ tasks: [] });
     }
 
     return Response.json({ tasks: [task] });
@@ -337,13 +345,18 @@ export async function GET(request: Request) {
 
     // A client sees only the work their own organization gave this VA —
     // never the VA's agency tasks or another client's.
+    // An agency admin sees only the VA's agency work — a client org's tasks
+    // stay out of agency views.
     const orgScopedRows =
       isClientViewingOwnVa && !isPermitted
         ? vaRows.filter(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (row) => ((row as any).assigned_tasks?.organization_id ?? null) === profile?.organization_id
           )
-        : vaRows;
+        : vaRows.filter(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (row) => !((row as any).assigned_tasks?.organization_id ?? null)
+          );
 
     const vaFiltered = orgScopedRows.filter((row) =>
       matchesTaskView(
@@ -368,6 +381,8 @@ export async function GET(request: Request) {
       .select(taskSelect)
       .order("created_at", { ascending: false });
     if (!isPermitted && clientOrgId) query = query.eq("organization_id", clientOrgId);
+    // Agency staff: agency tasks only — client org work never mixes in.
+    else query = query.is("organization_id", null);
 
     if (projectIdList && projectIdList.length > 0) {
       query = query.in("project_id", projectIdList);
