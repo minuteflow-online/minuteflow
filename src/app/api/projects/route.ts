@@ -12,13 +12,6 @@ function serviceClient() {
   );
 }
 
-async function requireUser() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
-  return { user };
-}
-
 async function requireAdmin() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -32,8 +25,56 @@ async function getUserAndRole() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
-  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
-  return { user, isAdmin: hasBroadAdminAccess(profile) };
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, department, organization_id")
+    .eq("id", user.id)
+    .single();
+  // A client (employer) works only with their own org's projects.
+  const clientOrgId =
+    profile?.role === "client" && profile.organization_id ? (profile.organization_id as string) : null;
+  return { user, isAdmin: hasBroadAdminAccess(profile), clientOrgId };
+}
+
+/** The org a project belongs to (null = an agency project), or undefined if it doesn't exist. */
+async function projectOrg(supabase: ReturnType<typeof serviceClient>, id: string): Promise<string | null | undefined> {
+  const { data } = await supabase.from("projects").select("organization_id").eq("id", id).maybeSingle();
+  if (!data) return undefined;
+  return (data.organization_id as string | null) ?? null;
+}
+
+/** The client org's active VAs — the only people a client may add to a project. */
+async function orgVaIds(supabase: ReturnType<typeof serviceClient>, orgId: string): Promise<Set<string>> {
+  const { data } = await supabase
+    .from("organization_members")
+    .select("va_id")
+    .eq("organization_id", orgId)
+    .eq("status", "active");
+  return new Set((data ?? []).map((m) => m.va_id as string));
+}
+
+/**
+ * For a client: every project id it names (parent, linked objective) must be
+ * its own org's, and every VA it adds must be on its team. Returns an error
+ * response, or null when the request stays inside the org.
+ */
+async function checkClientProjectRefs(
+  supabase: ReturnType<typeof serviceClient>,
+  orgId: string,
+  body: { va_ids?: string[]; parent_project_id?: string | null; linked_objective_id?: string | null }
+): Promise<Response | null> {
+  for (const ref of [body.parent_project_id, body.linked_objective_id]) {
+    if (ref && (await projectOrg(supabase, ref)) !== orgId) {
+      return Response.json({ error: "That parent or linked objective isn't yours." }, { status: 403 });
+    }
+  }
+  if (Array.isArray(body.va_ids) && body.va_ids.length > 0) {
+    const allowed = await orgVaIds(supabase, orgId);
+    if (body.va_ids.some((id) => !allowed.has(id))) {
+      return Response.json({ error: "You can only add VAs on your own team." }, { status: 403 });
+    }
+  }
+  return null;
 }
 
 export async function GET(request: Request) {
@@ -45,19 +86,25 @@ export async function GET(request: Request) {
   const supabase = serviceClient();
 
   if (id) {
-    const auth = await requireUser();
+    const auth = await getUserAndRole();
     if ("error" in auth) return auth.error;
     const { data, error } = await supabase.from("projects").select("*").eq("id", id).maybeSingle();
     if (error) return Response.json({ error: error.message }, { status: 500 });
     if (!data) return Response.json({ error: "Project not found" }, { status: 404 });
+    if (auth.clientOrgId && data.organization_id !== auth.clientOrgId) {
+      return Response.json({ error: "Project not found" }, { status: 404 });
+    }
     return Response.json({ project: data });
   }
 
   const vaAccess = searchParams.get("vaAccess") === "true";
   const projectId = searchParams.get("projectId");
   if (vaAccess && projectId) {
-    const auth = await requireUser();
+    const auth = await getUserAndRole();
     if ("error" in auth) return auth.error;
+    if (auth.clientOrgId && (await projectOrg(supabase, projectId)) !== auth.clientOrgId) {
+      return Response.json({ error: "Project not found" }, { status: 404 });
+    }
     const { data, error } = await supabase
       .from("project_va_access")
       .select("va_id")
@@ -69,12 +116,29 @@ export async function GET(request: Request) {
   if (mine) {
     const authResult = await getUserAndRole();
     if ("error" in authResult) return authResult.error;
-    const { user, isAdmin } = authResult;
+    const { user, isAdmin, clientOrgId } = authResult;
 
-    if (isAdmin) {
+    // A client sees every project their org owns — and nothing else.
+    if (clientOrgId) {
       let query = supabase
         .from("projects")
         .select("*")
+        .eq("organization_id", clientOrgId)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false });
+      if (kind) query = query.eq("kind", kind);
+      const { data, error } = await query;
+      if (error) return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ projects: data ?? [] });
+    }
+
+    if (isAdmin) {
+      // The agency's own projects — a client org's projects belong to that
+      // client and stay out of agency lists.
+      let query = supabase
+        .from("projects")
+        .select("*")
+        .is("organization_id", null)
         .order("sort_order", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: false });
       if (kind) query = query.eq("kind", kind);
@@ -109,7 +173,8 @@ export async function GET(request: Request) {
   const auth = await requireAdmin();
   if ("error" in auth) return auth.error;
 
-  let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
+  // Agency projects only — see the admin branch of ?mine above.
+  let query = supabase.from("projects").select("*").is("organization_id", null).order("created_at", { ascending: false });
   if (kind) query = query.eq("kind", kind);
   const { data, error } = await query;
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -117,9 +182,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireUser();
+  const auth = await getUserAndRole();
   if ("error" in auth) return auth.error;
-  const { user } = auth;
+  const { user, clientOrgId } = auth;
   const body = (await request.json()) as {
     name?: string;
     description?: string;
@@ -137,6 +202,10 @@ export async function POST(request: Request) {
   if (!body.name?.trim()) return Response.json({ error: "name is required" }, { status: 400 });
   const kind = body.kind === "operation" ? "operation" : "objective";
   const supabase = serviceClient();
+  if (clientOrgId) {
+    const refError = await checkClientProjectRefs(supabase, clientOrgId, body);
+    if (refError) return refError;
+  }
   const { data, error } = await supabase.from("projects").insert({
     name: body.name.trim(),
     account: body.account?.trim() || null,
@@ -151,6 +220,8 @@ export async function POST(request: Request) {
     start_date: body.start_date || null,
     status: body.status?.trim() || "active",
     linked_objective_id: body.linked_objective_id || null,
+    // A client's project belongs to their org; everyone else's is the agency's.
+    organization_id: clientOrgId,
   }).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
 
@@ -166,7 +237,7 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const authResult = await getUserAndRole();
   if ("error" in authResult) return authResult.error;
-  const { user, isAdmin } = authResult;
+  const { user, isAdmin, clientOrgId } = authResult;
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
@@ -174,7 +245,12 @@ export async function PATCH(request: Request) {
 
   const supabase = serviceClient();
 
-  if (!isAdmin) {
+  // A client may edit any project their org owns — and only those.
+  if (clientOrgId && (await projectOrg(supabase, id)) !== clientOrgId) {
+    return Response.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  if (!isAdmin && !clientOrgId) {
     const { data: project } = await supabase.from("projects").select("created_by").eq("id", id).maybeSingle();
     if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
     // Anyone involved in the objective/operation can edit it — the creator or a
@@ -204,6 +280,10 @@ export async function PATCH(request: Request) {
     status?: string | null;
     linked_objective_id?: string | null;
   };
+  if (clientOrgId) {
+    const refError = await checkClientProjectRefs(supabase, clientOrgId, body);
+    if (refError) return refError;
+  }
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name.trim();
   if (body.account !== undefined) updates.account = body.account?.trim() || null;
@@ -262,7 +342,7 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   const authResult = await getUserAndRole();
   if ("error" in authResult) return authResult.error;
-  const { user, isAdmin } = authResult;
+  const { user, isAdmin, clientOrgId } = authResult;
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
@@ -270,7 +350,12 @@ export async function DELETE(request: Request) {
 
   const supabase = serviceClient();
 
-  if (!isAdmin) {
+  if (clientOrgId) {
+    // A client may delete any project their org owns — and only those.
+    if ((await projectOrg(supabase, id)) !== clientOrgId) {
+      return Response.json({ error: "Project not found" }, { status: 404 });
+    }
+  } else if (!isAdmin) {
     const { data: project } = await supabase.from("projects").select("created_by").eq("id", id).maybeSingle();
     if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
     if (project.created_by !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });

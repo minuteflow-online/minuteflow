@@ -10,6 +10,9 @@ export default function ClientProductivityLayout({ children }: { children: React
           { label: "Assignment", href: "/client/productivity/assignment" },
           { label: "Submissions", href: "/client/productivity/submissions" },
           { label: "Calendar", href: "/client/productivity/calendar" },
+          { label: "Objective", href: "/client/productivity/objective" },
+          { label: "Operations", href: "/client/productivity/operations" },
+          { label: "Assets", href: "/client/productivity/assets" },
         ]}
       />
       {children}

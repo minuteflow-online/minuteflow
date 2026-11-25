@@ -27,6 +27,13 @@ const CLIENT_API_ALLOWLIST: Rule[] = [
   // Their own org's VAs (the route returns nothing else to a client) — used by
   // the staff Assignment / Calendar screens clients reuse.
   { pattern: /^\/api\/team-members$/, methods: ["GET"] },
+  // Objectives / Operations / Assets — every one of these checks the project
+  // belongs to the client's own org (canAccessProject, or a client branch).
+  { pattern: /^\/api\/projects$/ },
+  { pattern: /^\/api\/projects\/(assets-overview|files-overview|messages-overview|submitted-files|subtask-stats|subtasks-list)$/, methods: ["GET"] },
+  { pattern: /^\/api\/project-messages$/ },
+  { pattern: /^\/api\/project-messages\/[^/]+\/comments$/ },
+  { pattern: /^\/api\/project-files$/ },
   // Direct messages with the org's own VAs.
   { pattern: /^\/api\/conversations(\/.*)?$/ },
   // Screenshot images + details — both check the shooter is in the client's org.

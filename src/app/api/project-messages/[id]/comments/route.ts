@@ -52,6 +52,11 @@ export async function POST(request: Request, { params }: RouteContext) {
   if (message.project_id && !(await canAccessProject(supabase, profile, user.id, message.project_id))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  // The General board is the agency's team board — a client (employer) only
+  // ever talks on their own org's projects.
+  if (!message.project_id && profile?.role === "client") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { data, error } = await supabase
     .from("project_message_comments")

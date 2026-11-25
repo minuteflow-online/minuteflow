@@ -42,6 +42,10 @@ export async function GET(request: Request) {
   }
 
   const supabase = serviceClient();
+  // The General board is the agency team's — never shown to a client (employer).
+  if (!projectId && profile?.role === "client") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   // A general topic hangs off no project, so there is no project membership to
   // check — the board is the whole team by definition.
   if (projectId && !(await canAccessProject(supabase, profile, user.id, projectId))) {
@@ -121,6 +125,10 @@ export async function POST(request: Request) {
   if (!content) return Response.json({ error: "body is required" }, { status: 400 });
 
   const supabase = serviceClient();
+  // A client (employer) can't post to the agency's General board.
+  if (!projectId && profile?.role === "client") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (projectId && !(await canAccessProject(supabase, profile, user.id, projectId))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }

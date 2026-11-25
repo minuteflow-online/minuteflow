@@ -91,6 +91,10 @@ function Paginated<T>({ items, pageSize, empty, children }: {
 export default function ProductivityAssetsPage() {
   const [ready, setReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  // A client (employer) gets this view for their own org's files (the route
+  // scopes it) — see /client/productivity/assets. Hiding a file from the list
+  // is a company-wide setting, so that stays with staff.
+  const [isClient, setIsClient] = useState(false);
 
   const [files, setFiles] = useState<AssetRow[]>([]);
   const [submittedFiles, setSubmittedFiles] = useState<AssetRow[]>([]);
@@ -113,7 +117,8 @@ export default function ProductivityAssetsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setReady(true); return; }
       const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-      setIsAdmin(hasBroadAdminAccess(profile));
+      setIsClient(profile?.role === "client");
+      setIsAdmin(hasBroadAdminAccess(profile) || profile?.role === "client");
       setReady(true);
     })();
   }, []);
@@ -145,12 +150,12 @@ export default function ProductivityAssetsPage() {
       .then((d) => new Set<string>(Array.isArray(d?.prefs?.ids) ? (d.prefs.ids as string[]) : []))
       .catch(() => null);
   useEffect(() => {
-    if (!ready || !isAdmin) return;
+    if (!ready || !isAdmin || isClient) return;
     let cancelled = false;
     void readRemovedDocIds().then((ids) => { if (!cancelled && ids) setRemovedDocIds(ids); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, isAdmin]);
+  }, [ready, isAdmin, isClient]);
 
   const setDocRemoved = async (id: string, removed: boolean) => {
     setRemovedDocIds((prev) => {
@@ -343,7 +348,7 @@ export default function ProductivityAssetsPage() {
                     ) : (
                       <div className={rowClass}>{inner}</div>
                     )}
-                    {showRemovedDocs ? (
+                    {isClient ? null : showRemovedDocs ? (
                       <button
                         type="button"
                         onClick={() => void setDocRemoved(f.id, false)}

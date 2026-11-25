@@ -16,10 +16,27 @@ import { hasBroadAdminAccess } from "@/lib/financialAccess";
  */
 export async function canAccessProject(
   serviceClient: SupabaseClient,
-  profile: { role?: string | null } | null | undefined,
+  profile: { role?: string | null; organization_id?: string | null } | null | undefined,
   userId: string,
   projectId: string
 ): Promise<boolean> {
+  // A client (employer) may reach exactly the projects their own org owns —
+  // never an agency project, never another client's.
+  if (profile?.role === "client") {
+    let orgId = profile.organization_id ?? null;
+    if (!orgId) {
+      const { data: me } = await serviceClient.from("profiles").select("organization_id").eq("id", userId).maybeSingle();
+      orgId = (me?.organization_id as string | null) ?? null;
+    }
+    if (!orgId) return false;
+    const { data: owned } = await serviceClient
+      .from("projects")
+      .select("organization_id")
+      .eq("id", projectId)
+      .maybeSingle();
+    return Boolean(owned && owned.organization_id === orgId);
+  }
+
   if (hasBroadAdminAccess(profile)) return true;
 
   const { data: project } = await serviceClient
