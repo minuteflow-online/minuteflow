@@ -19,7 +19,7 @@
     },
     {
       "path": "/api/cron/generate-recurring-invoices",
-      "schedule": "0 8 1 * *"
+      "schedule": "0 9 1 * *"
     },
     {
       "path": "/api/cron/generate-recurring-expenses",

@@ -8053,6 +8053,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   >([]);
   const [expensePickerLoading, setExpensePickerLoading] = useState(false);
   const [expenseBusyId, setExpenseBusyId] = useState<number | null>(null);
+  const [invoiceUpdating, setInvoiceUpdating] = useState(false);
 
   // "Uncheck All" sentinel booleans for Step 3 filters
   const [filterVANone, setFilterVANone] = useState(false);
@@ -9076,12 +9077,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const loadExpensePicker = async (invoice: Invoice) => {
     setExpensePickerOpen(true);
     setExpensePickerLoading(true);
+    setExpensePickerItems(await fetchUnbilledInvoiceExpenses(invoice));
+    setExpensePickerLoading(false);
+  };
+
+  // Reimbursable expenses for this invoice's account(s) not on any live invoice.
+  const fetchUnbilledInvoiceExpenses = async (invoice: Invoice) => {
     const accounts = invoiceExpenseAccounts(invoice);
-    if (accounts.length === 0) {
-      setExpensePickerItems([]);
-      setExpensePickerLoading(false);
-      return;
-    }
+    if (accounts.length === 0) return [];
     const { data: expData } = await supabase
       .from("financial_expenses")
       .select("id, description, amount, account, expense_date, notes")
@@ -9111,8 +9114,115 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         });
       }
     }
-    setExpensePickerItems(candidates.filter((e) => !billed.has(e.id)));
-    setExpensePickerLoading(false);
+    return candidates.filter((e) => !billed.has(e.id));
+  };
+
+  // "Update Invoice": pull in everything added since the invoice was built —
+  // unbilled reimbursable expenses, and (hourly invoices) billable time logged
+  // in the billing period that isn't on this or any active invoice. Same
+  // selection rules as the recurring generator and the invoice builder.
+  const updateInvoiceFromSources = async (invoice: Invoice) => {
+    setInvoiceUpdating(true);
+    try {
+      const expenses = await fetchUnbilledInvoiceExpenses(invoice);
+
+      type NewLog = { id: number; task_name: string; username: string | null; account: string | null; category: string | null; project: string | null; client_memo: string | null; duration_ms: number; start_time: string };
+      let logs: NewLog[] = [];
+      if (invoice.invoice_type === "timelog" && invoice.period_start && invoice.period_end) {
+        const { data: activeInv } = await supabase
+          .from("invoices")
+          .select("id")
+          .in("status", ["sent", "paid", "partially_paid", "overdue", "ready_to_send"]);
+        const activeIds = new Set((activeInv ?? []).map((i: { id: number }) => i.id));
+        activeIds.add(invoice.id);
+        const { data: usedItems } = await supabase
+          .from("invoice_line_items")
+          .select("log_id, invoice_id")
+          .not("log_id", "is", null);
+        const usedLogIds = new Set(
+          (usedItems ?? [])
+            .filter((it: { invoice_id: number }) => activeIds.has(it.invoice_id))
+            .map((it: { log_id: number }) => it.log_id)
+        );
+        let q = supabase
+          .from("time_logs")
+          .select("id, task_name, username, account, category, project, client_memo, duration_ms, start_time")
+          .eq("billable", true)
+          .is("deleted_at", null)
+          .gte("start_time", new Date(invoice.period_start).toISOString())
+          .lte("start_time", new Date(invoice.period_end + "T23:59:59").toISOString())
+          .order("start_time", { ascending: true });
+        let scoped = true;
+        if (invoice.account_name) {
+          q = q.eq("account", invoice.account_name);
+        } else {
+          const clientName = clients.find((c) => c.id === invoice.client_id)?.name;
+          if (clientName) q = q.eq("client_name", clientName);
+          else scoped = false;
+        }
+        if (scoped) {
+          const { data: logRows } = await q;
+          logs = ((logRows ?? []) as NewLog[]).filter((l) => !usedLogIds.has(l.id) && l.duration_ms > 0);
+        }
+      }
+
+      const expenseTotal = Math.round(expenses.reduce((s, e) => s + Number(e.amount), 0) * 100) / 100;
+      const addHours = Math.round(logs.reduce((s, l) => s + l.duration_ms / 3600000, 0) * 100) / 100;
+      // Hourly rate: the saved one, or back-calculated from the current time
+      // portion of the subtotal (subtotal minus expense lines) over its hours.
+      const curTimeItems = selectedLineItems.filter((li) => !li.expense_id);
+      const curHours = curTimeItems.reduce((s, li) => s + Number(li.quantity), 0) - Number(invoice.hours_not_billed || 0);
+      const curExpense = selectedLineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0);
+      const rate = invoice.rate_amount != null
+        ? Number(invoice.rate_amount)
+        : curHours > 0 ? (Number(invoice.subtotal) - curExpense) / curHours : 0;
+      const timeAmount = Math.round(addHours * rate * 100) / 100;
+
+      if (expenses.length === 0 && logs.length === 0) {
+        alert("This invoice is up to date — no new expenses or time entries to add.");
+        return;
+      }
+      if (logs.length > 0 && rate <= 0) {
+        alert(`Found ${logs.length} new time entries but this invoice has no hourly rate to price them. Set the rate in Edit, then try again.`);
+        return;
+      }
+
+      const lines: string[] = [];
+      expenses.forEach((e) => lines.push(`• ${e.description} (${e.expense_date || "no date"}) — ${formatCurrency(Number(e.amount), invoice.currency)}`));
+      if (logs.length > 0) lines.push(`• ${logs.length} time ${logs.length === 1 ? "entry" : "entries"}, ${addHours.toFixed(2)} hrs × ${formatCurrency(rate, invoice.currency)} — ${formatCurrency(timeAmount, invoice.currency)}`);
+      const delta = Math.round((expenseTotal + timeAmount) * 100) / 100;
+      const newTotal = Math.round((Number(invoice.total) + delta) * 100) / 100;
+      if (!confirm(`Add to ${invoice.invoice_number}:\n\n${lines.join("\n")}\n\nTotal ${formatCurrency(Number(invoice.total), invoice.currency)} → ${formatCurrency(newTotal, invoice.currency)}`)) return;
+
+      let nextSort = selectedLineItems.reduce((m, li) => Math.max(m, Number(li.sort_order ?? 0)), -1) + 1;
+      const rows = [
+        ...logs.map((l) => ({
+          invoice_id: invoice.id, log_id: l.id, expense_id: null, description: l.task_name,
+          va_name: l.username, account_name: l.account || null, category: l.category || null,
+          project: l.project || null, client_memo: l.client_memo || null,
+          quantity: Math.round((l.duration_ms / 3600000) * 100) / 100, unit_price: 0, amount: 0,
+          service_date: new Date(l.start_time).toISOString().split("T")[0], start_time: l.start_time,
+          sort_order: nextSort++,
+        })),
+        ...expenses.map((e) => ({
+          invoice_id: invoice.id, log_id: null, expense_id: e.id, description: e.description,
+          va_name: null, account_name: e.account || null, category: "expense", project: null,
+          client_memo: e.notes || null, quantity: 1, unit_price: Number(e.amount), amount: Number(e.amount),
+          service_date: e.expense_date || null, start_time: null, sort_order: nextSort++,
+        })),
+      ];
+      const { error } = await supabase.from("invoice_line_items").insert(rows);
+      if (error) {
+        alert("Couldn't update the invoice. Nothing was changed — please try again.");
+        return;
+      }
+      const updated = await shiftInvoiceTotals(invoice, delta);
+      if (updated) await openInvoiceDetail(updated);
+      else alert("Items were added but the invoice total didn't update. Please refresh and check the total.");
+      fetchInvoices();
+    } finally {
+      setInvoiceUpdating(false);
+    }
   };
 
   // Adding/removing an expense moves the stored subtotal and total by exactly
@@ -11241,6 +11351,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </button>
               );
             })()}
+            {!["paid", "trash", "cancelled", "archived"].includes(inv.status) && (
+              <button
+                onClick={() => updateInvoiceFromSources(inv)}
+                disabled={invoiceUpdating}
+                title="Add any expenses or time entries recorded since this invoice was built"
+                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer disabled:opacity-50"
+              >
+                {invoiceUpdating ? "Updating…" : "↻ Update Invoice"}
+              </button>
+            )}
             {inv.status === "draft" && (
               <button
                 onClick={() => handleMarkReadyToSend(inv)}
