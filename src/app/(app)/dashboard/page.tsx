@@ -3451,8 +3451,15 @@ export default function DashboardPage() {
   // same startTask (no on-hold, no wizard). Skipped if Communication time is
   // already running so a burst of replies doesn't spawn a fresh log per
   // message.
+  //
+  // Also skipped, silently, wherever startTask() would refuse to run a
+  // timer on Windows web (windowsWebBlockedReason). Nobody clicked Start
+  // here — they just sent a message — so startTask()'s "use the desktop
+  // app" alert would be a false accusation (Toni hit it 2026-11-25). The
+  // guard itself is untouched for every deliberate task start.
   const handleMessageActivity = useCallback(async () => {
     if (activeTaskRef.current?.category === "Communication") return;
+    if (windowsWebBlockedReason(profile, isWindowsBrowser())) return;
     await startTask({
       task_name: "General Message",
       category: "Communication",
@@ -3462,7 +3469,7 @@ export default function DashboardPage() {
       client_memo: "",
       internal_memo: "",
     });
-  }, [startTask]);
+  }, [startTask, profile]);
 
   const handleSidebarMemoSave = useCallback(async () => {
     if (!activeTask?.logId) return;
