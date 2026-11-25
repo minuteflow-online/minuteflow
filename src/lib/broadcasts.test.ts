@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAudience, isRecipient, memberEmploymentTypes } from "./broadcasts";
+import { canReadBroadcast, isAudience, isRecipient, memberEmploymentTypes } from "./broadcasts";
 
 const member = (over: Partial<Parameters<typeof isRecipient>[1]> = {}) => ({
   id: "u1",
@@ -52,5 +52,33 @@ describe("isAudience", () => {
   it("keeps every other recipient", () => {
     expect(isAudience(everyone, member({ id: "u1" }), "toni")).toBe(true);
     expect(isAudience(everyone, member({ id: "u1" }), null)).toBe(true);
+  });
+});
+
+
+describe("canReadBroadcast", () => {
+  const va = { id: "va", role: "va", employment_type: null, is_active: true };
+  const admin = { ...va, id: "adm", role: "admin" };
+  const toVa = [{ type: "individual", value: "va" }];
+  const memo = { status: "published", category: "memo", created_by: "adm" };
+  const now = new Date("2026-11-25T12:00:00Z");
+
+  it("lets the audience read a published memo, not someone it wasn't sent to", () => {
+    expect(canReadBroadcast(memo, toVa, va, false, now)).toBe(true);
+    expect(canReadBroadcast(memo, toVa, { ...va, id: "other" }, false, now)).toBe(false);
+  });
+
+  it("hides drafts and future scheduled broadcasts from the audience", () => {
+    expect(canReadBroadcast({ ...memo, status: "draft" }, toVa, va, false, now)).toBe(false);
+    expect(canReadBroadcast({ ...memo, status: "scheduled", scheduled_at: "2026-11-26T00:00:00Z" }, toVa, va, false, now)).toBe(false);
+    expect(canReadBroadcast({ ...memo, status: "scheduled", scheduled_at: "2026-11-24T00:00:00Z" }, toVa, va, false, now)).toBe(true);
+  });
+
+  it("keeps a coaching note from admins it isn't shared with, but not from the person it's for", () => {
+    const note = { ...memo, category: "coaching_notes", created_by: "toni", shared_with: ["adm"] };
+    expect(canReadBroadcast(note, toVa, { ...admin, id: "neil" }, true, now)).toBe(false);
+    expect(canReadBroadcast(note, toVa, admin, true, now)).toBe(true);
+    expect(canReadBroadcast(note, toVa, { ...admin, id: "toni" }, true, now)).toBe(true);
+    expect(canReadBroadcast(note, toVa, va, false, now)).toBe(true);
   });
 });

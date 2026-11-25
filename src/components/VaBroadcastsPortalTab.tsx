@@ -3,13 +3,13 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
-import { broadcastPortalPath, compareBroadcastOrder } from "@/lib/broadcasts";
+import { compareBroadcastOrder } from "@/lib/broadcasts";
 import BroadcastFilters, {
   applyBroadcastFilters,
   EMPTY_BROADCAST_FILTERS,
   type BroadcastFilterState,
 } from "@/components/BroadcastFilters";
-import { memoChatPath } from "@/lib/memoChat";
+import BroadcastComments, { fetchBroadcastComments, type BroadcastComment } from "@/components/BroadcastComments";
 import { broadcastDisplayHtml, handleDetailsButtonClick } from "@/lib/broadcastDisplay";
 import { magicWordsMatch, parseMagicWords } from "@/lib/magicWords";
 import { renderBroadcastHtml, richTextToPlain, RICH_TEXT_CLASSES } from "@/lib/richText";
@@ -170,6 +170,8 @@ function BroadcastCard({
   followUps,
   onAcknowledged,
   linkedId,
+  comments,
+  onCommentsChange,
 }: {
   broadcast: Broadcast;
   /** Updates posted on this broadcast, newest first. */
@@ -177,6 +179,9 @@ function BroadcastCard({
   onAcknowledged: (id: string) => void;
   /** The id opened from a shared link — this card's or one of its follow-ups'. */
   linkedId: string | null;
+  /** Its comment thread, null while the list is still loading them. */
+  comments: BroadcastComment[] | null;
+  onCommentsChange: (id: string, next: BroadcastComment[]) => void;
 }) {
   const linked = linkedId === broadcast.id || followUps.some((f) => f.id === linkedId);
   const newUpdates = followUps.filter((f) => !f.confirmed_by_me).length;
@@ -404,127 +409,11 @@ function BroadcastCard({
         </div>
       )}
 
-      {broadcast.created_by && broadcast.author_name && (
-        <AskAuthor
-          authorId={broadcast.created_by}
-          authorName={broadcast.author_name}
-          title={broadcast.title}
-          category={broadcast.category}
-          broadcastId={broadcast.id}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Ask the author ───────────────────────────────────────────
-
-/**
- * A question about a broadcast, sent as a private message to whoever wrote it.
- * It goes through the Dashboard's personal messages, so the author gets the
- * usual bell + Telegram alert and the two of them carry on in that chat.
- */
-function AskAuthor({
-  authorId,
-  authorName,
-  title,
-  category,
-  broadcastId,
-}: {
-  authorId: string;
-  authorName: string;
-  title: string;
-  category: string;
-  broadcastId: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
-  const firstName = authorName.split(" ")[0];
-
-  const handleSend = async () => {
-    const question = text.trim();
-    if (!question) return;
-    setSending(true);
-    setError(null);
-    try {
-      // Find (or start) the Memo questions chat with the author, kept apart
-      // from your regular DMs with them, then post the question in it.
-      const conv = await fetch("/api/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ member_ids: [authorId], kind: "memo" }),
-      });
-      const c = await conv.json().catch(() => ({}));
-      if (!conv.ok || !c.conversation_id) throw new Error(c.error || "Couldn't reach them");
-
-      const path = broadcastPortalPath(category, broadcastId);
-      const link = path ? `\n\n${window.location.origin}${path}` : "";
-      const res = await fetch(`/api/conversations/${c.conversation_id}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: `Question about “${title}”:\n\n${question}${link}` }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || "Couldn't send the question");
-
-      setSent(true);
-      setText("");
-      setOpen(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't send the question");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="mt-4 pt-3 border-t border-sand space-y-2">
-      {sent && (
-        <p className="text-[11px] text-sage">
-          Sent to {firstName}. Their reply will show in your{" "}
-          <a href={memoChatPath(authorId)} className="underline hover:text-sage/80">
-            Memo questions chat
-          </a>
-          .
-        </p>
-      )}
-      {open ? (
-        <div className="space-y-2">
-          <textarea
-            value={text}
-            onChange={(e) => { setText(e.target.value); setError(null); }}
-            rows={3}
-            placeholder={`What would you like to ask ${firstName}?`}
-            className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-y"
-          />
-          {error && <p className="text-xs text-red-500">{error}</p>}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleSend}
-              disabled={sending || !text.trim()}
-              className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {sending ? "Sending…" : `Send to ${firstName}`}
-            </button>
-            <button
-              onClick={() => { setOpen(false); setError(null); }}
-              className="text-xs text-stone hover:text-espresso cursor-pointer"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => { setOpen(true); setSent(false); }}
-          className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
-        >
-          Ask {firstName} a question
-        </button>
-      )}
+      <BroadcastComments
+        broadcastId={broadcast.id}
+        initialComments={comments}
+        onChange={(next) => onCommentsChange(broadcast.id, next)}
+      />
     </div>
   );
 }
@@ -542,6 +431,8 @@ function PinnedBadge() {
   );
 }
 
+const NO_COMMENTS: BroadcastComment[] = [];
+
 // ─── Main Component ───────────────────────────────────────────
 
 export default function VaBroadcastsPortalTab({
@@ -553,6 +444,8 @@ export default function VaBroadcastsPortalTab({
   // Type / Account / Author, each multi-select (Toni's call, 2026-11-20). The options
   // come from what's loaded, so a brand-new tag or author shows up on its own.
   const [filters, setFilters] = useState<BroadcastFilterState>(EMPTY_BROADCAST_FILTERS);
+  // Every card's comment thread, loaded in one go after the list
+  const [comments, setComments] = useState<Record<string, BroadcastComment[]> | null>(null);
   const categoryKey = Array.isArray(category) ? category.join(",") : category ?? "";
 
   const fetchBroadcasts = useCallback(async () => {
@@ -567,6 +460,7 @@ export default function VaBroadcastsPortalTab({
       // Pinned first, then sort_order ascending, then newest first
       filtered.sort(compareBroadcastOrder);
       setBroadcasts(filtered);
+      fetchBroadcastComments(filtered.filter((b) => !b.parent_id).map((b) => b.id)).then(setComments);
     } finally {
       setLoading(false);
     }
@@ -575,6 +469,11 @@ export default function VaBroadcastsPortalTab({
   useEffect(() => {
     fetchBroadcasts();
   }, [fetchBroadcasts]);
+
+  // Keep each thread here so it survives a card leaving and re-entering the filtered list
+  const handleCommentsChange = useCallback((id: string, next: BroadcastComment[]) => {
+    setComments((prev) => ({ ...(prev ?? {}), [id]: next }));
+  }, []);
 
   // Optimistically mark a broadcast as confirmed in local state
   const handleAcknowledged = useCallback((id: string) => {
@@ -644,6 +543,8 @@ export default function VaBroadcastsPortalTab({
               followUps={followUpsByParent.get(b.id) ?? []}
               onAcknowledged={handleAcknowledged}
               linkedId={linkedId}
+              comments={comments ? comments[b.id] ?? NO_COMMENTS : null}
+              onCommentsChange={handleCommentsChange}
             />
           ))}
         </div>

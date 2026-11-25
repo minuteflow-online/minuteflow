@@ -5,6 +5,7 @@ import RichTextEditor from "@/components/RichTextEditor";
 import BroadcastCopyLinkButton from "@/components/BroadcastCopyLinkButton";
 import { broadcastDisplayHtml, handleDetailsButtonClick } from "@/lib/broadcastDisplay";
 import { compareBroadcastOrder, isPrivateCategory } from "@/lib/broadcasts";
+import BroadcastComments, { fetchBroadcastComments, type BroadcastComment } from "@/components/BroadcastComments";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import BroadcastFilters, {
   applyBroadcastFilters,
@@ -248,6 +249,8 @@ interface VaBroadcastsAdminTabProps {
   fixedCategory?: Broadcast["category"];
 }
 
+const NO_COMMENTS: BroadcastComment[] = [];
+
 export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdminTabProps = {}) {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
@@ -266,6 +269,8 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
   const [followUpBody, setFollowUpBody] = useState<Record<string, string>>({});
   const [postingFollowUp, setPostingFollowUp] = useState<Record<string, boolean>>({});
   const [followUpMsg, setFollowUpMsg] = useState<Record<string, string>>({});
+  // Comment threads under each published broadcast, loaded in one go after the list
+  const [comments, setComments] = useState<Record<string, BroadcastComment[]> | null>(null);
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
@@ -320,8 +325,12 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
     try {
       const res = await fetch("/api/broadcasts");
       const d = await res.json();
-      setBroadcasts(d.broadcasts || d || []);
+      const list: Broadcast[] = d.broadcasts || d || [];
+      setBroadcasts(list);
       if (d.viewer_id) setViewerId(d.viewer_id);
+      fetchBroadcastComments(list.filter((b) => !b.parent_id && b.status === "published").map((b) => b.id)).then(
+        setComments
+      );
     } finally {
       setLoading(false);
     }
@@ -1585,6 +1594,14 @@ export default function VaBroadcastsAdminTab({ fixedCategory }: VaBroadcastsAdmi
                     </div>
                   ))}
                 </div>
+              )}
+
+              {b.status === "published" && (
+                <BroadcastComments
+                  broadcastId={b.id}
+                  initialComments={comments ? comments[b.id] ?? NO_COMMENTS : null}
+                  onChange={(next) => setComments((prev) => ({ ...(prev ?? {}), [b.id]: next }))}
+                />
               )}
 
               {b.status === "published" && (
