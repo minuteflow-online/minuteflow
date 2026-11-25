@@ -37,6 +37,9 @@ const CLIENT_API_ALLOWLIST: Rule[] = [
   { pattern: /^\/api\/project-messages$/ },
   { pattern: /^\/api\/project-messages\/[^/]+\/comments$/ },
   { pattern: /^\/api\/project-files$/ },
+  // Files on those threads and on DMs — checked per target (their own org's
+  // objectives, or a conversation they're in; never the General board).
+  { pattern: /^\/api\/message-attachments$/ },
   // Direct messages with the org's own VAs.
   { pattern: /^\/api\/conversations(\/.*)?$/ },
   // Screenshot images + details — both check the shooter is in the client's org.

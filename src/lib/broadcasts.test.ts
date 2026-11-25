@@ -53,4 +53,11 @@ describe("isAudience", () => {
     expect(isAudience(everyone, member({ id: "u1" }), "toni")).toBe(true);
     expect(isAudience(everyone, member({ id: "u1" }), null)).toBe(true);
   });
+
+  it("never includes a client (employer) account, however it was targeted", () => {
+    const client = member({ id: "c1", role: "client" });
+    expect(isAudience(everyone, client, "toni")).toBe(false);
+    expect(isAudience([{ type: "individual", value: "c1" }], client, "toni")).toBe(false);
+    expect(isAudience([{ type: "role", value: "client" }], client, "toni")).toBe(false);
+  });
 });

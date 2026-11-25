@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canAccessProject } from "@/lib/projectAccess";
+import { vaWorkScope } from "@/lib/clientAdminAccess";
 
 /**
  * Shared plumbing for attachments (files and links) on the three message
@@ -92,9 +93,13 @@ export async function canAccessMessageTarget(
     projectId = message.project_id as string | null;
   }
 
-  // A general topic (project_id null) is the whole-team board — same rule
-  // GET/POST /api/project-messages already applies.
-  if (!projectId) return true;
+  // A general topic (project_id null) is the agency's whole-team board — same
+  // rule GET/POST /api/project-messages applies: never a client (employer),
+  // never a VA who works only for a client.
+  if (!projectId) {
+    if (profile?.role === "client") return false;
+    return !(await vaWorkScope(admin as Parameters<typeof vaWorkScope>[0], userId)).clientOnly;
+  }
   return canAccessProject(admin, profile, userId, projectId);
 }
 
