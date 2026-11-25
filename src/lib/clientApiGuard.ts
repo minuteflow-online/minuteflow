@@ -24,6 +24,9 @@ const CLIENT_API_ALLOWLIST: Rule[] = [
   { pattern: /^\/api\/organization-invites$/ },
   // Assign work to an org VA (POST) and "View as VA" (GET ?viewAsVa=).
   { pattern: /^\/api\/assigned-tasks$/, methods: ["GET", "POST"] },
+  // Files and to-dos on their own org's tasks (each route checks the task's org).
+  { pattern: /^\/api\/assigned-tasks\/\d+\/attachments$/ },
+  { pattern: /^\/api\/assigned-tasks\/\d+\/todos(\/[^/]+)?$/ },
   // Their own org's VAs (the route returns nothing else to a client) — used by
   // the staff Assignment / Calendar screens clients reuse.
   { pattern: /^\/api\/team-members$/, methods: ["GET"] },

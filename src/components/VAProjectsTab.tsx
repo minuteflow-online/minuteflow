@@ -18,6 +18,10 @@ interface VAProjectsTabProps {
   activeProfiles: (Pick<Profile, "id" | "full_name" | "username"> & { avatar_url?: string | null })[];
   currentUserId: string;
   isAdmin?: boolean;
+  /** A client (employer) on their own org's objectives: picks assignees from
+   *  their org's VAs like an admin, but only creates time-based subtasks and
+   *  can't edit existing ones (the task edit API isn't open to clients). */
+  isClient?: boolean;
   kind: ProjectKind;
 }
 
@@ -264,7 +268,7 @@ function listTitleColor(status: string, dueDate: string | null | undefined, star
   return "text-espresso";
 }
 
-export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false, kind }: VAProjectsTabProps) {
+export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false, isClient = false, kind }: VAProjectsTabProps) {
   const kindLabel = KIND_LABEL[kind];
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -932,6 +936,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   };
 
   const openSubtaskEdit = (sub: SubtaskRow) => {
+    if (isClient) return;
     setEditingSubId(sub.id);
     setEditStatus(sub.status ?? "pending");
     setEditSubError(null);
@@ -1727,12 +1732,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       >
                         {isViewing ? "Hide" : "View"}
                       </button>
+                      {!isClient && (
                       <button
                         onClick={() => (isEditing ? setEditingSubId(null) : openSubtaskEdit(sub))}
                         className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors"
                       >
                         {isEditing ? "Cancel" : "Edit"}
                       </button>
+                      )}
                     </div>
                   </div>
 
@@ -1747,7 +1754,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       <TaskDetailsView
                         task={sub as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
                         people={activeProfiles}
-                        onEdit={() => { setViewingSubId(null); openSubtaskEdit(sub); }}
+                        onEdit={isClient ? undefined : () => { setViewingSubId(null); openSubtaskEdit(sub); }}
                       />
                     </div>
                   )}
@@ -1944,6 +1951,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           <ObjectiveOverview
             currentUserId={currentUserId}
             isAdmin={isAdmin}
+            isClient={isClient}
             projects={projects}
             onSelect={handleSelectProject}
             scopeId={selectedProject?.id ?? null}
@@ -1980,6 +1988,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   ×
                 </button>
               </div>
+              {!isClient && (
               <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1 w-fit">
                 {([["time_based", "Time-based"], ["output_based", "Output-based"]] as const).map(([m, label]) => (
                   <button key={m} type="button" onClick={() => setAddSubtaskMode(m)}
@@ -1988,13 +1997,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   </button>
                 ))}
               </div>
+              )}
               <TaskEditor
                 key={`end-${addFormKey}-${addSubtaskMode}`}
-                mode={addSubtaskMode}
+                mode={isClient ? "time_based" : addSubtaskMode}
                 editingTaskId={null}
                 initialTask={{ account: selectedProject?.account ?? null }}
                 currentUserId={currentUserId}
-                isAdminOrManager={isAdmin}
+                isAdminOrManager={isAdmin || isClient}
                 teamMembers={activeProfiles}
                 lockedProjectId={selectedProject?.id}
                 onCancel={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
@@ -2027,6 +2037,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         </div>
         {showAddSubtask && (
           <>
+            {!isClient && (
             <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1 w-fit">
               {([
                 ["time_based", "Time-based"],
@@ -2044,13 +2055,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 </button>
               ))}
             </div>
+            )}
             <TaskEditor
               key={`${addFormKey}-${addSubtaskMode}`}
-              mode={addSubtaskMode}
+              mode={isClient ? "time_based" : addSubtaskMode}
               editingTaskId={null}
               initialTask={{ account: selectedProject.account ?? null }}
               currentUserId={currentUserId}
-              isAdminOrManager={isAdmin}
+              isAdminOrManager={isAdmin || isClient}
               teamMembers={activeProfiles}
               lockedProjectId={selectedProject.id}
               onCancel={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
@@ -2780,6 +2792,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 <ObjectiveOverview
             currentUserId={currentUserId}
             isAdmin={isAdmin}
+            isClient={isClient}
                   projects={projects}
                   onSelect={handleSelectProject}
                   scopeId={selectedProject.id}
@@ -2865,6 +2878,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 <ObjectiveOverview
                   currentUserId={currentUserId}
                   isAdmin={isAdmin}
+                  isClient={isClient}
                   projects={projects}
                   onSelect={handleSelectProject}
                   kindLabel={kindLabel as "Objective" | "Operation"}

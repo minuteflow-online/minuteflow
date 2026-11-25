@@ -136,7 +136,7 @@ export default function ProductivityOperationsPage() {
       )}
 
       {view === "tree" || isClient ? (
-        <VAProjectsTab kind="operation" activeProfiles={teamMembers} currentUserId={userId} isAdmin={isAdminTier} />
+        <VAProjectsTab kind="operation" activeProfiles={teamMembers} currentUserId={userId} isAdmin={isAdminTier} isClient={isClient} />
       ) : (
         <RecurringTemplatesManager
           columnRowControls={

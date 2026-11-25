@@ -43,6 +43,6 @@ export default function ProductivityObjectivePage() {
   }
 
   return (
-    <VAProjectsTab kind="objective" activeProfiles={teamMembers} currentUserId={userId} isAdmin={hasBroadAdminAccess({ role })} />
+    <VAProjectsTab kind="objective" activeProfiles={teamMembers} currentUserId={userId} isAdmin={hasBroadAdminAccess({ role })} isClient={role === "client"} />
   );
 }

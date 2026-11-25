@@ -645,6 +645,20 @@ export async function POST(request: Request) {
     if (va_ids.length === 0 || va_ids.some((id) => !allowed.has(id))) {
       return Response.json({ error: "You can only assign tasks to your own team." }, { status: 403 });
     }
+    // The objective/operation and parent task it hangs off must be their own
+    // org's too — otherwise a client task lands inside an agency objective.
+    if (project_id) {
+      const { data: proj } = await adminSupabase.from("projects").select("organization_id").eq("id", project_id).maybeSingle();
+      if (!proj || proj.organization_id !== profile!.organization_id) {
+        return Response.json({ error: "That objective isn't part of your organization." }, { status: 403 });
+      }
+    }
+    if (parent_task_id) {
+      const { data: parent } = await adminSupabase.from("assigned_tasks").select("organization_id").eq("id", parent_task_id).maybeSingle();
+      if (!parent || parent.organization_id !== profile!.organization_id) {
+        return Response.json({ error: "That parent task isn't part of your organization." }, { status: 403 });
+      }
+    }
   }
 
   // Creating a task with hours counts against the assignees' weekly budgets.
@@ -657,6 +671,12 @@ export async function POST(request: Request) {
     );
     if (rejection) return Response.json({ error: rejection }, { status: 403 });
   }
+
+  // A client starts work as Pending or On Queue only — never already
+  // approved/completed/paid, which would skip review and land in pay math.
+  const startStatus: AssignedTaskStatus = isClientPost
+    ? (initial_status === "on_queue" ? "on_queue" : "pending")
+    : (initial_status ?? "pending");
 
   // Insert the task
   const { data: task, error: taskError } = await adminSupabase
@@ -675,12 +695,14 @@ export async function POST(request: Request) {
       end_date: end_date ?? null,
       start_time: start_time ?? null,
       end_time: end_time ?? null,
-      assigned_by: (assigned_by ?? user.id) as string,
+      // A client is always the assigner of record, and never links agency
+      // pay or recurring rows (neither is open to client orgs).
+      assigned_by: (isClientPost ? user.id : assigned_by ?? user.id) as string,
       instructions: instructions ?? null,
       instructions_locked: Boolean(instructions_locked),
-      fixed_pay_task_id: fixed_pay_task_id ?? null,
-      recurring_template_id: recurring_template_id ?? null,
-      spawned_template_id: spawned_template_id ?? null,
+      fixed_pay_task_id: isClientPost ? null : fixed_pay_task_id ?? null,
+      recurring_template_id: isClientPost ? null : recurring_template_id ?? null,
+      spawned_template_id: isClientPost ? null : spawned_template_id ?? null,
       project_id: project_id ?? null,
       parent_task_id: parent_task_id ?? null,
       pay_type: pay_type ?? null,
@@ -693,7 +715,7 @@ export async function POST(request: Request) {
       planned_minutes: planned_minutes ?? null,
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
-      status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),
+      status: va_ids.length === 0 ? "unassigned" : startStatus,
       organization_id: isClientPost ? profile!.organization_id : null,
     })
     .select()
@@ -719,7 +741,7 @@ export async function POST(request: Request) {
     const assigneeRows = va_ids.map((va_id) => ({
       assigned_task_id: task.id,
       va_id,
-      status: (initial_status ?? "pending") as AssignedTaskStatus,
+      status: startStatus,
     }));
 
     const { data: insertedAssignees, error: assigneeError } = await adminSupabase

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { clientOwnsTask } from "@/lib/clientAdminAccess";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -17,6 +18,9 @@ function isAdminEquivalent(profile: CallerProfile) {
 
 async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>, taskId: string, userId: string, profile: CallerProfile) {
   if (isAdminEquivalent(profile)) return true;
+
+  // A client (employer) reaches to-dos on their own org's tasks only.
+  if (profile?.role === "client") return clientOwnsTask(userId, taskId);
 
   const { data, error } = await supabase
     .from("assigned_task_assignees")
@@ -64,7 +68,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
   // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
   // RLS check (role stays "va"), so read via the service-role client once
   // the app-layer check above has already cleared the caller.
-  const readClient = isAdminEquivalent(profile)
+  // A client is blocked by RLS on task_todos; the org check above cleared them.
+  const readClient = isAdminEquivalent(profile) || profile?.role === "client"
     ? createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
     : supabase;
 

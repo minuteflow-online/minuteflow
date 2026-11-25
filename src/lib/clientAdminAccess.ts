@@ -188,3 +188,17 @@ export async function isWorkingForOrg(
   const owned = await orgOwnedLogIds(admin, organizationId, [logId]);
   return owned.has(logId);
 }
+
+/**
+ * Whether a client (employer) login's own org owns this assigned task — the
+ * gate that lets a client into a task's attachments and to-dos without ever
+ * reaching an agency task or another client's.
+ */
+export async function clientOwnsTask(userId: string, taskId: string | number): Promise<boolean> {
+  const admin = serviceClient();
+  const [{ data: me }, { data: task }] = await Promise.all([
+    admin.from("profiles").select("organization_id").eq("id", userId).maybeSingle(),
+    admin.from("assigned_tasks").select("organization_id").eq("id", taskId).maybeSingle(),
+  ]);
+  return Boolean(me?.organization_id && task?.organization_id === me.organization_id);
+}

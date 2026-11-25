@@ -1826,6 +1826,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       )}
       <Section title="Basics" {...accordionProps("basics")} warning={missingBasics}>
+        {viewerRole === "client" ? (
+          // A client (employer) has no task library — Account / Project / Task
+          // Name all come from the agency's, which they never see — so they
+          // name their own task, same as the client Assign Task panel.
+          <div>
+            <label className={labelClass}>Task Name</label>
+            <input
+              value={taskName}
+              onChange={(e) => setTaskName(e.target.value)}
+              disabled={readOnly}
+              placeholder="What needs doing?"
+              className={requiredInputClass(!needsTaskName)}
+            />
+          </div>
+        ) : (
+        <>
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -1909,6 +1925,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             </select>
           )}
         </div>
+        </>
+        )}
 
         <div>
           <label className={`${labelClass} flex items-center gap-1.5`}>Category<InfoTip text="Set automatically from Account, Project and Task Name." /></label>
@@ -2082,7 +2100,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           )}
         </div>
 
-        {!templateMode && !isEditing && isAdminOrManager && (
+        {!templateMode && !isEditing && isAdminOrManager && viewerRole !== "client" && (
           <div>
             <label className={labelClass}>Status</label>
             <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} disabled={readOnly} className={inputClass}>
@@ -2237,6 +2255,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           </div>
         )}
 
+        {/* A client is always the assigner of record (the server sets it), and
+            the list only holds their VAs — so there is nothing to choose. */}
+        {viewerRole !== "client" && (
         <div>
           <label className={labelClass}>Assigned By</label>
           {/* Output-based: who actually handed the VA this work (e.g. Toni,
@@ -2254,6 +2275,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             ))}
           </select>
         </div>
+        )}
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           {lockedProjectId ? (
@@ -2622,7 +2644,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           </div>
         )}
 
-        {!templateMode && !belongsToSeries && (
+        {/* Not for a client: recurring templates aren't open to client orgs. */}
+        {!templateMode && !belongsToSeries && viewerRole !== "client" && (
           /* Highlighted rather than another grey box — this one turns a one-off
              into a repeating commitment, which is worth noticing before you save. */
           <div className={`rounded-lg border-2 p-3 space-y-2 ${

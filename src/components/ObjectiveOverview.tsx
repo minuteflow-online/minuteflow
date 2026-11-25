@@ -160,6 +160,9 @@ interface ObjectiveOverviewProps {
   currentUserId?: string;
   /** Admins may tick anyone's subtask; everyone else only their own. */
   isAdmin?: boolean;
+  /** A client (employer) is never an assignee, so their lists start on All
+   *  members and offer no "My …" option. */
+  isClient?: boolean;
 }
 
 type DashboardCard = "board" | "subtasks" | "todos" | "overview" | "docs";
@@ -265,7 +268,7 @@ function MentionPicker({ members, onPick }: { members: Member[]; onPick: (name: 
  * Overview, Docs & Files, and a Subtasks checkbox board. Shown in the right
  * panel on the landing (all objectives) and, scoped, inside a selected one.
  */
-export default function ObjectiveOverview({ projects, onSelect, scopeId = null, kindLabel = "Objective", refreshSignal = 0, showOnly, addSubtaskSlot, onEditProject, currentUserId, isAdmin = false }: ObjectiveOverviewProps) {
+export default function ObjectiveOverview({ projects, onSelect, scopeId = null, kindLabel = "Objective", refreshSignal = 0, showOnly, addSubtaskSlot, onEditProject, currentUserId, isAdmin = false, isClient = false }: ObjectiveOverviewProps) {
   const [expandedOverview, setExpandedOverview] = useState<string | null>(null);
   const [msgFilter, setMsgFilter] = useState<"general" | "mine">("general");
   // "parents" shows only the immediate level (roots at the landing, direct
@@ -333,11 +336,11 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [subFilters, setSubFilters] = useState<Set<SubFilter>>(new Set());
   const MINE = "__mine";
-  const [memberFilter, setMemberFilter] = useState<string>(MINE);
+  const [memberFilter, setMemberFilter] = useState<string>(isClient ? "" : MINE);
   // The To-Do List keeps its own member filter, defaulting to the viewer's own
   // work (like the checklist) with the dropdown to switch to All members or one
   // person.
-  const [todoMemberFilter, setTodoMemberFilter] = useState<string>(MINE);
+  const [todoMemberFilter, setTodoMemberFilter] = useState<string>(isClient ? "" : MINE);
   const todayEastern = easternToday();
 
   useEffect(() => {
@@ -1405,7 +1408,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               onChange={(e) => setMemberFilter(e.target.value)}
               className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
             >
-              <option value={MINE}>My Subtasks</option>
+              {!isClient && <option value={MINE}>My Subtasks</option>}
               <option value="">All members</option>
               {subtaskMembers.map(([id, name]) => (
                 <option key={id} value={id}>{name}</option>
@@ -1507,7 +1510,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               onChange={(e) => setTodoMemberFilter(e.target.value)}
               className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
             >
-              <option value={MINE}>My To-Dos</option>
+              {!isClient && <option value={MINE}>My To-Dos</option>}
               <option value="">All members</option>
               {subtaskMembers.map(([id, name]) => (
                 <option key={id} value={id}>{name}</option>
