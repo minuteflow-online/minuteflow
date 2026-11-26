@@ -51,6 +51,10 @@ const CLIENT_API_ALLOWLIST: Rule[] = [
   // Their own profile photo, from the name chip in the top bar (the route
   // only ever writes the caller's own avatar).
   { pattern: /^\/api\/upload-avatar$/, methods: ["POST"] },
+  // Their own table column choices on the reused staff screens. The route
+  // only ever reads/writes the caller's own row; setting the sitewide default
+  // stays admin-only there.
+  { pattern: /^\/api\/table-prefs$/, methods: ["GET", "PUT"] },
   // Budget tab (read-only) — the route returns only the caller's own rows.
   { pattern: /^\/api\/budget-requests$/, methods: ["GET"] },
 ];

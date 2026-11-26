@@ -21,7 +21,7 @@ import { AttachmentList, AttachmentPicker, useAttachmentComposer, type Attachmen
 
 type Project = { id: string; name: string };
 type Comment = { id: number; body: string; created_at: string; author?: string; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
-type Thread = { id: number; project_id: string; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
+type Thread = { id: number; project_id: string; organization_id?: string | null; title: string; body: string; created_at: string; comment_count: number; comments: Comment[]; author_id?: string | null; edited_at?: string | null; attachments?: Attachment[] };
 type Notif = { id: number; content: string; read: boolean; created_at: string; kind?: string | null };
 export type Member = { id: string; full_name?: string | null; username?: string | null; avatar_url?: string | null };
 export type Conversation = { id: string; is_group: boolean; title: string; members: { id: string; name: string; avatar_url?: string | null }[]; last_message: { body: string; created_at: string; mine: boolean } | null; unread: number; updated_at: string; archived: boolean };
@@ -197,6 +197,11 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
   // who works only for a client) — "+ New topic" only ever posts there.
   const [generalOpen, setGeneralOpen] = useState(true);
   const [topicTitle, setTopicTitle] = useState("");
+  // General boards this person belongs to (the agency's and/or client
+  // teams'). With more than one, the composer asks which; topics on a client
+  // team's board are labelled with that client's name.
+  const [boards, setBoards] = useState<Array<{ id: string | null; name: string }>>([]);
+  const [topicBoard, setTopicBoard] = useState<string>("");
   const [topicBody, setTopicBody] = useState("");
   const topicComposer = useAttachmentComposer();
   const replyComposer = useAttachmentComposer();
@@ -298,6 +303,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
   }, [expanded]);
 
   const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
+  const boardName = useMemo(() => new Map(boards.filter((b) => b.id).map((b) => [b.id as string, b.name])), [boards]);
+  const threadPlace = (t: Thread) =>
+    t.organization_id ? boardName.get(t.organization_id) ?? "Client team" : projectName.get(t.project_id) ?? "Project";
   const memberById = useMemo(() => new Map(allMembers.map((m) => [m.id, m])), [allMembers]);
   // Real team member names, for telling an actual @mention apart from a
   // stray "@" in ordinary text when highlighting rendered messages.
@@ -483,7 +491,11 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
       const r = await fetch("/api/project-messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: topicTitle.trim(), body: topicBody.trim() || topicComposer.fallbackBody }),
+        body: JSON.stringify({
+          title: topicTitle.trim(),
+          body: topicBody.trim() || topicComposer.fallbackBody,
+          ...(boards.length > 1 ? { organization_id: topicBoard || null } : {}),
+        }),
       });
       if (r.ok) {
         const d = await r.json().catch(() => ({}));
@@ -497,7 +509,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
     } finally {
       setSending(false);
     }
-  }, [topicTitle, topicBody, topicComposer, onCommunicationActivity]);
+  }, [topicTitle, topicBody, topicComposer, onCommunicationActivity, boards.length, topicBoard]);
 
   // Soft delete: the route stamps deleted_at, so the topic leaves every list
   // without the replies underneath it being destroyed. Author or admin only,
@@ -561,6 +573,9 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
         // messages-overview's own server-side transform above starts from.
         type RawComment = Omit<Comment, "author"> & { author?: { full_name?: string | null; username?: string | null } | null };
         type RawGeneralThread = Omit<Thread, "comments" | "comment_count"> & { project_message_comments?: RawComment[] };
+        const boardList = (general.boards ?? []) as Array<{ id: string | null; name: string }>;
+        setBoards(boardList);
+        setTopicBoard((cur) => (cur && boardList.some((b) => b.id === cur) ? cur : boardList[0]?.id ?? ""));
         const generalThreads: Thread[] = ((general.messages ?? []) as RawGeneralThread[]).map((m) => {
           const comments: Comment[] = (m.project_message_comments ?? []).map((c) => ({
             ...c,
@@ -1003,7 +1018,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                     {activeThread.body && <p className="mt-1 text-[11px] text-espresso whitespace-pre-wrap">{linkifyText(activeThread.body, mentionNames)}</p>}
                     <AttachmentList attachments={activeThread.attachments} />
                     <p className="mt-1 text-[10px] text-bark">
-                      {projectName.get(activeThread.project_id) ?? "Project"} · {ago(activeThread.created_at)} ago
+                      {threadPlace(activeThread)} · {ago(activeThread.created_at)} ago
                       {activeThread.edited_at && <span className="italic text-stone"> · edited</span>}
                     </p>
                   </>
@@ -1099,6 +1114,20 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
             <div className="space-y-2">
               {composingTopic ? (
                 <div className="rounded-lg border border-sand bg-cream/40 p-2.5 space-y-1.5">
+                  {boards.length > 1 && (
+                    <select
+                      value={topicBoard}
+                      onChange={(e) => setTopicBoard(e.target.value)}
+                      className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                      aria-label="Post to"
+                    >
+                      {boards.map((b) => (
+                        <option key={b.id ?? "agency"} value={b.id ?? ""}>
+                          Post to: {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <input value={topicTitle} onChange={(e) => setTopicTitle(e.target.value)} placeholder="Topic title" className={input} autoFocus />
                   <div className="relative">
                     {mentionFor === "topic" && mentionMatches.length > 0 && (
@@ -1243,7 +1272,7 @@ export default function DashboardMessagePanel({ currentUserId, canModerate = fal
                       </span>
                     </span>
                     {t.body && <span className="block text-[11px] text-walnut truncate">{t.body}</span>}
-                    <span className="block text-[10px] text-bark truncate">{projectName.get(t.project_id) ?? "Project"} · {ago(t.created_at)} ago</span>
+                    <span className="block text-[10px] text-bark truncate">{threadPlace(t)} · {ago(t.created_at)} ago</span>
                   </button>
                 ))
               )}

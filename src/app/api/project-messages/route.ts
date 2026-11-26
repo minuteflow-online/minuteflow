@@ -58,7 +58,7 @@ export async function GET(request: Request) {
   let listQuery = supabase
     .from("project_messages")
     .select(
-      `id, project_id, author_id, title, body, category, pinned, created_at, updated_at, edited_at,
+      `id, project_id, organization_id, author_id, title, body, category, pinned, created_at, updated_at, edited_at,
        author:profiles!project_messages_author_id_fkey(${authorSelect}),
        project_message_comments(id, body, author_id, created_at, edited_at,
          author:profiles!project_message_comments_author_id_fkey(${authorSelect}))`
@@ -108,7 +108,20 @@ export async function GET(request: Request) {
     })),
   }));
 
-  return Response.json({ messages });
+  // The boards this person can post a General topic to — the composer shows
+  // a picker when there's more than one (an agency VA on a client team).
+  let boards: Array<{ id: string | null; name: string }> | undefined;
+  if (board) {
+    const { data: orgs } = board.orgIds.length
+      ? await supabase.from("organizations").select("id, name").in("id", board.orgIds)
+      : { data: [] as Array<{ id: string; name: string }> };
+    boards = [
+      ...(board.agency ? [{ id: null, name: "Agency General" }] : []),
+      ...(orgs ?? []).map((o) => ({ id: o.id as string, name: o.name as string })),
+    ];
+  }
+
+  return Response.json({ messages, boards });
 }
 
 /**
@@ -127,6 +140,8 @@ export async function POST(request: Request) {
     title?: string;
     body?: string;
     category?: string | null;
+    /** General topics only: which board — null = the agency's, an org id = that client team's. Omitted = the poster's own default. */
+    organization_id?: string | null;
   };
   // No project_id is a general topic: it belongs to the team board rather than
   // to an objective or operation, and anyone signed in can start one.
@@ -142,7 +157,14 @@ export async function POST(request: Request) {
   let boardOrgId: string | null = null;
   if (!projectId) {
     const board = await generalBoardScope(supabase, user.id, profile);
-    if (!board.agency) {
+    if (body.organization_id !== undefined) {
+      // An explicit pick — must be a board this person is actually on.
+      const wanted = body.organization_id;
+      if (wanted === null ? !board.agency : !board.orgIds.includes(wanted)) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
+      boardOrgId = wanted;
+    } else if (!board.agency) {
       if (board.orgIds.length === 0) return Response.json({ error: "Forbidden" }, { status: 403 });
       boardOrgId = board.orgIds[0];
     }

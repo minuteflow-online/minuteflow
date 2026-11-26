@@ -367,6 +367,7 @@ async function loadPotentialTasks(admin: AdminClient, opts: { since: string; exc
     admin
       .from("time_logs")
       .select("assigned_task_id, user_id, start_time, duration_ms")
+      .eq("organization_id", opts.organizationId)
       .not("assigned_task_id", "is", null)
       .gte("start_time", opts.since)
       .gt("duration_ms", 0)
@@ -467,8 +468,11 @@ export async function GET() {
       .select(
         "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, due_at, no_fault, progress_status, review_requested, filed_to_project, " +
           "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-          "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, organization_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username))"
+          "assigned_tasks!task_submissions_assigned_task_id_fkey!inner(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, organization_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username))"
       )
+      // Only this org's threads come back from the database — an inner join
+      // on the task, filtered on its org — instead of the whole agency table.
+      .eq("assigned_tasks.organization_id", organizationId)
       .not("assigned_task_id", "is", null)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -502,8 +506,8 @@ export async function GET() {
   const { data, error } = await fetchAllPages((from, to) => buildQuery().range(from, to));
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  // Org scoping happens here rather than in the query: PostgREST can't
-  // express "the embedded row's column equals X" as a query-level filter.
+  // Scoped in the query above; re-checked here so a change to that filter
+  // can never widen what a client sees.
   const rows = ((data ?? []) as unknown as Row[]).filter((r) => r.assigned_tasks?.organization_id === organizationId);
 
   const submissionIds = rows.map((r) => r.id);
