@@ -288,3 +288,50 @@ export async function mentionScopeForProject(admin: AdminClient, projectId: stri
   const orgId = (project?.organization_id as string | null) ?? null;
   return orgId ? orgPeopleIds(admin, orgId) : undefined;
 }
+
+/** Work that's finished stays on the record; anything else is still open. */
+const FINISHED_STATUSES = new Set(["approved", "completed", "paid", "cancelled"]);
+
+/**
+ * Once a VA is off a client's team, the client can no longer see their work —
+ * so they mustn't keep holding that client's open tasks either (they could
+ * still start and submit them, unseen). Take them off every open task this
+ * org owns; finished work keeps its assignee for the record. A task left with
+ * nobody on it goes back to "on_queue" so the client can reassign it.
+ * Agency tasks and other clients' tasks are never touched.
+ */
+export async function unassignOpenOrgTasks(
+  admin: AdminClient,
+  organizationId: string,
+  vaId: string
+): Promise<number> {
+  const { data: orgTasks } = await admin
+    .from("assigned_tasks")
+    .select("id, status, assigned_task_assignees(id, va_id, status)")
+    .eq("organization_id", organizationId)
+    .is("deleted_at", null);
+
+  let count = 0;
+  for (const task of orgTasks ?? []) {
+    const assignees = (task.assigned_task_assignees ?? []) as Array<{ id: number; va_id: string | null; status: string | null }>;
+    const mine = assignees.filter((a) => a.va_id === vaId && !FINISHED_STATUSES.has(a.status ?? ""));
+    if (mine.length === 0) continue;
+
+    const { error } = await admin
+      .from("assigned_task_assignees")
+      .delete()
+      .in("id", mine.map((a) => a.id));
+    if (error) continue;
+    count++;
+
+    const remaining = assignees.filter((a) => !mine.some((m) => m.id === a.id));
+    if (remaining.length === 0 && !FINISHED_STATUSES.has((task.status as string | null) ?? "")) {
+      await admin
+        .from("assigned_tasks")
+        .update({ status: "on_queue", updated_at: new Date().toISOString() })
+        .eq("id", task.id as number)
+        .eq("organization_id", organizationId);
+    }
+  }
+  return count;
+}

@@ -707,12 +707,26 @@ export async function POST(request: Request) {
     ? (initial_status === "on_queue" ? "on_queue" : "pending")
     : (initial_status ?? "pending");
 
+  // A client's task is labelled the same way a VA's Quick Pick labels client
+  // work: account = the client team's name, project "Client Work". The agency
+  // pays the VA and invoices the client for it (Toni, 2026-11-25), so its
+  // hours stay in agency reports — this is what says whose work it was.
+  let clientOrgName: string | null = null;
+  if (isClientPost) {
+    const { data: org } = await adminSupabase
+      .from("organizations")
+      .select("name")
+      .eq("id", profile!.organization_id as string)
+      .maybeSingle();
+    clientOrgName = (org?.name as string | null) ?? null;
+  }
+
   // Insert the task
   const { data: task, error: taskError } = await adminSupabase
     .from("assigned_tasks")
     .insert({
-      account: account ?? null,
-      project: project ?? null,
+      account: isClientPost ? clientOrgName : account ?? null,
+      project: isClientPost ? "Client Work" : project ?? null,
       task_name: task_name.trim(),
       category: category ?? null,
       task_detail: task_detail ?? null,
