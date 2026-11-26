@@ -99,18 +99,16 @@ export async function POST(request: Request) {
 
   if (existingUser) {
     // Only a plain VA account can be invited — never staff (admin, manager,
-    // founder, …) or another client. Same wording either way, so the reply
-    // doesn't reveal what kind of account an email belongs to.
+    // founder, …) or another client. Nothing is sent for those, but the reply
+    // is the same one every invite gets, so it never confirms that an email
+    // belongs to someone on MinuteFlow.
     const { data: inviteeProfile } = await adminClient
       .from("profiles")
       .select("role")
       .eq("id", existingUser.id)
       .maybeSingle();
     if (inviteeProfile?.role !== "va") {
-      return Response.json(
-        { error: "This account can't be invited to a client team. Ask them for a different email." },
-        { status: 409 }
-      );
+      return Response.json({ success: true, message: inviteSentMessage(email) });
     }
 
     const { data: existingMember } = await adminClient
@@ -170,10 +168,7 @@ export async function POST(request: Request) {
       { type: "org_invite", label: normalizedEmail, sublabel: "Invited existing user" }
     ).catch(() => {});
 
-    return Response.json({
-      success: true,
-      message: `Invite sent to ${email}. They'll join your team once they accept.`,
-    });
+    return Response.json({ success: true, message: inviteSentMessage(email) });
   }
 
   // No existing account — invite through the normal signup wizard, tagged to this org.
@@ -237,7 +232,12 @@ export async function POST(request: Request) {
     });
   }
 
-  return Response.json({ success: true, message: `Invite sent to ${email}` });
+  return Response.json({ success: true, message: inviteSentMessage(email) });
+}
+
+/** One reply for every invite outcome, so it never reveals whether an email already has an account. */
+function inviteSentMessage(email: string): string {
+  return `Invite sent to ${email}. They'll join your team once they accept — if nothing arrives, ask them for a different email.`;
 }
 
 /**

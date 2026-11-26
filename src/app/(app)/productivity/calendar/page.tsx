@@ -674,7 +674,9 @@ export default function ProductivityCalendarPage() {
 
   const fetchTimeOff = useCallback(async () => {
     try {
-      const res = await fetch("/api/va-requests", { cache: "no-store" });
+      // A client sees approved time off for their own VAs only (dates and
+      // times — never the request's text); staff keep the full requests list.
+      const res = await fetch(isClient ? "/api/client-admin/time-off" : "/api/va-requests", { cache: "no-store" });
       const data = await res.json();
       const approved = (data.requests ?? [])
         .filter((r: { type: string; status: string; start_date: string | null }) => r.type === "time_off" && r.status === "approved" && r.start_date)
@@ -689,7 +691,7 @@ export default function ProductivityCalendarPage() {
     } catch {
       setTimeOff([]);
     }
-  }, []);
+  }, [isClient]);
 
   useEffect(() => {
     fetchTimeOff();

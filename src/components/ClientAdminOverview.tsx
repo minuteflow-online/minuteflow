@@ -43,14 +43,19 @@ export default function ClientAdminOverview({ refreshKey }: { refreshKey: number
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const res = await fetch("/api/client-admin/overview");
+    const load = async () => {
+      const res = await fetch("/api/client-admin/overview", { cache: "no-store" });
       if (!res.ok || cancelled) return;
       const json = await res.json();
       if (!cancelled) setData(json);
-    })();
+    };
+    void load();
+    // Keeps "Active Now / of N VAs" current without pressing Refresh — the
+    // same once-a-minute rhythm the dashboard's Your Team uses.
+    const id = setInterval(load, 60_000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, [refreshKey]);
 

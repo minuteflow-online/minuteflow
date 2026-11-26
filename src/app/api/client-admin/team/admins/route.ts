@@ -46,10 +46,9 @@ export async function POST(request: Request) {
   const admin = serviceClient();
   try {
     if (await emailExists(admin, normalizedEmail)) {
-      return Response.json(
-        { error: "This email already has a MinuteFlow account, so it can't be added as a co-admin. Ask them for a different email." },
-        { status: 409 }
-      );
+      // Nothing is sent to an existing account, but the reply matches a real
+      // invite so it never confirms the email is on MinuteFlow.
+      return Response.json({ success: true, message: coAdminSentMessage(normalizedEmail) });
     }
   } catch {
     return Response.json({ error: "Could not check that email right now. Try again." }, { status: 503 });
@@ -111,7 +110,11 @@ export async function POST(request: Request) {
       inviteUrl,
     });
   }
-  return Response.json({ success: true, message: `Invite sent to ${normalizedEmail}.` });
+  return Response.json({ success: true, message: coAdminSentMessage(normalizedEmail) });
+}
+
+function coAdminSentMessage(email: string): string {
+  return `Invite sent to ${email}. If nothing arrives, ask them for a different email.`;
 }
 
 export async function DELETE(request: Request) {
