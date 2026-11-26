@@ -44,7 +44,7 @@ import { normalizePosition } from "@/types/database";
 import { clockInBlockedReason, isWindowsBrowser, windowsWebBlockedReason } from "@/lib/clockInAccess";
 import { cappedCloseTime } from "@/lib/cappedCloseTime";
 
-type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
+type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string; _noSwitchConfirm?: boolean };
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -2576,6 +2576,36 @@ export default function DashboardPage() {
       isStartingTaskRef.current = true;
       setSessionActionPending(true);
       try {
+        // A VA can work for several clients as well as the agency (Toni,
+        // 2026-11-26) — time must never land on the wrong one by accident.
+        // Moving from one client's work to another's, or between agency and
+        // client work, asks first. Automatic switches (the message-activity
+        // log) skip this with _noSwitchConfirm; a break isn't anyone's work.
+        if (
+          activeTask?.logId &&
+          !activeTask.isBreak &&
+          activeTask.category !== "Break" &&
+          !(formData as DashboardTaskFormData)._noSwitchConfirm
+        ) {
+          const { data: current } = await supabase
+            .from("time_logs")
+            .select("organization_id, account")
+            .eq("id", Number(activeTask.logId))
+            .maybeSingle();
+          const fromOrg = (current?.organization_id as string | null | undefined) ?? null;
+          const toOrg = formData.organization_id || null;
+          if (fromOrg !== toOrg) {
+            const nameOf = (org: string | null, fallback: string | null | undefined) =>
+              org
+                ? clientQuickPicks.find((c) => c.organizationId === org)?.orgName || fallback || "a client"
+                : "the agency";
+            const ok = window.confirm(
+              `You're switching from ${nameOf(fromOrg, current?.account as string | null)} work to ${nameOf(toOrg, formData.account)} work.\n\nContinue?`
+            );
+            if (!ok) return;
+          }
+        }
+
         const now = new Date().toISOString();
         const skipClockIn = Boolean((formData as DashboardTaskFormData)._skipClockIn);
 
@@ -2916,7 +2946,7 @@ export default function DashboardPage() {
         setSessionActionPending(false);
       }
     },
-    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession, sessionActionPendingRef, setSessionActionPending]
+    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession, sessionActionPendingRef, setSessionActionPending, clientQuickPicks]
   );
 
   // ─── Screenshot (manual + fallback) ─────────────────────────
@@ -3528,7 +3558,9 @@ export default function DashboardPage() {
       client_name: "Toni Colina",
       client_memo: "",
       internal_memo: "",
-    });
+      // Automatic, not a choice the VA made — no switch prompt mid-message.
+      _noSwitchConfirm: true,
+    } as DashboardTaskFormData);
   }, [startTask, profile]);
 
   const handleSidebarMemoSave = useCallback(async () => {
