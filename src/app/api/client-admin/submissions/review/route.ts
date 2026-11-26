@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   const admin = serviceClient();
   const { data: task } = await admin
     .from("assigned_tasks")
-    .select("id, task_name, organization_id, status")
+    .select("id, task_name, organization_id, status, revision_count")
     .eq("id", taskId)
     .single();
 
@@ -60,7 +60,32 @@ export async function POST(request: Request) {
   const cfg = ACTIONS[action];
   const stamp = new Date().toISOString();
 
-  await admin.from("assigned_task_assignees").update({ status: cfg.status, updated_at: stamp }).eq("assigned_task_id", taskId);
+  if (action === "revision") {
+    // A client's revision counts toward the VA's CoVAP Quality score exactly
+    // like a staff reviewer's (Toni, 2026-11-26): the task's R count goes up
+    // and each assignee loses 10 accuracy points, never below zero — the same
+    // rule as /api/assigned-tasks/[id]'s revision path.
+    await admin
+      .from("assigned_tasks")
+      .update({ revision_count: ((task.revision_count as number | null) ?? 0) + 1, updated_at: stamp })
+      .eq("id", taskId);
+    const { data: rows } = await admin
+      .from("assigned_task_assignees")
+      .select("id, accuracy_score")
+      .eq("assigned_task_id", taskId);
+    for (const row of rows ?? []) {
+      await admin
+        .from("assigned_task_assignees")
+        .update({
+          status: cfg.status,
+          accuracy_score: Math.max(0, ((row.accuracy_score as number | null) ?? 100) - 10),
+          updated_at: stamp,
+        })
+        .eq("id", row.id);
+    }
+  } else {
+    await admin.from("assigned_task_assignees").update({ status: cfg.status, updated_at: stamp }).eq("assigned_task_id", taskId);
+  }
   await admin.from("assigned_tasks").update({ status: cfg.status, updated_at: stamp }).eq("id", taskId);
   await syncFixedPayTaskStatus(admin, taskId, cfg.status);
 
