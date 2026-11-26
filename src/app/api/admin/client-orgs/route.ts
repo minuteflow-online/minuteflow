@@ -67,7 +67,9 @@ export async function GET(request: Request) {
 
   if (id) {
     if (allowed && !allowed.includes(id)) return Response.json({ error: "Not found" }, { status: 404 });
-    return Response.json(await orgDetail(admin, id));
+    const detail = await orgDetail(admin, id);
+    if (!detail) return Response.json({ error: "Not found" }, { status: 404 });
+    return Response.json(detail);
   }
 
   let orgQuery = admin.from("organizations").select("id, name, owner_profile_id, created_at").order("name");
@@ -138,7 +140,7 @@ export async function GET(request: Request) {
 
 async function orgDetail(admin: ReturnType<typeof serviceClient>, orgId: string) {
   const { data: org } = await admin.from("organizations").select("id, name, owner_profile_id, created_at").eq("id", orgId).maybeSingle();
-  if (!org) return { error: "Not found" };
+  if (!org) return null;
 
   const [{ data: clients }, { data: members }, { data: tasks }, hours] = await Promise.all([
     admin.from("profiles").select("id, full_name, username, is_active").eq("role", "client").eq("organization_id", orgId),
@@ -163,14 +165,20 @@ async function orgDetail(admin: ReturnType<typeof serviceClient>, orgId: string)
   const nameOf = new Map((people ?? []).map((p) => [p.id as string, (p.full_name as string | null) || (p.username as string | null) || "Unknown"]));
 
   // This month's client-work hours per VA — what the agency pays them for.
-  const { data: logs } = await admin
-    .from("time_logs")
-    .select("user_id, duration_ms")
-    .eq("organization_id", orgId)
-    .gte("start_time", monthStartIso())
-    .is("deleted_at", null);
+  // Paged: a busy team can log well over the 1,000 rows one read returns.
   const hoursByVa: Record<string, number> = {};
-  for (const l of logs ?? []) hoursByVa[l.user_id as string] = (hoursByVa[l.user_id as string] ?? 0) + ((l.duration_ms as number) || 0);
+  for (let from = 0; ; from += 1000) {
+    const { data: logs } = await admin
+      .from("time_logs")
+      .select("user_id, duration_ms")
+      .eq("organization_id", orgId)
+      .gte("start_time", monthStartIso())
+      .is("deleted_at", null)
+      .order("id")
+      .range(from, from + 999);
+    for (const l of logs ?? []) hoursByVa[l.user_id as string] = (hoursByVa[l.user_id as string] ?? 0) + ((l.duration_ms as number) || 0);
+    if (!logs || logs.length < 1000) break;
+  }
 
   const owner = (clients ?? []).find((c) => c.id === org.owner_profile_id);
   return {

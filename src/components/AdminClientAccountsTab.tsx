@@ -148,6 +148,7 @@ function ClientOrgDetail({
   onBack: () => void;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [agencyVas, setAgencyVas] = useState<Person[]>([]);
   const [addVaId, setAddVaId] = useState("");
   const [adminIds, setAdminIds] = useState<string[]>(assigned.map((a) => a.id));
@@ -163,7 +164,9 @@ function ClientOrgDetail({
     fetch(`/api/admin/client-orgs?id=${orgId}`, { cache: "no-store" })
       .then(async (res) => (res.ok ? ((await res.json()) as Detail) : null))
       .then((d) => {
-        if (!cancelled && d) setDetail(d);
+        if (cancelled) return;
+        if (d) setDetail(d);
+        else setNotFound(true);
       });
     return () => {
       cancelled = true;
@@ -201,6 +204,20 @@ function ClientOrgDetail({
     }
   };
 
+  if (notFound) {
+    return (
+      <div className="rounded-xl border border-sand bg-white p-6 text-center space-y-3">
+        <p className="text-xs text-stone">This client account isn&apos;t available any more.</p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-1.5 text-[12px] font-medium text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+        >
+          ← All clients
+        </button>
+      </div>
+    );
+  }
   if (!detail) return <div className="h-48 animate-pulse rounded-xl border border-sand bg-white" />;
   const onTeam = new Set(detail.vas.map((v) => v.id));
 
