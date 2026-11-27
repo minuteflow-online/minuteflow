@@ -1,3 +1,4 @@
+import { serviceClient, vaWorkScope } from "@/lib/clientAdminAccess";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
@@ -290,6 +291,9 @@ export async function POST(request: Request) {
     role === "va" &&
     (normalizePosition(position) === "Output Based" || payRateType === "per_task" || canSeeAvailableTasks);
   if (!isAdminOrManager && !isEligibleVa) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!isAdminOrManager && (await vaWorkScope(serviceClient(), userId)).clientOnly) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

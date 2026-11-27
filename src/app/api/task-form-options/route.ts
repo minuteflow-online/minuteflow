@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { normalizePosition } from "@/types/database";
+import { serviceClient, vaWorkScope } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,12 @@ export async function GET(request: Request) {
     .single();
 
   const isVA = profile?.role === "va";
+  // A VA who works only for a client never sees the agency's accounts,
+  // projects or task library — those are our clients' names. Their forms
+  // offer their own client team(s) instead ("Your Clients").
+  if (isVA && (await vaWorkScope(serviceClient(), user.id)).clientOnly) {
+    return Response.json({ accounts: [], projects: [], tasksByProject: {}, clientMap: {}, clientOnly: true });
+  }
   const isProjectBasedVA = isVA && normalizePosition(profile?.position) === "Project Based";
 
   // If VA, fetch their assigned category IDs + project/task visibility data

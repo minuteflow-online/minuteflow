@@ -707,16 +707,36 @@ export async function POST(request: Request) {
     ? (initial_status === "on_queue" ? "on_queue" : "pending")
     : (initial_status ?? "pending");
 
+  // A VA who works only for a client: whatever they create is that client's
+  // work — never an agency task under one of our accounts or objectives.
+  let clientOnlyOrgId: string | null = null;
+  if (isVaPost && !isPermittedPost) {
+    const scope = await vaWorkScope(adminSupabase, user.id);
+    if (scope.clientOnly) {
+      if (scope.orgIds.length === 0) {
+        return Response.json({ error: "You're not on a client team right now." }, { status: 403 });
+      }
+      clientOnlyOrgId = scope.orgIds[0];
+      if (project_id) {
+        const { data: proj } = await adminSupabase.from("projects").select("organization_id").eq("id", project_id).maybeSingle();
+        if (!proj || proj.organization_id !== clientOnlyOrgId) {
+          return Response.json({ error: "That objective isn't part of your client's team." }, { status: 403 });
+        }
+      }
+    }
+  }
+
   // A client's task is labelled the same way a VA's Quick Pick labels client
   // work: account = the client team's name, project "Client Work". The agency
   // pays the VA and invoices the client for it (Toni, 2026-11-25), so its
   // hours stay in agency reports — this is what says whose work it was.
   let clientOrgName: string | null = null;
-  if (isClientPost) {
+  const labelOrgId = isClientPost ? (profile!.organization_id as string) : clientOnlyOrgId;
+  if (labelOrgId) {
     const { data: org } = await adminSupabase
       .from("organizations")
       .select("name")
-      .eq("id", profile!.organization_id as string)
+      .eq("id", labelOrgId)
       .maybeSingle();
     clientOrgName = (org?.name as string | null) ?? null;
   }
@@ -725,8 +745,8 @@ export async function POST(request: Request) {
   const { data: task, error: taskError } = await adminSupabase
     .from("assigned_tasks")
     .insert({
-      account: isClientPost ? clientOrgName : account ?? null,
-      project: isClientPost ? "Client Work" : project ?? null,
+      account: labelOrgId ? clientOrgName : account ?? null,
+      project: labelOrgId ? "Client Work" : project ?? null,
       task_name: task_name.trim(),
       category: category ?? null,
       task_detail: task_detail ?? null,
@@ -743,9 +763,9 @@ export async function POST(request: Request) {
       assigned_by: (isClientPost ? user.id : assigned_by ?? user.id) as string,
       instructions: instructions ?? null,
       instructions_locked: Boolean(instructions_locked),
-      fixed_pay_task_id: isClientPost ? null : fixed_pay_task_id ?? null,
-      recurring_template_id: isClientPost ? null : recurring_template_id ?? null,
-      spawned_template_id: isClientPost ? null : spawned_template_id ?? null,
+      fixed_pay_task_id: isClientPost || clientOnlyOrgId ? null : fixed_pay_task_id ?? null,
+      recurring_template_id: isClientPost || clientOnlyOrgId ? null : recurring_template_id ?? null,
+      spawned_template_id: isClientPost || clientOnlyOrgId ? null : spawned_template_id ?? null,
       project_id: project_id ?? null,
       parent_task_id: parent_task_id ?? null,
       pay_type: pay_type ?? null,
@@ -759,7 +779,7 @@ export async function POST(request: Request) {
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
       status: va_ids.length === 0 ? "unassigned" : startStatus,
-      organization_id: isClientPost ? profile!.organization_id : null,
+      organization_id: isClientPost ? profile!.organization_id : clientOnlyOrgId,
     })
     .select()
     .single();

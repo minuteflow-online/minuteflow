@@ -769,10 +769,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [converting, setConverting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A VA who works only for a client (task-form-options says so): like a
+  // client, they name their own task — the agency task library isn't theirs —
+  // and the server files it under their client team.
+  const [clientOnlyVa, setClientOnlyVa] = useState(false);
+
   useEffect(() => {
     fetch("/api/task-form-options", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
+        setClientOnlyVa(Boolean(d.clientOnly));
         setAccounts(d.accounts ?? []);
         setFormProjects(d.projects ?? []);
         setTasksByProject(d.tasksByProject ?? {});
@@ -1826,7 +1832,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       )}
       <Section title="Basics" {...accordionProps("basics")} warning={missingBasics}>
-        {viewerRole === "client" ? (
+        {viewerRole === "client" || clientOnlyVa ? (
           // A client (employer) has no task library — Account / Project / Task
           // Name all come from the agency's, which they never see — so they
           // name their own task, same as the client Assign Task panel.
@@ -2645,7 +2651,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         )}
 
         {/* Not for a client: recurring templates aren't open to client orgs. */}
-        {!templateMode && !belongsToSeries && viewerRole !== "client" && (
+        {!templateMode && !belongsToSeries && viewerRole !== "client" && !clientOnlyVa && (
           /* Highlighted rather than another grey box — this one turns a one-off
              into a repeating commitment, which is worth noticing before you save. */
           <div className={`rounded-lg border-2 p-3 space-y-2 ${
