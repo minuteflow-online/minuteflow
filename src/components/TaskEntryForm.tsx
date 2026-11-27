@@ -172,6 +172,16 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       if (!res.ok) return;
       const data = await res.json();
 
+      // A VA who works only for a client: no agency accounts at all — not even
+      // the built-in fallback list. Only "Your Clients" is left to pick from.
+      if (data.clientOnly) {
+        setAllAccounts([]);
+        setAllProjects([]);
+        setTasksByProject({});
+        setAccountClientMap({});
+        return;
+      }
+
       if (data.accounts?.length > 0) setAllAccounts(data.accounts);
       if (data.projects?.length > 0) setAllProjects(data.projects);
       if (data.tasksByProject) setTasksByProject(data.tasksByProject);

@@ -38,6 +38,9 @@ interface ProjectSidebarProps {
   /** Client orgs this VA belongs to that have turned on at least one Quick
    *  Pick action — each gets its own small section below the fixed ones. */
   clientQuickPicks?: ClientQuickPick[];
+  /** A VA who works only for a client: the agency's fixed actions (which log
+   *  agency time) are hidden — only their client teams' actions show. */
+  hideAgencyActions?: boolean;
 }
 
 export default function ProjectSidebar({
@@ -45,6 +48,7 @@ export default function ProjectSidebar({
   onQuickSwitchAction,
   isAdmin,
   clientQuickPicks = [],
+  hideAgencyActions = false,
 }: ProjectSidebarProps) {
   return (
     <div className="rounded-xl border border-sand bg-white overflow-hidden">
@@ -57,6 +61,7 @@ export default function ProjectSidebar({
 
       <div className="max-h-[500px] overflow-y-auto">
         {/* Quick Message Actions */}
+        {!hideAgencyActions && (
         <div className="px-4 py-3 border-b border-parchment">
           <div className="text-[9px] font-bold text-bark uppercase tracking-wider mb-2">
             Quick Actions
@@ -106,6 +111,13 @@ export default function ProjectSidebar({
             </button>
           </div>
         </div>
+        )}
+
+        {hideAgencyActions && clientQuickPicks.every((c) => !c.message && !c.planning) && (
+          <p className="px-4 py-3 text-[11px] text-stone">
+            Your client hasn&apos;t turned on any Quick Pick actions yet.
+          </p>
+        )}
 
         {/* One section per client org that's turned on at least one action —
             each a Communication-category switch the same as the fixed ones

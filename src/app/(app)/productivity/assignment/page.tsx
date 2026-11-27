@@ -755,6 +755,21 @@ export default function TaskListPage() {
   // see /client/productivity/assignment. Agency-only parts are hidden below.
   const isClient = currentRole === "client";
   const [showClientAssign, setShowClientAssign] = useState(false);
+  // A VA who works only for a client can't create agency output-based work.
+  const [clientOnlyVa, setClientOnlyVa] = useState(false);
+  useEffect(() => {
+    if (currentRole !== "va") return;
+    let cancelled = false;
+    fetch("/api/va-work-scope", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d) setClientOnlyVa(Boolean(d.clientOnly));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRole]);
   const isPerTaskVa = normalizePosition(currentPosition) === "Output Based";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   // A client sees their own org's unassigned tasks here (the route scopes the
@@ -3191,6 +3206,7 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+              {!clientOnlyVa && (
               <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
                 <button
                   type="button"
@@ -3207,10 +3223,11 @@ export default function TaskListPage() {
                   Output Based Task
                 </button>
               </div>
+              )}
 
               <TaskEditor
-                key={createTaskMode}
-                mode={createTaskMode}
+                key={clientOnlyVa ? "time_based" : createTaskMode}
+                mode={clientOnlyVa ? "time_based" : createTaskMode}
                 currentUserId={currentUserId ?? ""}
                 isAdminOrManager={isAdmin}
                 teamMembers={panelAssignedByOptions}

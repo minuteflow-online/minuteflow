@@ -227,6 +227,22 @@ export default function DashboardPage() {
   const [teamMembers, setTeamMembers] = useState<
     { profile: Profile; session: Session | null }[]
   >([]);
+  // A VA who works only for a client: Quick Pick shows their client's
+  // actions only — never the agency's, which log agency time.
+  const [clientOnlyVa, setClientOnlyVa] = useState(false);
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    fetch("/api/va-work-scope", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d) setClientOnlyVa(Boolean(d.clientOnly));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
   const [clientQuickPicks, setClientQuickPicks] = useState<
     { organizationId: string; orgName: string; message: boolean; planning: boolean }[]
   >([]);
@@ -3925,6 +3941,7 @@ export default function DashboardPage() {
                   onQuickSwitchAction={handleQuickSwitchTask}
                   isAdmin={hasBroadAdminAccess({ role })}
                   clientQuickPicks={clientQuickPicks}
+                  hideAgencyActions={clientOnlyVa}
                 />
               )}
               {/* Tasks up for grabs, collapsed — admins are staff too, they
