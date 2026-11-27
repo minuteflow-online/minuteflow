@@ -2602,7 +2602,13 @@ export default function DashboardPage() {
             const ok = window.confirm(
               `You're switching from ${nameOf(fromOrg, current?.account as string | null)} work to ${nameOf(toOrg, formData.account)} work.\n\nContinue?`
             );
-            if (!ok) return;
+            if (!ok) {
+              // The task list shows "In Progress" the instant Start is
+              // clicked; reload it so a cancelled switch goes back to the
+              // task's real status instead of looking started.
+              setWidgetRefetchCount((c) => c + 1);
+              return;
+            }
           }
         }
 
