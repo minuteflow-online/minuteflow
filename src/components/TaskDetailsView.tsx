@@ -38,7 +38,9 @@ export default function TaskDetailsView({
   people = [],
 }: {
   task: TaskEditorInitialTask;
-  onEdit: () => void;
+  /** Omit to leave the Edit button off entirely — read-only viewers (e.g. a
+   *  client monitoring a VA's board) get the same details view with no way in. */
+  onEdit?: () => void;
   /** Deletes this task. Omit to leave the Delete button off entirely — not
    *  every caller of this shared view has a delete path wired up (yet). The
    *  confirmation step lives here — ConfirmModal for a one-off task,
@@ -202,6 +204,7 @@ export default function TaskDetailsView({
         </div>
 
       <div className="flex items-center gap-2 pt-1">
+        {onEdit && (
         <button
           type="button"
           onClick={onEdit}
@@ -209,6 +212,7 @@ export default function TaskDetailsView({
         >
           Edit Task
         </button>
+        )}
         {onDelete && (
           <button
             type="button"

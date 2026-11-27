@@ -36,6 +36,11 @@ interface ActivityLogProps {
   timezone?: string;
   onResumeTask?: (log: TimeLog) => void;
   onUpdateProgress?: (logId: number, progress: string) => void;
+  /** View-only caller (e.g. a client monitoring a VA's log) — hides the
+   *  Add/Request Time Entry button and memo editing. Edit/Delete (admin),
+   *  Fix (VA's own entry), screenshots, and progress updates are already
+   *  gated by role/ownership/optional callbacks and need no extra check. */
+  readOnly?: boolean;
 }
 
 const AVATAR_COLORS: Record<string, string> = {};
@@ -172,6 +177,7 @@ export default function ActivityLog({
   timezone,
   onResumeTask,
   onUpdateProgress,
+  readOnly = false,
 }: ActivityLogProps) {
   const isAdminOrManager = hasBroadAdminAccess({ role });
 
@@ -625,6 +631,7 @@ export default function ActivityLog({
             <span className="text-[10px] font-medium text-bark bg-parchment px-2 py-0.5 rounded-full">Today</span>
           </div>
           <div className="flex gap-2 items-center">
+            {!readOnly && (
             <button
               onClick={() => setShowCreateModal(true)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-terracotta px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:bg-[#a85840] cursor-pointer"
@@ -632,6 +639,7 @@ export default function ActivityLog({
               <span className="text-sm leading-none">+</span>
               {isAdminOrManager ? "Add Time Entry" : "Request Time Entry"}
             </button>
+            )}
             <span className="text-[11px] text-bark">
               {filteredLogs.length} entries today
             </span>
@@ -995,18 +1003,20 @@ export default function ActivityLog({
                                   <p className="text-espresso mt-0.5 whitespace-pre-wrap">{log.internal_memo}</p>
                                 </div>
                               )}
+                              {!readOnly && (
                               <button
                                 onClick={(e) => startEditMemo(log, e)}
                                 className="flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium text-bark hover:bg-parchment transition-colors"
                               >
                                 <PencilIcon className="w-3 h-3" /> Edit Notes
                               </button>
+                              )}
                             </>
                           )}
                         </div>
                       )}
                       {/* Show edit button even when no memos yet */}
-                      {isExpanded && !hasMemos && editingMemoLogId !== log.id && (
+                      {!readOnly && isExpanded && !hasMemos && editingMemoLogId !== log.id && (
                         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={(e) => startEditMemo(log, e)}

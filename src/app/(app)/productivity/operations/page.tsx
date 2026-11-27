@@ -106,8 +106,14 @@ export default function ProductivityOperationsPage() {
     return <div className="p-8 text-center text-xs text-stone">Loading…</div>;
   }
 
+  // A client (employer) uses this page for their own org's operations —
+  // see /client/productivity/operations. Recurring Templates aren't part of
+  // the client side yet, so they get the Operations tree only.
+  const isClient = role === "client";
+
   return (
     <div className="space-y-4">
+      {!isClient && (
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
           <button
@@ -127,9 +133,10 @@ export default function ProductivityOperationsPage() {
         </div>
 
       </div>
+      )}
 
-      {view === "tree" ? (
-        <VAProjectsTab kind="operation" activeProfiles={teamMembers} currentUserId={userId} isAdmin={isAdminTier} />
+      {view === "tree" || isClient ? (
+        <VAProjectsTab kind="operation" activeProfiles={teamMembers} currentUserId={userId} isAdmin={isAdminTier} isClient={isClient} />
       ) : (
         <RecurringTemplatesManager
           columnRowControls={

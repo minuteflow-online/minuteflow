@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { clientOwnsTask } from "@/lib/clientAdminAccess";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -13,6 +14,9 @@ type CallerProfile = { role?: string | null; admin_permissions?: string[] | null
 
 async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>, taskId: string, userId: string, profile: CallerProfile) {
   if (profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management")) return true;
+
+  // A client (employer) reaches to-dos on their own org's tasks only.
+  if (profile?.role === "client") return clientOwnsTask(userId, taskId);
 
   const { data, error } = await supabase
     .from("assigned_task_assignees")
@@ -78,7 +82,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     // text: canAccessTodos already only admits an assignee of this exact
     // subtask (or admin/manager), which is exactly "owners check their own,
     // not others" — no separate check needed for that part.
-    const { data: task } = await supabase
+    // Read through the service role for a client — RLS hides assigned_tasks
+    // from them, which would silently skip this lock check.
+    const statusReader = profile?.role === "client"
+      ? createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
+      : supabase;
+    const { data: task } = await statusReader
       .from("assigned_tasks")
       .select("status")
       .eq("id", id)

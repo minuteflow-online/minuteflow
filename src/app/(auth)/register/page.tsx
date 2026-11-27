@@ -136,6 +136,16 @@ export default function RegisterPage() {
           Sign In
         </Link>
       </p>
+
+      <p className="mt-2 text-center text-sm text-bark">
+        Signing up as a client?{" "}
+        <Link
+          href="/signup-client"
+          className="font-medium text-terracotta hover:underline"
+        >
+          Create a client account
+        </Link>
+      </p>
     </>
   );
 }

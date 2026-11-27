@@ -173,9 +173,14 @@ interface DashboardBoardViewProps {
   isAdmin: boolean;
   teamMembers: Profile[];
   orgTimezone: string;
+  /** View-only caller (e.g. a client monitoring a VA's board) — cards open
+   *  the read-only details view instead of the editor, and drag-to-complete
+   *  is disabled. Everything else (the View by VA filter, the board itself)
+   *  behaves the same. */
+  readOnly?: boolean;
 }
 
-export default function DashboardBoardView({ userId, isAdmin, teamMembers, orgTimezone }: DashboardBoardViewProps) {
+export default function DashboardBoardView({ userId, isAdmin, teamMembers, orgTimezone, readOnly = false }: DashboardBoardViewProps) {
   const [loading, setLoading] = useState(true);
   const [buckets, setBuckets] = useState<{ objective: SubtaskRow[]; operation: SubtaskRow[]; adhoc: SubtaskRow[] }>({
     objective: [],
@@ -359,7 +364,7 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers, orgTi
         <TaskDetailsView
           task={viewingSub as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
           people={teamMembers}
-          onEdit={() => openEdit(viewingSub)}
+          onEdit={readOnly ? undefined : () => openEdit(viewingSub)}
         />
         <button
           onClick={() => setViewingSubId(null)}
@@ -572,18 +577,18 @@ export default function DashboardBoardView({ userId, isAdmin, teamMembers, orgTi
             <SubtaskBoardView
               subtasks={scopedSubtasks}
               editingSubId={editingSubId}
-              onOpenEdit={openEdit}
+              onOpenEdit={readOnly ? openView : openEdit}
               formatDate={formatDate}
               StatusBadge={StatusBadge}
               activeProfiles={teamMembers}
-              onMoveStatus={handleMoveStatus}
+              onMoveStatus={readOnly ? undefined : handleMoveStatus}
               currentUserId={userId}
               canSetSitewide={false}
               expanded={mainExpanded}
               onToggleExpanded={() => setExpandedSection((v) => (v === "main" ? null : "main"))}
             />
           </div>
-          {renderEditPanel(mainExpanded)}
+          {viewingSub ? renderDetailsPanel() : renderEditPanel(mainExpanded)}
         </div>
       )}
 

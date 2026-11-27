@@ -42,6 +42,12 @@ export default async function AppLayout({
     profile?.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
   const role: UserRole = profile?.role || "va";
 
+  // Clients get their own minimal view — none of the staff dashboard/portal
+  // (internal messages, paystubs, team roster, etc.) belongs in front of them.
+  if (role === "client") {
+    redirect("/client");
+  }
+
   return (
     <ToastProvider>
       <TopNav user={{ id: user.id, full_name: fullName, role, department: profile?.department, admin_permissions: profile?.admin_permissions, avatar_url: profile?.avatar_url }} />

@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { orgVisibleShots, serviceClient } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,10 @@ function getGoogleAuth() {
 }
 
 export async function GET(request: NextRequest) {
-  // Auth guard — any logged-in user may view drive images (screenshots)
+  // Auth guard — any logged-in staff member may view drive images
+  // (screenshots) — deliberate, Toni's call, 2026-11-09. A client is new and
+  // narrower: they may only see screenshots belonging to their own org's VAs,
+  // never anyone else's, so that one case gets an extra check below.
   const supabase = await createClient();
   const {
     data: { user },
@@ -26,6 +30,30 @@ export async function GET(request: NextRequest) {
   const fileId = request.nextUrl.searchParams.get("id");
   if (!fileId) {
     return new Response("Missing id", { status: 400 });
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, organization_id")
+    .eq("id", user.id)
+    .single();
+
+  if (profile?.role === "client") {
+    if (!profile.organization_id) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const admin = serviceClient();
+    const { data: shots } = await admin
+      .from("task_screenshots")
+      .select("user_id, log_id, submission_id")
+      .eq("drive_file_id", fileId)
+      .limit(5);
+    // Only captures of work done for this client's org — not the VA's
+    // agency or other-client work, even though the VA is in the org.
+    const visible = await orgVisibleShots(admin, profile.organization_id, shots ?? []);
+    if (visible.length === 0) {
+      return new Response("Forbidden", { status: 403 });
+    }
   }
 
   try {

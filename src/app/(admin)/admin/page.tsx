@@ -1,5 +1,6 @@
 "use client";
 
+import AdminClientAccountsTab from "@/components/AdminClientAccountsTab";
 import React, { Fragment, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   formatCaptureTime,
@@ -162,7 +163,7 @@ type ScreenshotPersonDay = {
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_onboarding" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "client_accounts" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_onboarding" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -251,6 +252,20 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
         <circle cx="12" cy="7" r="4" />
+      </svg>
+    ),
+  },
+  {
+    id: "client_accounts",
+    label: "Client Accounts",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M3 21V7a2 2 0 012-2h6v16" />
+        <path d="M11 9h8a2 2 0 012 2v10" />
+        <line x1="3" y1="21" x2="21" y2="21" />
+        <line x1="7" y1="9" x2="7" y2="9.01" />
+        <line x1="7" y1="13" x2="7" y2="13.01" />
+        <line x1="15" y1="13" x2="15" y2="13.01" />
       </svg>
     ),
   },
@@ -456,7 +471,7 @@ const ADMIN_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "billing",
     label: "Clients & Billing",
-    tabs: SIDEBAR_TABS.filter((t) => (["accounts", "projects", "clients", "invoices", "financial"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["accounts", "projects", "clients", "client_accounts", "invoices", "financial"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "settings",
@@ -1650,6 +1665,7 @@ export default function AdminPage() {
                 {activeTab === "projects" && "Manage projects and tasks under each account"}
                 {activeTab === "accounts" && "Manage accounts and link them to clients"}
                 {activeTab === "clients" && "Manage clients"}
+                {activeTab === "client_accounts" && "Client companies using MinuteFlow — their teams, tasks and hours"}
                 {activeTab === "invoices" && "Generate and manage client invoices"}
                 {activeTab === "paystubs" && "Calculate and send paystubs to your VAs"}
                 {activeTab === "organization" && "Edit organization settings"}
@@ -1748,6 +1764,8 @@ export default function AdminPage() {
           {activeTab === "accounts" && canSeeAccountsClients && (
             <AccountsTab isFullAdmin={canSeeAccountsClients} />
           )}
+
+          {activeTab === "client_accounts" && <AdminClientAccountsTab />}
 
           {activeTab === "clients" && canSeeAccountsClients && (
             <ClientsTab isFullAdmin={canSeeAccountsClients} />

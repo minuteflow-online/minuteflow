@@ -21,6 +21,7 @@ import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
+import OrgInviteBanner from "@/components/OrgInviteBanner";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords, isDuplicateActiveLogError } from "@/lib/utils";
 import { fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshots";
@@ -43,7 +44,7 @@ import { normalizePosition } from "@/types/database";
 import { clockInBlockedReason, isWindowsBrowser, windowsWebBlockedReason } from "@/lib/clockInAccess";
 import { cappedCloseTime } from "@/lib/cappedCloseTime";
 
-type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
+type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string; _noSwitchConfirm?: boolean };
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -225,6 +226,9 @@ export default function DashboardPage() {
   // Team & logs
   const [teamMembers, setTeamMembers] = useState<
     { profile: Profile; session: Session | null }[]
+  >([]);
+  const [clientQuickPicks, setClientQuickPicks] = useState<
+    { organizationId: string; orgName: string; message: boolean; planning: boolean }[]
   >([]);
   const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
   const [screenshots, setScreenshots] = useState<
@@ -477,6 +481,41 @@ export default function DashboardPage() {
     };
   }, [userId]);
 
+  // Client orgs this VA belongs to, with whichever Quick Pick actions each
+  // client has turned on for their own team — feeds the extra sections
+  // ProjectSidebar renders below the fixed, agency-wide ones.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("organization_members")
+        .select("organization_id, organizations(name, quick_pick_message, quick_pick_planning)")
+        .eq("va_id", userId)
+        .eq("status", "active");
+      if (cancelled || !data) return;
+      setClientQuickPicks(
+        data
+          .map((row) => {
+            const org = row.organizations as unknown as
+              | { name: string; quick_pick_message: boolean; quick_pick_planning: boolean }
+              | null;
+            if (!org) return null;
+            return {
+              organizationId: row.organization_id as string,
+              orgName: org.name,
+              message: org.quick_pick_message,
+              planning: org.quick_pick_planning,
+            };
+          })
+          .filter((c): c is NonNullable<typeof c> => c !== null)
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
   // ─── Desktop heartbeat monitor ──────────────────────────────
   // Desktop sends a heartbeat every 30s while open (see desktopHeartbeat.ts).
   // Two missed beats means it's genuinely closed, not a slow tick — same
@@ -603,7 +642,9 @@ export default function DashboardPage() {
           sessionsMap.set(s.user_id, s)
         );
         const members = (allProfilesRes.data as Profile[])
-          .filter((p) => p.is_active !== false)
+          // A client isn't a team member — without this, every client who
+          // signs up would show up mixed into the internal staff roster.
+          .filter((p) => p.is_active !== false && p.role !== "client")
           .map((p) => ({
             profile: p,
             session: sessionsMap.get(p.id) || null,
@@ -1259,6 +1300,9 @@ export default function DashboardPage() {
           project: lastLog.project || null,
           account: lastLog.account || null,
           client_name: lastLog.client_name || null,
+          // Keep a client-org task's time with that client — without this
+          // the resumed log silently became agency time. Null for agency work.
+          organization_id: lastLog.organization_id ?? null,
           start_time: now,
           billable: isBillable,
           billing_type: lastLog.billing_type || "hourly",
@@ -1902,6 +1946,12 @@ export default function DashboardPage() {
 
     const isBillable = isBillableCategory(preBreakTask.category);
 
+    // The resumed log stays with the same client org as the pre-break one
+    // (null for agency work) — the session's active_task doesn't carry it.
+    const { data: preBreakLog } = preBreakTask.logId
+      ? await supabase.from("time_logs").select("organization_id").eq("id", Number(preBreakTask.logId)).maybeSingle()
+      : { data: null };
+
     const { data: logData, error: resumeLogError } = await supabase
       .from("time_logs")
       .insert({
@@ -1915,6 +1965,7 @@ export default function DashboardPage() {
         project: preBreakTask.project || null,
         account: preBreakTask.account || null,
         client_name: preBreakTask.client_name || null,
+        organization_id: (preBreakLog?.organization_id as string | null | undefined) ?? null,
         start_time: now,
         billable: isBillable,
         billing_type: preBreakTask.billing_type || "hourly",
@@ -2525,6 +2576,36 @@ export default function DashboardPage() {
       isStartingTaskRef.current = true;
       setSessionActionPending(true);
       try {
+        // A VA can work for several clients as well as the agency (Toni,
+        // 2026-11-26) — time must never land on the wrong one by accident.
+        // Moving from one client's work to another's, or between agency and
+        // client work, asks first. Automatic switches (the message-activity
+        // log) skip this with _noSwitchConfirm; a break isn't anyone's work.
+        if (
+          activeTask?.logId &&
+          !activeTask.isBreak &&
+          activeTask.category !== "Break" &&
+          !(formData as DashboardTaskFormData)._noSwitchConfirm
+        ) {
+          const { data: current } = await supabase
+            .from("time_logs")
+            .select("organization_id, account")
+            .eq("id", Number(activeTask.logId))
+            .maybeSingle();
+          const fromOrg = (current?.organization_id as string | null | undefined) ?? null;
+          const toOrg = formData.organization_id || null;
+          if (fromOrg !== toOrg) {
+            const nameOf = (org: string | null, fallback: string | null | undefined) =>
+              org
+                ? clientQuickPicks.find((c) => c.organizationId === org)?.orgName || fallback || "a client"
+                : "the agency";
+            const ok = window.confirm(
+              `You're switching from ${nameOf(fromOrg, current?.account as string | null)} work to ${nameOf(toOrg, formData.account)} work.\n\nContinue?`
+            );
+            if (!ok) return;
+          }
+        }
+
         const now = new Date().toISOString();
         const skipClockIn = Boolean((formData as DashboardTaskFormData)._skipClockIn);
 
@@ -2552,6 +2633,7 @@ export default function DashboardPage() {
               project: formData.project || null,
               account: formData.account || null,
               client_name: formData.client_name || null,
+              organization_id: formData.organization_id || null,
               start_time: now,
               end_time: now,
               duration_ms: 0,
@@ -2716,6 +2798,7 @@ export default function DashboardPage() {
             project: formData.project || null,
             account: formData.account || null,
             client_name: formData.client_name || null,
+            organization_id: formData.organization_id || null,
             start_time: now,
             billable: isBillable,
             client_memo: newTaskClientMemo,
@@ -2863,7 +2946,7 @@ export default function DashboardPage() {
         setSessionActionPending(false);
       }
     },
-    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession, sessionActionPendingRef, setSessionActionPending]
+    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession, sessionActionPendingRef, setSessionActionPending, clientQuickPicks]
   );
 
   // ─── Screenshot (manual + fallback) ─────────────────────────
@@ -3285,6 +3368,9 @@ export default function DashboardPage() {
       project: detail.project || "",
       client_memo: detail.task_detail || "",
       internal_memo: "",
+      // A client-assigned task carries its org, so the time counts toward
+      // that client (their Insights / Activity Log read time_logs by org).
+      organization_id: detail.organization_id ?? null,
       _skipClockIn: isFixedPay,
       ...(isFixedPay
         ? {
@@ -3331,6 +3417,9 @@ export default function DashboardPage() {
       project: detail.project || "",
       client_memo: detail.task_detail || "",
       internal_memo: "",
+      // A client-assigned task carries its org, so the time counts toward
+      // that client (their Insights / Activity Log read time_logs by org).
+      organization_id: detail.organization_id ?? null,
       _assignedTaskId: task.assigned_tasks.id,
     };
 
@@ -3439,6 +3528,7 @@ export default function DashboardPage() {
         account: mapping.account,
         project: mapping.project || "",
         client_name: mapping.client_name || "",
+        organization_id: mapping.organization_id || null,
         client_memo: "",
         internal_memo: "",
       });
@@ -3468,7 +3558,9 @@ export default function DashboardPage() {
       client_name: "Toni Colina",
       client_memo: "",
       internal_memo: "",
-    });
+      // Automatic, not a choice the VA made — no switch prompt mid-message.
+      _noSwitchConfirm: true,
+    } as DashboardTaskFormData);
   }, [startTask, profile]);
 
   const handleSidebarMemoSave = useCallback(async () => {
@@ -3678,6 +3770,9 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* A client's team invite waiting on this person \u2014 renders nothing otherwise */}
+      <OrgInviteBanner />
+
       {/* Greeting \u2014 doubles as the Clock In prompt when idle, instead of a separate banner */}
       <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -3811,6 +3906,7 @@ export default function DashboardPage() {
                 role={role}
                 activeTaskClientMemo={activeTask?.client_memo || ""}
                 teamMembers={teamMembers.map((m) => m.profile)}
+                clientOrgs={clientQuickPicks}
               />
             )}
             {/* Right column: Quick Pick, then the tasks up for grabs, then
@@ -3822,6 +3918,7 @@ export default function DashboardPage() {
                   onQuickAction={handleQuickAction}
                   onQuickSwitchAction={handleQuickSwitchTask}
                   isAdmin={hasBroadAdminAccess({ role })}
+                  clientQuickPicks={clientQuickPicks}
                 />
               )}
               {/* Tasks up for grabs, collapsed — admins are staff too, they
@@ -4453,6 +4550,7 @@ export default function DashboardPage() {
                   activeTaskClientMemo={activeTask?.client_memo || ""}
                   role={role}
                   sessionState={sessionState}
+                  clientOrgs={clientQuickPicks}
                   bare
                 />
               ) : (

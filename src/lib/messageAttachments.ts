@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canAccessProject } from "@/lib/projectAccess";
+import { generalBoardScope, onGeneralBoard } from "@/lib/clientAdminAccess";
 
 /**
  * Shared plumbing for attachments (files and links) on the three message
@@ -66,15 +67,17 @@ export async function canAccessMessageTarget(
   }
 
   let projectId: string | null | undefined;
+  let boardOrgId: string | null = null;
   if (targetType === "project_message") {
     const { data: message } = await admin
       .from("project_messages")
-      .select("project_id")
+      .select("project_id, organization_id")
       .eq("id", targetId)
       .is("deleted_at", null)
       .maybeSingle();
     if (!message) return false;
     projectId = message.project_id as string | null;
+    boardOrgId = (message.organization_id as string | null) ?? null;
   } else {
     const { data: comment } = await admin
       .from("project_message_comments")
@@ -85,16 +88,21 @@ export async function canAccessMessageTarget(
     if (!comment) return false;
     const { data: message } = await admin
       .from("project_messages")
-      .select("project_id")
+      .select("project_id, organization_id")
       .eq("id", comment.message_id)
       .maybeSingle();
     if (!message) return false;
     projectId = message.project_id as string | null;
+    boardOrgId = (message.organization_id as string | null) ?? null;
   }
 
-  // A general topic (project_id null) is the whole-team board — same rule
-  // GET/POST /api/project-messages already applies.
-  if (!projectId) return true;
+  // A general topic (project_id null) is the agency's whole-team board — same
+  // rule GET/POST /api/project-messages applies: never a client (employer),
+  // never a VA who works only for a client.
+  if (!projectId) {
+    const board = await generalBoardScope(admin as Parameters<typeof generalBoardScope>[0], userId, profile);
+    return onGeneralBoard(board, boardOrgId);
+  }
   return canAccessProject(admin, profile, userId, projectId);
 }
 

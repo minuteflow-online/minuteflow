@@ -227,7 +227,12 @@ export default function ProductivityCalendarPage() {
   const [ready, setReady] = useState(false);
 
   const todayStr = getDateInTimezone(orgTimezone);
-  const isAdminOrManager = hasBroadAdminAccess({ role });
+  // A client (employer) sees this same calendar for their own team only —
+  // see /client/productivity/calendar. They get the admin-style team view
+  // (the routes return only their org's tasks and VAs) but can't add or edit
+  // tasks here.
+  const isClient = role === "client";
+  const isAdminOrManager = hasBroadAdminAccess({ role }) || isClient;
 
   const [viewMode, setViewMode] = useUrlTab<"month" | "week" | "day" | "range">("view", "month", ["month", "week", "day", "range"]);
   // A custom span, for when the work you're looking at doesn't line up with a
@@ -453,6 +458,16 @@ export default function ProductivityCalendarPage() {
         .single();
       if (org?.timezone) setOrgTimezone(org.timezone);
       setPhpPerUsd(parsePhpPerUsd(org?.php_per_usd));
+      // A client can't read the company settings; their timezone comes from
+      // the client-admin route instead.
+      if (profile?.role === "client") {
+        try {
+          const ctx = await fetch("/api/client-admin/team-context", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null));
+          if (ctx?.timezone) setOrgTimezone(ctx.timezone);
+        } catch {
+          // keep UTC
+        }
+      }
       setReady(true);
     })();
   }, [supabase]);
@@ -484,9 +499,10 @@ export default function ProductivityCalendarPage() {
     let assignedUrl = "/api/assigned-tasks?selfOnly=true&view=active";
     if (isAdminOrManager) {
       assignedUrl =
-        scope === "__self__"
+        // A client has no tasks of their own — "My View" means their whole team.
+        scope === "__self__" && !isClient
           ? "/api/assigned-tasks?selfOnly=true&view=active"
-          : scope === "__all__"
+          : scope === "__all__" || scope === "__self__"
           ? "/api/assigned-tasks?view=active"
           : `/api/assigned-tasks?view=active&vaId=${scope}`;
     }
@@ -497,7 +513,7 @@ export default function ProductivityCalendarPage() {
     } catch {
       setAssignedTasksAll([]);
     }
-  }, [userId, isAdminOrManager, scope]);
+  }, [userId, isAdminOrManager, isClient, scope]);
 
   const fetchFixedItems = useCallback(async () => {
     if (!userId) return;
@@ -658,7 +674,9 @@ export default function ProductivityCalendarPage() {
 
   const fetchTimeOff = useCallback(async () => {
     try {
-      const res = await fetch("/api/va-requests", { cache: "no-store" });
+      // A client sees approved time off for their own VAs only (dates and
+      // times — never the request's text); staff keep the full requests list.
+      const res = await fetch(isClient ? "/api/client-admin/time-off" : "/api/va-requests", { cache: "no-store" });
       const data = await res.json();
       const approved = (data.requests ?? [])
         .filter((r: { type: string; status: string; start_date: string | null }) => r.type === "time_off" && r.status === "approved" && r.start_date)
@@ -673,7 +691,7 @@ export default function ProductivityCalendarPage() {
     } catch {
       setTimeOff([]);
     }
-  }, []);
+  }, [isClient]);
 
   useEffect(() => {
     fetchTimeOff();
@@ -4321,7 +4339,7 @@ export default function ProductivityCalendarPage() {
       )}
 
       {/* Add/Edit modal — shared TaskEditor, same form used across the app */}
-      {showForm && (!editingBlockId || editingTaskFull) && dayUserId && (
+      {showForm && !isClient && (!editingBlockId || editingTaskFull) && dayUserId && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60] p-4">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="py-4 px-5 border-b border-parchment flex items-center justify-between sticky top-0 bg-white">

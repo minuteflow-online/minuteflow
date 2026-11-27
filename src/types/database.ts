@@ -1,4 +1,45 @@
-export type UserRole = 'admin' | 'manager' | 'va' | 'coordinator' | 'specialist' | 'ceo' | 'founder';
+export type UserRole = 'admin' | 'manager' | 'va' | 'coordinator' | 'specialist' | 'ceo' | 'founder' | 'client';
+
+export interface Organization {
+  id: string;
+  name: string;
+  owner_profile_id: string;
+  created_at: string;
+  /** Client's own setting: when true, a VA's time replying to this client's
+   *  messages counts toward tracked hours. Storage only for now — see
+   *  "track themselves" / messaging-time follow-up for the VA-side wiring. */
+  track_messaging_time: boolean;
+  /** Client-controlled Quick Pick actions offered to the VAs working under
+   *  them — each a toggle shown on the client dashboard, rendered as its own
+   *  section in the VA's Quick Pick (ProjectSidebar) when on. */
+  quick_pick_message: boolean;
+  quick_pick_planning: boolean;
+}
+
+export interface OrganizationMember {
+  id: string;
+  organization_id: string;
+  va_id: string;
+  status: 'invited' | 'active';
+  invited_by: string | null;
+  created_at: string;
+  joined_at: string | null;
+  /** Their role inside this client's org only — never their profiles.role.
+   *  A 'manager' is a VA the client trusts to help run the team. */
+  role: 'va' | 'manager';
+}
+
+/** The org's own client users are profiles with role 'client' and this
+ *  organization_id; the owner is organizations.owner_profile_id, every other
+ *  one is a co-admin (invited via invitations.org_role = 'admin'). */
+export interface OrganizationMemberNote {
+  id: number;
+  organization_id: string;
+  va_id: string;
+  author_id: string | null;
+  body: string;
+  created_at: string;
+}
 
 export const VA_POSITION_OPTIONS = [
   "Full Time",
@@ -59,6 +100,8 @@ export interface Profile {
   department: string | null;
   position: string | null;
   role: UserRole;
+  // Set only for role === 'client': the organization this client owns.
+  organization_id: string | null;
   pay_rate: number;
   pay_rate_type: 'hourly' | 'daily' | 'monthly' | 'per_task';
   // Currency the VA is paid in — symbol only, amounts are entered in it. See lib/payroll.ts.
@@ -155,6 +198,27 @@ export interface Session {
   updated_at: string;
 }
 
+export interface ClientClockSession {
+  id: number;
+  user_id: string;
+  clocked_in: boolean;
+  clock_in_time: string | null;
+  clock_out_time: string | null;
+  updated_at: string;
+}
+
+export interface ClientPersonalTask {
+  id: number;
+  user_id: string;
+  task_name: string;
+  note: string | null;
+  due_date: string | null;
+  completed: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SortingReview {
   id: number;
   log_id: number;
@@ -210,6 +274,9 @@ export interface TimeLog {
   category: string;
   project: string | null;
   account: string | null;
+  // Authoritative client-org tag, set when the account logged against is a
+  // client organization rather than a legacy free-text account.
+  organization_id: string | null;
   client_name: string | null;
   start_time: string;
   end_time: string | null;
@@ -432,6 +499,7 @@ export interface PlannedTask {
   user_id: string;
   task_name: string;
   account: string | null;
+  organization_id: string | null;
   plan_date: string;
   sort_order: number;
   completed: boolean;
@@ -698,6 +766,9 @@ export interface AssignedTask {
   start_time: string | null;
   end_time: string | null;
   pay_type?: string | null;
+  /** Set when a client assigned this task themselves — ties it (and its
+   *  submissions, found by joining through here) to that client's own org. */
+  organization_id?: string | null;
   review_required: boolean;
   /** True once Review Required has been answered. Also the record that it was
    *  answered at all — tasks predating the rule carry false and keep whatever

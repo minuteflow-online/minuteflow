@@ -50,19 +50,26 @@ export async function GET() {
 
   const { data: profile } = await authClient
     .from("profiles")
-    .select("role")
+    .select("role, organization_id")
     .eq("id", user.id)
     .single();
-  if (!hasBroadAdminAccess(profile)) {
+  // A client (employer) gets this same view for their own org only; the
+  // agency's admins get the agency's own — a client's files never mix in.
+  const clientOrgId =
+    profile?.role === "client" && profile.organization_id ? (profile.organization_id as string) : null;
+  if (!clientOrgId && !hasBroadAdminAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const supabase = serviceClient();
 
+  const projectQuery = supabase.from("projects").select("id, name, kind");
+  const taskQuery = supabase.from("assigned_tasks").select("id, project_id, task_name, account").is("deleted_at", null);
   const [{ data: projects }, { data: tasks }] = await Promise.all([
-    supabase.from("projects").select("id, name, kind"),
-    supabase.from("assigned_tasks").select("id, project_id, task_name, account").is("deleted_at", null),
+    clientOrgId ? projectQuery.eq("organization_id", clientOrgId) : projectQuery.is("organization_id", null),
+    clientOrgId ? taskQuery.eq("organization_id", clientOrgId) : taskQuery.is("organization_id", null),
   ]);
+  const scopedProjectIds = (projects ?? []).map((p) => p.id as string);
 
   const projectKindById = new Map<string, "objective" | "operation">();
   for (const p of projects ?? []) projectKindById.set(p.id as string, p.kind as "objective" | "operation");
@@ -83,11 +90,14 @@ export async function GET() {
   // ── Uploaded: project-level docs (every project) + files attached straight
   // to a task (not through a submission), any task including Adhoc. ─────────
   const [{ data: projFiles, error: pfErr }, { data: directAtts, error: daErr }] = await Promise.all([
-    supabase
-      .from("project_files")
-      .select("id, project_id, filename, uploaded_at, uploaded_by")
-      .order("uploaded_at", { ascending: false })
-      .limit(LIMIT),
+    scopedProjectIds.length > 0
+      ? supabase
+          .from("project_files")
+          .select("id, project_id, filename, uploaded_at, uploaded_by")
+          .in("project_id", scopedProjectIds)
+          .order("uploaded_at", { ascending: false })
+          .limit(LIMIT)
+      : Promise.resolve({ data: [], error: null }),
     taskIds.length > 0
       ? supabase
           .from("assigned_task_attachments")

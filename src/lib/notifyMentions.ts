@@ -49,12 +49,17 @@ export async function notifyMentions(opts: {
   const supabase = serviceClient();
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, full_name, username, telegram_chat_id")
+    .select("id, full_name, username, telegram_chat_id, role")
     .eq("is_active", true);
-  let members = (profiles ?? []) as Array<{ id: string; full_name: string | null; username: string | null; telegram_chat_id: number | string | null }>;
+  let members = (profiles ?? []) as Array<{ id: string; full_name: string | null; username: string | null; telegram_chat_id: number | string | null; role: string | null }>;
   if (restrictToIds) {
     const allow = new Set(restrictToIds);
     members = members.filter((p) => allow.has(p.id));
+  } else {
+    // An agency-wide surface: the agency's team, never a client (employer)
+    // account — they're only reachable from their own team's boards, which
+    // pass restrictToIds.
+    members = members.filter((p) => p.role !== "client");
   }
   if (members.length === 0) return new Set();
 

@@ -38,6 +38,14 @@ async function loadCaller() {
   return { user, isAdmin: hasBroadAdminAccess(profile) };
 }
 
+/** Of these project ids, the ones a client team owns. */
+async function clientProjectIds(supabase: ReturnType<typeof serviceClient>, ids: Array<string | null>): Promise<Set<string>> {
+  const unique = Array.from(new Set(ids.filter((v): v is string => Boolean(v))));
+  if (unique.length === 0) return new Set();
+  const { data } = await supabase.from("projects").select("id").in("id", unique).not("organization_id", "is", null);
+  return new Set((data ?? []).map((p) => p.id as string));
+}
+
 /** GET — every trashed topic, newest first. Admin only. */
 export async function GET() {
   const { user, isAdmin } = await loadCaller();
@@ -47,13 +55,23 @@ export async function GET() {
   const supabase = serviceClient();
   const { data, error } = await supabase
     .from("project_messages")
-    .select("id, project_id, title, body, created_at, deleted_at")
+    .select("id, project_id, organization_id, title, body, created_at, deleted_at")
     .not("deleted_at", "is", null)
+    .is("organization_id", null)
     .order("deleted_at", { ascending: false })
     .limit(200);
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ messages: data ?? [], isAdmin: true });
+  // A client team's objective threads are theirs, not the agency's — keep
+  // them out of the agency's Trash the same way their General board is.
+  const clientProjects = await clientProjectIds(supabase, (data ?? []).map((m) => m.project_id as string | null));
+  const messages = (data ?? [])
+    .filter((m) => !(m.project_id && clientProjects.has(m.project_id as string)))
+    .map(({ organization_id: _org, ...m }) => {
+      void _org;
+      return m;
+    });
+  return Response.json({ messages, isAdmin: true });
 }
 
 /** POST { id } — put a trashed topic back. Admin only. */
@@ -66,6 +84,15 @@ export async function POST(request: Request) {
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
 
   const supabase = serviceClient();
+  const { data: target } = await supabase
+    .from("project_messages")
+    .select("project_id, organization_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!target) return Response.json({ error: "Not found" }, { status: 404 });
+  if (target.organization_id || (await clientProjectIds(supabase, [target.project_id as string | null])).size > 0) {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
   const { error } = await supabase
     .from("project_messages")
     .update({ deleted_at: null })

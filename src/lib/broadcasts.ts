@@ -41,6 +41,9 @@ export function memberEmploymentTypes(member: BroadcastMember): Set<string> {
  * "Everyone" means the active team only; individual picks are honoured as chosen.
  */
 export function isRecipient(rows: RecipientRow[], member: BroadcastMember): boolean {
+  // A client (employer) account is never part of the agency's team audience —
+  // agency memos, trainings and their reminders are not theirs.
+  if (member.role === "client") return false;
   return rows.some((r) => {
     if (r.type === "all") return member.is_active;
     if (r.type === "individual") return r.value === member.id;

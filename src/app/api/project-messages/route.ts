@@ -1,3 +1,4 @@
+import { generalBoardScope, mentionScopeForProject, orgPeopleIds } from "@/lib/clientAdminAccess";
 import { createClient } from "@/lib/supabase/server";
 import { canAccessProject, serviceClient } from "@/lib/projectAccess";
 import { notifyMentions } from "@/lib/notifyMentions";
@@ -18,7 +19,7 @@ async function requireUser(request: Request) {
   // full_name/username are only for the @mention notification text below
   // (see POST) — canAccessProject/hasBroadAdminAccess elsewhere in this file
   // only ever look at .role, so adding these is additive and safe.
-  const { data: profile } = await supabase.from("profiles").select("role, full_name, username").eq("id", user.id).single();
+  const { data: profile } = await supabase.from("profiles").select("role, full_name, username, organization_id").eq("id", user.id).single();
   return { user, profile };
 }
 
@@ -42,16 +43,22 @@ export async function GET(request: Request) {
   }
 
   const supabase = serviceClient();
+  // General is one board per team: the agency's (organization_id NULL) and
+  // one per client team. Everyone sees only the board(s) they belong to.
+  const board = !projectId ? await generalBoardScope(supabase, user.id, profile) : null;
+  if (board && !board.agency && board.orgIds.length === 0) {
+    return Response.json({ messages: [] });
+  }
   // A general topic hangs off no project, so there is no project membership to
   // check — the board is the whole team by definition.
   if (projectId && !(await canAccessProject(supabase, profile, user.id, projectId))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data, error } = await supabase
+  let listQuery = supabase
     .from("project_messages")
     .select(
-      `id, project_id, author_id, title, body, category, pinned, created_at, updated_at, edited_at,
+      `id, project_id, organization_id, author_id, title, body, category, pinned, created_at, updated_at, edited_at,
        author:profiles!project_messages_author_id_fkey(${authorSelect}),
        project_message_comments(id, body, author_id, created_at, edited_at,
          author:profiles!project_message_comments_author_id_fkey(${authorSelect}))`
@@ -61,6 +68,15 @@ export async function GET(request: Request) {
     .filter("archived_at", archived ? "not.is" : "is", null)
     .order("pinned", { ascending: false })
     .order("created_at", { ascending: false });
+  if (board) {
+    const orgList = board.orgIds.join(",");
+    listQuery = board.agency && board.orgIds.length > 0
+      ? listQuery.or(`organization_id.is.null,organization_id.in.(${orgList})`)
+      : board.agency
+      ? listQuery.is("organization_id", null)
+      : listQuery.in("organization_id", board.orgIds);
+  }
+  const { data, error } = await listQuery;
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -92,7 +108,20 @@ export async function GET(request: Request) {
     })),
   }));
 
-  return Response.json({ messages });
+  // The boards this person can post a General topic to — the composer shows
+  // a picker when there's more than one (an agency VA on a client team).
+  let boards: Array<{ id: string | null; name: string }> | undefined;
+  if (board) {
+    const { data: orgs } = board.orgIds.length
+      ? await supabase.from("organizations").select("id, name").in("id", board.orgIds)
+      : { data: [] as Array<{ id: string; name: string }> };
+    boards = [
+      ...(board.agency ? [{ id: null, name: "Agency General" }] : []),
+      ...(orgs ?? []).map((o) => ({ id: o.id as string, name: o.name as string })),
+    ];
+  }
+
+  return Response.json({ messages, boards });
 }
 
 /**
@@ -111,6 +140,8 @@ export async function POST(request: Request) {
     title?: string;
     body?: string;
     category?: string | null;
+    /** General topics only: which board — null = the agency's, an org id = that client team's. Omitted = the poster's own default. */
+    organization_id?: string | null;
   };
   // No project_id is a general topic: it belongs to the team board rather than
   // to an objective or operation, and anyone signed in can start one.
@@ -121,6 +152,23 @@ export async function POST(request: Request) {
   if (!content) return Response.json({ error: "body is required" }, { status: 400 });
 
   const supabase = serviceClient();
+  // A General topic goes on the poster's own board: the agency's for agency
+  // staff, their team's for a client or a client-only VA.
+  let boardOrgId: string | null = null;
+  if (!projectId) {
+    const board = await generalBoardScope(supabase, user.id, profile);
+    if (body.organization_id !== undefined) {
+      // An explicit pick — must be a board this person is actually on.
+      const wanted = body.organization_id;
+      if (wanted === null ? !board.agency : !board.orgIds.includes(wanted)) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
+      boardOrgId = wanted;
+    } else if (!board.agency) {
+      if (board.orgIds.length === 0) return Response.json({ error: "Forbidden" }, { status: 403 });
+      boardOrgId = board.orgIds[0];
+    }
+  }
   if (projectId && !(await canAccessProject(supabase, profile, user.id, projectId))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -129,6 +177,7 @@ export async function POST(request: Request) {
     .from("project_messages")
     .insert({
       project_id: projectId,
+      organization_id: boardOrgId,
       author_id: user.id,
       title,
       body: content,
@@ -145,6 +194,8 @@ export async function POST(request: Request) {
     senderId: user.id,
     senderName: p?.full_name || p?.username || "Someone",
     context: `“${title}”`,
+    // A client team's board or objective only ever pings that team.
+    restrictToIds: boardOrgId ? await orgPeopleIds(supabase, boardOrgId) : await mentionScopeForProject(supabase, projectId),
   });
 
   return Response.json({ message: { ...data, project_message_comments: [] } }, { status: 201 });

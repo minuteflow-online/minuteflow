@@ -1,3 +1,4 @@
+import { vaWorkScope } from "@/lib/clientAdminAccess";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
@@ -53,6 +54,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const { userId } = auth;
   const admin = makeAdminClient();
+
+  // Output-based work is the agency's — a client-only VA can't claim it.
+  if ((await vaWorkScope(admin, userId)).clientOnly) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
 
   const { data: task, error: taskError } = await admin
     .from("fixed_pay_tasks")

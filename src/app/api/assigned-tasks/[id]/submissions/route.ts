@@ -371,7 +371,7 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const { data: task, error: taskError } = await admin
     .from("assigned_tasks")
-    .select("id, category, review_required, task_name, account, project")
+    .select("id, category, review_required, task_name, account, project, organization_id, assigned_by, created_by")
     .eq("id", id)
     .single();
   if (taskError || !task) {
@@ -682,7 +682,45 @@ export async function POST(request: Request, { params }: RouteContext) {
   // Best-effort: the submission is already committed and must not fail on a
   // Telegram problem.
   // Role-based routing: submissions notify the Founder (Toni), in-app + Telegram.
-  if (messageType === "submission") {
+  //
+  // Except work a client assigned (organization_id set): that client is the
+  // reviewer, so the notice goes to them — not to Toni, the reviewer chat or
+  // the team chat, none of which should see another business's work.
+  const clientOrgTask = Boolean(task.organization_id);
+  if (messageType === "submission" && clientOrgTask) {
+    const clientId = (task.assigned_by || task.created_by) as string | null;
+    // The org's Managers (VAs the client promoted) hear about it too.
+    const { data: managers } = await admin
+      .from("organization_members")
+      .select("va_id")
+      .eq("organization_id", task.organization_id as string)
+      .eq("status", "active")
+      .eq("role", "manager");
+    const targets = new Map<string, string>();
+    if (clientId) targets.set(clientId, "/client/productivity/submissions");
+    for (const m of managers ?? []) {
+      // No review screen for them yet (Phase 2), so no deep link.
+      if (m.va_id && !targets.has(m.va_id as string)) targets.set(m.va_id as string, "");
+    }
+    targets.delete(user.id);
+    if (targets.size > 0) {
+      const { data: sProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
+      const submitter = sProf?.full_name || sProf?.username || "Your VA";
+      for (const [targetUserId, linkPath] of targets) {
+        await notifyOne(admin, {
+          targetUserId,
+          senderId: user.id,
+          content: `${submitter} submitted: ${task.task_name ?? "a task"}`,
+          telegram: `📤 <b>New submission</b> from ${esc(submitter)}\n\nTask: ${esc(task.task_name ?? "a task")}`,
+          topic: "submissions",
+          assignedTaskId: Number(id),
+          submissionId: submission.id as number,
+          linkPath: linkPath || null,
+        });
+      }
+    }
+  }
+  if (messageType === "submission" && !clientOrgTask) {
     const { data: sProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
     const submitter = sProf?.full_name || sProf?.username || "A VA";
     await notifyRecipients({
@@ -807,7 +845,7 @@ ${esc(snippet)}` : ""}`,
     }
   }
 
-  if (messageType === "submission" && telegramEnabled("submissions")) {
+  if (messageType === "submission" && !clientOrgTask && telegramEnabled("submissions")) {
     const { data: prof } = await admin
       .from("profiles")
       .select("full_name, username, telegram_chat_id")
@@ -880,7 +918,7 @@ ${esc(snippet)}` : ""}`,
   //
   // This is the only thing the bot says to the whole team that is unambiguously
   // good news. Everything else it posts there is a reminder or a warning.
-  if (messageType === "submission" && telegramEnabled("team")) {
+  if (messageType === "submission" && !clientOrgTask && telegramEnabled("team")) {
     const { data: prof } = await admin
       .from("profiles")
       .select("full_name, username, telegram_chat_id")

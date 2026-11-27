@@ -171,11 +171,13 @@ export async function GET(request: Request) {
 
     const { data: invite, error } = await adminClient
       .from("invitations")
-      .select("id, email, expires_at, used_at, employment_type, requires_extension")
+      .select("id, email, expires_at, used_at, employment_type, requires_extension, org_role")
       .eq("code", code)
       .single();
 
-    if (error || !invite) {
+    // A client co-admin invite (org_role set) signs up through /signup-client,
+    // never as staff — treat its code as unknown here.
+    if (error || !invite || invite.org_role) {
       return Response.json({ valid: false, reason: "Invalid invite code" });
     }
 

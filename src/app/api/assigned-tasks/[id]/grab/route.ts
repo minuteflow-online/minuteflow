@@ -1,3 +1,4 @@
+import { vaWorkScope } from "@/lib/clientAdminAccess";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
@@ -57,7 +58,7 @@ export async function POST(_request: Request, { params }: RouteContext) {
   const { data: task, error: fetchError } = await adminSupabase
     .from("assigned_tasks")
     .select(
-      "id, account, project, task_name, task_detail, task_notes, due_date, instructions, instructions_locked, created_at, updated_at, assigned_task_assignees(id)"
+      "id, account, project, task_name, task_detail, task_notes, due_date, instructions, instructions_locked, created_at, updated_at, organization_id, assigned_task_assignees(id)"
     )
     .eq("id", id)
     .single();
@@ -67,6 +68,13 @@ export async function POST(_request: Request, { params }: RouteContext) {
   }
 
   const typedTask = task as TaskRow;
+  // Same rule as the open pool: an agency task is for agency VAs (never a
+  // client-only VA), and a client org's task only for that org's members.
+  const taskOrg = (task as { organization_id?: string | null }).organization_id ?? null;
+  const scope = await vaWorkScope(adminSupabase, user.id);
+  if (taskOrg ? !scope.orgIds.includes(taskOrg) : scope.clientOnly) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
   if ((typedTask.assigned_task_assignees ?? []).length > 0) {
     return Response.json({ error: "Task already claimed" }, { status: 409 });
   }

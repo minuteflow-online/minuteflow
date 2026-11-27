@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canAccessProject, serviceClient } from "@/lib/projectAccess";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { notifyMentions } from "@/lib/notifyMentions";
+import { generalBoardScope, mentionScopeForProject, onGeneralBoard, orgPeopleIds } from "@/lib/clientAdminAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ async function requireUser(request: Request) {
   const supabase = await createClient(bearerToken);
   const { data: { user } } = await supabase.auth.getUser(bearerToken);
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+  const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single();
   return { user, profile };
 }
 
@@ -39,7 +40,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   const supabase = serviceClient();
   const { data: message } = await supabase
     .from("project_messages")
-    .select("id, project_id, title")
+    .select("id, project_id, organization_id, title")
     .eq("id", messageId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -51,6 +52,16 @@ export async function POST(request: Request, { params }: RouteContext) {
   // topic got a silent 403 (Rexinne's "won't send," 2026-11-19).
   if (message.project_id && !(await canAccessProject(supabase, profile, user.id, message.project_id))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // The General board is the agency's team board — a client (employer) only
+  // ever talks on their own org's projects.
+  // A General topic: only people on that topic's board (the agency's, or
+  // one client team's) can reply.
+  if (!message.project_id) {
+    const board = await generalBoardScope(supabase, user.id, profile);
+    if (!onGeneralBoard(board, (message.organization_id as string | null) ?? null)) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const { data, error } = await supabase
@@ -67,6 +78,9 @@ export async function POST(request: Request, { params }: RouteContext) {
     senderId: user.id,
     senderName: author?.full_name || author?.username || "Someone",
     context: `“${message.title ?? "a thread"}”`,
+    restrictToIds: message.organization_id
+      ? await orgPeopleIds(supabase, message.organization_id as string)
+      : await mentionScopeForProject(supabase, (message.project_id as string | null) ?? null),
   });
 
   return Response.json({ comment: data }, { status: 201 });
